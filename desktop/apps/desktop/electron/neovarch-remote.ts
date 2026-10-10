@@ -92,6 +92,13 @@ export interface RemoteControllerDeps {
   processCommandLine?: (pid: number) => string | null
   killProcessGroup?: (pid: number, signal: NodeJS.Signals) => void
   portInUse?: (port: number) => Promise<boolean>
+  /** Every running process as pid + command line (orphan gateways without a PID file). */
+  listProcesses?: () => Promise<ProcessRow[]>
+}
+
+export interface ProcessRow {
+  command: string
+  pid: number
 }
 
 // ---- stale LAN gateway recovery ------------------------------------------
@@ -153,7 +160,67 @@ export function readRemotePid(pidFilePath: string): number | null {
   }
 }
 
+/** All processes with their command lines; [] when the platform gives no cheap listing. */
+export async function listProcesses(): Promise<ProcessRow[]> {
+  if (process.platform === 'linux') {
+    let names: string[] = []
+
+    try {
+      names = fs.readdirSync('/proc').filter(name => /^\d+$/.test(name))
+    } catch {
+      return []
+    }
+
+    return names
+      .map(name => ({ command: readProcessCommandLine(Number(name)) ?? '', pid: Number(name) }))
+      .filter(row => row.command)
+  }
+
+  const run = (command: string, args: string[]) =>
+    new Promise<string>(resolve => {
+      execFile(command, args, { maxBuffer: 16 * 1024 * 1024, timeout: 8000, windowsHide: true }, (error, stdout) =>
+        resolve(error ? '' : String(stdout || ''))
+      )
+    })
+
+  const rows = (text: string, sep: RegExp) =>
+    text
+      .split(/\r?\n/)
+      .map(line => line.trim().match(sep))
+      .filter((m): m is RegExpMatchArray => Boolean(m))
+      .map(m => ({ command: m[2]!, pid: Number(m[1]) }))
+      .filter(row => Number.isInteger(row.pid) && row.pid > 0)
+
+  if (process.platform === 'win32') {
+    const out = await run('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*--isolated*' } | " +
+        'ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }'
+    ])
+
+    return rows(out, /^(\d+)\t(.+)$/)
+  }
+
+  return rows(await run('ps', ['-axo', 'pid=,command=']), /^(\d+)\s+(.+)$/)
+}
+
+/** PIDs of our own LAN gateways (`serve --host 0.0.0.0 --port <port> --isolated`) still running. */
+export function ownGatewayPids(rows: ProcessRow[], port: number, exclude: (number | undefined)[] = []): number[] {
+  const skip = new Set(exclude.filter((pid): pid is number => typeof pid === 'number'))
+
+  return rows.filter(row => !skip.has(row.pid) && isOwnRemoteGatewayCommand(row.command, port)).map(row => row.pid)
+}
+
 function defaultKillProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  if (process.platform === 'win32') {
+    // A Windows gateway is a launcher with a python child: end the whole tree.
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {})
+
+    return
+  }
+
   try {
     process.kill(-pid, signal)
   } catch {
@@ -380,6 +447,7 @@ export function createRemoteController(deps: RemoteControllerDeps) {
   const commandLineOf = deps.processCommandLine ?? readProcessCommandLine
   const killGroup = deps.killProcessGroup ?? defaultKillProcessGroup
   const probePort = deps.portInUse ?? ((port: number) => portInUse(port))
+  const processRows = deps.listProcesses ?? listProcesses
 
   function writePid(pid: number | undefined) {
     if (!pid) {
@@ -406,8 +474,64 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     }
   }
 
-  /** Stop a gateway a previous (crashed) desktop left behind. Returns its PID. */
+  /** Stop a gateway a previous (crashed or older) desktop left behind. Returns its PID. */
   async function reapStaleGateway(): Promise<number | null> {
+    const recorded = await reapRecordedGateway()
+
+    if (recorded !== null) {
+      return recorded
+    }
+
+    return reapOrphanGateways()
+  }
+
+  /**
+   * A LAN gateway with no PID file: one started by an older desktop (v1.3.x
+   * wrote none) keeps port 9319, so the phone kept talking to that old core
+   * ("versi 1.3.0, 0 sesi aktif") while this desktop refused to start its own
+   * ("port sudah dipakai"). Only processes whose command line is exactly our
+   * `serve --host 0.0.0.0 --port <port> --isolated` are stopped.
+   */
+  async function reapOrphanGateways(): Promise<number | null> {
+    if (!(await probePort(settings.port))) {
+      return null
+    }
+
+    let pids: number[] = []
+
+    try {
+      pids = ownGatewayPids(await processRows(), settings.port, [child?.pid, process.pid])
+    } catch {
+      return null
+    }
+
+    for (const pid of pids) {
+      deps.log(`[remote] stopping LAN gateway pid=${pid} left by an older desktop`)
+      killGroup(pid, 'SIGTERM')
+    }
+
+    if (!pids.length) {
+      return null
+    }
+
+    for (let i = 0; i < 20 && (await probePort(settings.port)); i++) {
+      await new Promise(r => setTimeout(r, 150))
+    }
+
+    if (await probePort(settings.port)) {
+      for (const pid of pids) {
+        killGroup(pid, 'SIGKILL')
+      }
+
+      for (let i = 0; i < 10 && (await probePort(settings.port)); i++) {
+        await new Promise(r => setTimeout(r, 150))
+      }
+    }
+
+    return pids[0] ?? null
+  }
+
+  async function reapRecordedGateway(): Promise<number | null> {
     const pid = readRemotePid(pidFilePath)
 
     if (pid === null) {

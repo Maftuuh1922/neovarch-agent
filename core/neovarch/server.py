@@ -203,6 +203,9 @@ class LiveSession:
             self.gw.broadcast_event("session.status", self.id, {"status": "running"})
             from neovarch.logs import log
             log.info("turn start session=%s model=%s", self.id, self.info().get("model"))
+            from neovarch import sync as syncmod
+            syncmod.mark_turn(self.id, title=str(self.rec.get("title") or ""), model=str(self.rec.get("model") or ""),
+                              preview=str(text or ""))
             try:
                 await self.gw.ensure_router(self.id)
                 await self.agent.run_turn(text, attachments or None)
@@ -214,8 +217,12 @@ class LiveSession:
                 self.emit("message.complete", {"text": "", "error": str(exc)})
             finally:
                 self.status = "idle"
+                syncmod.clear_turn(self.id)
                 self.gw.broadcast_event("session.status", self.id, {"status": "idle"})
                 self.gw.broadcast_event("sessions.changed", None, {})
+                watch = getattr(self.gw, "session_watch", None)
+                if watch is not None:
+                    watch.note_own_write()
                 queued = self.rec.get("queued") or []
                 if queued:  # a message steered in while the turn ran
                     self.submit(queued.pop(0))
@@ -286,6 +293,11 @@ class Gateway:
         self.router = router9.Router9(on_status=lambda st: self.broadcast_event("router.status", None, st),
                                       on_models=lambda _ids: self._models_stale())
         self.company = CompanyRuntime(self)
+        from neovarch import sync as syncmod
+        # The phone's LAN core and this one share ~/.neovarch/sessions: announce the other's writes too.
+        self.session_watch = syncmod.SessionWatcher(
+            self.store.root, lambda: self.broadcast_event("sessions.changed", None, {"external": True}),
+            interval=float(os.environ.get("NEOVARCH_SESSION_WATCH_S") or 2))
         self.cron = cronmod.CronStore()
         self.scheduler = cronmod.Scheduler(
             self.cron, self._cron_run, lambda: self.broadcast_event("cron.changed", None, {}),
@@ -363,6 +375,22 @@ class Gateway:
             self.live[rec["id"]] = live
             self.company.bind_session(live)
         return live
+
+    def active_sessions(self) -> list[dict]:
+        """Chats with a running turn, in this core and in the other core on this PC (phone LAN core)."""
+        from neovarch import sync as syncmod
+        out = [{**summarize(l.rec), **l.info(), "id": l.id} for l in self.live.values() if l.status == "running"]
+        seen = {row["id"] for row in out}
+        for t in syncmod.foreign_turns():
+            sid = str(t.get("session_id") or "")
+            if not sid or sid in seen:
+                continue
+            rec = self.store.load(sid)
+            row = summarize(rec) if rec else {"id": sid, "title": t.get("title") or None, "preview": t.get("preview") or ""}
+            out.append({**row, "id": sid, "status": "running", "model": t.get("model") or row.get("model") or "",
+                        "elsewhere": True})
+            seen.add(sid)
+        return out
 
     def office_status(self) -> dict:
         """Kantor snapshot plus the active model (the agent's office_status tool)."""
@@ -571,8 +599,7 @@ class Gateway:
         if method == "session.list":
             return {"sessions": self.store.list(limit=int(p.get("limit") or 50), offset=int(p.get("offset") or 0))}
         if method == "session.active_list":
-            return {"sessions": [{**summarize(l.rec), **l.info(), "id": l.id} for l in self.live.values()
-                                 if l.status == "running"]}
+            return {"sessions": self.active_sessions()}
         if method == "session.create":
             cwd = p.get("cwd") or str(default_cwd())
             rec = self.store.create(source=str(p.get("source") or "desktop"), cwd=cwd,
@@ -1003,12 +1030,14 @@ def build_app(gw: Gateway) -> web.Application:
         gw.scheduler.start()
         gw.social.start()
         gw.company.start()
+        gw.session_watch.start()
         if os.environ.get("NEOVARCH_9ROUTER_SUPERVISE", "1") not in ("0", "false", "off"):
             gw.router.start_supervisor()
 
     async def _stop_cron(_app):
         await gw.scheduler.stop()
         await gw.company.stop()
+        await gw.session_watch.stop()
         await gw.social.stop()
         await gw.router.close()
     app.on_startup.append(_start_cron)
@@ -1123,8 +1152,7 @@ def build_app(gw: Gateway) -> web.Application:
             "ok": True, "product": PRODUCT, "name": "neovarch", "version": __version__,
             "release_date": "", "hermes_home": str(neovarch_home()), "home": str(neovarch_home()),
             "config_path": str(cfgmod.config_path()), "env_path": str(cfgmod.env_path()),
-            "gateway_running": True, "gateway_state": "running", "active_sessions": sum(
-                1 for l in gw.live.values() if l.status == "running"),
+            "gateway_running": True, "gateway_state": "running", "active_sessions": len(gw.active_sessions()),
             "hostname": socket.gethostname(), "platform": platform.system().lower(),
             "uptime_s": round(time.time() - gw.started), "model": info["model"], "provider": info["provider"],
             "configured": info["configured"], "auth_mode": "token", "port": gw.port,
@@ -1138,7 +1166,10 @@ def build_app(gw: Gateway) -> web.Application:
         await conn.send({"jsonrpc": "2.0", "method": "event", "params": {
             "type": "gateway.ready", "session_id": None,
             "payload": {"product": "neovarch", "version": __version__, "skin": None,
-                        "boot_id": gw.bus.boot_id, "seq": gw.bus.seq}}})
+                        "boot_id": gw.bus.boot_id, "seq": gw.bus.seq,
+                        # The desktop refreshes its chat list on sessions.changed only when this
+                        # is set; without it chats made on the phone never appeared (1.4.5).
+                        "change_events": True}}})
         # ?since=<seq>&boot_id=<id>: replay global events missed while offline
         # (session events come back through events.replay / session.resume).
         if "since" in request.query:
