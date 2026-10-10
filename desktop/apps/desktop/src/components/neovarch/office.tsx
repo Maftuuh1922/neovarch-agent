@@ -8,7 +8,8 @@ import { cn } from '@/lib/utils'
 import { $activeSessionId, $busy } from '@/store/session'
 
 import { OfficeAgentAvatar } from './agent-identity'
-import { COMPANY_TABS, CompanyPanel, type CompanyTab } from './company'
+import { COMPANY_TABS, CompanyPanel, type CompanyTab, visibleCompanyTabs } from './company'
+import { $company, hasCompany } from './company-store'
 import { KartuCardButton } from './kartu-card-dialog'
 import { Office3D } from './office-3d'
 import { MiniOffice3D } from './office-mini-3d'
@@ -147,11 +148,22 @@ function readOfficeTab(): OfficeTab {
   }
 }
 
-/** Kantor sections: the room itself, then the Perusahaan views (org chart, tickets, approvals, costs, activity). */
-export function OfficeTabs({ onChange, value }: { onChange: (tab: OfficeTab) => void; value: OfficeTab }) {
+/** Kantor sections: the room itself, then the Perusahaan views (org chart, tickets, approvals, costs, activity).
+ *  Until the Kantor has anything in it, only Ruang and Organisasi show (the rest would be empty pages). */
+export function OfficeTabs({
+  exists = true,
+  onChange,
+  value
+}: {
+  exists?: boolean
+  onChange: (tab: OfficeTab) => void
+  value: OfficeTab
+}) {
+  const tabs: { label: string; value: OfficeTab }[] = [{ label: 'Ruang', value: 'room' }, ...visibleCompanyTabs(exists)]
+
   return (
     <nav aria-label="Bagian kantor" className="nv-office-tabs" data-slot="nv-office-tabs" role="tablist">
-      {OFFICE_TABS.map(tab => (
+      {tabs.map(tab => (
         <button
           aria-selected={value === tab.value}
           data-tab={tab.value}
@@ -174,7 +186,12 @@ export function NeovarchOfficePage() {
   const now = useNow()
   const navigate = useNavigate()
   const view = useStore($officeView)
-  const [tab, setTabState] = useState<OfficeTab>(readOfficeTab)
+  const companySnap = useStore($company)
+  const companyExists = hasCompany(companySnap)
+  const [savedTab, setTabState] = useState<OfficeTab>(readOfficeTab)
+  // A hidden tab (nothing exists yet) falls back to the room.
+  const tab: OfficeTab =
+    savedTab === 'room' || visibleCompanyTabs(companyExists).some(t => t.value === savedTab) ? savedTab : 'room'
 
   const setTab = (next: OfficeTab) => {
     setTabState(next)
@@ -200,7 +217,10 @@ export function NeovarchOfficePage() {
       {office && (!Array.isArray(office.agents) || office.agents.length === 0) && (
         <div className="nv-office-empty">
           <Users className="size-5" />
-          <p>Belum ada pegawai. Mulai obrolan atau beri tugas di Kanban, agennya akan duduk di sini.</p>
+          <p>
+            Kantor masih kosong. Minta Neovarch Agent di Chat untuk membuat organisasi, agency, dan merekrut pegawai,
+            atau buka tab Organisasi.
+          </p>
         </div>
       )}
       {(Array.isArray(office?.agents) ? office.agents : []).map(agent => (
@@ -216,7 +236,7 @@ export function NeovarchOfficePage() {
           <p className="nv-office-kicker">Kantor</p>
           <h1 className="nv-office-title">Pegawai Neovarch</h1>
           <p className="nv-office-sub">
-            Agen yang sedang berjalan di PC ini, statusnya, dan apa yang mereka kerjakan. Diperbarui langsung.
+            Pegawai yang kamu rekrut lewat Neovarch Agent, statusnya, dan apa yang mereka kerjakan. Diperbarui langsung.
           </p>
         </div>
         <div className="nv-office-header-tools">
@@ -236,7 +256,7 @@ export function NeovarchOfficePage() {
         </div>
       </header>
 
-      <OfficeTabs onChange={setTab} value={tab} />
+      <OfficeTabs exists={companyExists} onChange={setTab} value={tab} />
 
       {tab !== 'room' ? (
         <CompanyPanel tab={tab} />

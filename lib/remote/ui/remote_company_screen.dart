@@ -174,16 +174,13 @@ class _RemoteCompanyScreenState extends ConsumerState<RemoteCompanyScreen> {
                 ),
               ),
             if (s != null && !s.exists)
-              NvEmpty(
+              const NvEmpty(
+                key: ValueKey('company-empty'),
                 kicker: 'kantor',
-                title: 'Belum ada perusahaan',
-                body: 'Jadikan Kantor di PC sebuah perusahaan: misi, struktur organisasi, tiket, persetujuan, dan anggaran. '
-                    'Tidak ada agen yang berjalan sendiri sampai kamu menyalakan “Jalan otomatis”.',
-                action: FilledButton(
-                  key: const ValueKey('company-seed'),
-                  onPressed: busy || !online ? null : () => act((c) => c.seedDemo(), done: 'Contoh perusahaan dibuat'),
-                  child: const Text('Buat contoh perusahaan'),
-                ),
+                title: 'Kantor masih kosong',
+                body: 'Susunannya Organisasi → Agency → Orang. Minta Neovarch Agent di Chat, misalnya “buat organisasi '
+                    'Neovarch Labs dengan agency Kreatif, lalu rekrut Sinta sebagai copywriter”. '
+                    'Tidak ada pegawai yang berjalan sendiri sampai kamu menyalakan “Jalan otomatis”.',
               ),
             if (s != null && s.exists) ...[
               if (s.mission.isNotEmpty)

@@ -207,13 +207,45 @@ afterEach(() => {
 const wrap = (ui: React.ReactNode) => render(<MemoryRouter>{ui}</MemoryRouter>)
 
 describe('Perusahaan (company) views', () => {
-  it('offers setup when no company exists, and the demo company calls the core', async () => {
+  it('starts empty (no demo staff) and creates the first organisasi', async () => {
     snapshot = { exists: false }
     $company.set({ exists: false })
     wrap(<CompanyPanel tab="org" />)
-    expect(screen.getByText('Jadikan Kantor sebuah perusahaan')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /Coba contoh/ }))
-    await waitFor(() => expect(gw.request).toHaveBeenCalledWith('company.seed_demo', {}))
+    expect(screen.getByText('Kantor masih kosong')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Coba contoh/ })).toBeNull()
+    fireEvent.change(screen.getByPlaceholderText('mis. Neovarch Labs'), { target: { value: 'Neovarch Labs' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Buat organisasi' }))
+    await waitFor(() =>
+      expect(gw.request).toHaveBeenCalledWith('company.unit.save', { kind: 'organisasi', name: 'Neovarch Labs' })
+    )
+  })
+
+  it('hides the other Kantor tabs until something exists', async () => {
+    const { visibleCompanyTabs } = await import('./company')
+    expect(visibleCompanyTabs(false).map(t => t.value)).toEqual(['org'])
+    expect(visibleCompanyTabs(true).length).toBe(7)
+  })
+
+  it('fires (deletes) an employee and lists organisasi → agency units', async () => {
+    $company.set({
+      ...SNAP,
+      agents: [agent(1, 'Dimas', 'CEO', null, { unit_id: 11 })],
+      units: [
+        { id: 10, kind: 'organisasi', name: 'Neovarch Labs', parent_id: null },
+        { id: 11, kind: 'agency', name: 'Kreatif', parent_id: 10 }
+      ]
+    } as never)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    wrap(<CompanyPanel tab="org" />)
+    const units = screen.getByRole('list', { name: 'Organisasi dan agency' })
+    expect(within(units).getAllByText(/^(Neovarch Labs|Kreatif)$/).map(n => n.textContent)).toEqual([
+      'Neovarch Labs',
+      'Kreatif'
+    ])
+    const list = screen.getByRole('list', { name: 'Struktur organisasi' })
+    fireEvent.click(within(list).getByRole('button', { name: 'Berhentikan' }))
+    await waitFor(() => expect(gw.request).toHaveBeenCalledWith('company.agent.delete', { id: 1 }))
+    confirm.mockRestore()
   })
 
   it('draws the org chart as a tree and wakes / resumes agents', async () => {

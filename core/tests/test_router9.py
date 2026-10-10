@@ -181,9 +181,8 @@ async def test_chat_uses_default_then_agent_override_live_events(router, monkeyp
         ev = await ws.until("agent.model.changed")
         assert ev["session_id"] is None and ev["payload"]["model"] == "kr/glm-5"
         office = (await ws.until("office.update"))["payload"]
-        desk = next(d for d in office["agents"] if d["id"] == aid)
-        assert desk["model"] == "kr/glm-5" and desk["model_source"] == "agent"
-        assert desk["model_override"] == {"model": "kr/glm-5", "provider": "9router"}
+        # chats are not Kantor desks any more (the Kantor starts empty)
+        assert not any(d["id"] == aid for d in office["agents"])
         assert office["default_model"] == {"model": "oc/big-pickle", "provider": "9router"}
 
         out = await _chat(ws, sid, "lagi")

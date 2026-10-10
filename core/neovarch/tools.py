@@ -38,6 +38,8 @@ class ToolContext:
     # Set when this session belongs to a Kantor company agent (neovarch.company_runtime.CompanyBinding).
     company: Any = None
     persona: Callable[[], str] | None = None
+    # The main agent's Kantor control (CompanyRuntime.main_tool); None outside the gateway.
+    kantor: Callable[[dict], str] | None = None
 
 
 DANGEROUS = [
@@ -429,7 +431,41 @@ async def tool_office_status(args: dict, ctx: ToolContext) -> str:
     return office_summary(ctx.office())
 
 
+async def tool_kantor(args: dict, ctx: ToolContext) -> str:
+    if getattr(ctx, "company", None) is not None:
+        return "refused: hanya agen utama Neovarch yang mengatur Kantor"
+    if ctx.kantor is None:
+        return "Kantor hanya tersedia saat core berjalan sebagai gateway desktop (neovarch serve)."
+    return ctx.kantor(args or {})
+
+
+KANTOR_ACTIONS = ["overview", "create_org", "create_agency", "rename_unit", "delete_unit", "hire", "fire", "move",
+                  "set_employee", "assign_task"]
+
 TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
+    "kantor": (tool_kantor, {
+        "description": "Run the user's Kantor (office) ONLY when the user asks for it. Structure: Organisasi → Agency "
+                       "→ Orang (pegawai), nested without limit. action: overview (show the org) | create_org "
+                       "(name, parent?) | create_agency (name, parent = org/agency name) | rename_unit (unit, new_name) "
+                       "| delete_unit (unit) | hire (name, title, unit?, manager?, job_description?, persona?, skills?, "
+                       "tools?, model?, provider?) | fire (name: removes the employee) | move (name, unit?, manager?) | "
+                       "set_employee (name, title?, persona?, skills?, tools?, model?, provider?, new_name?) | "
+                       "assign_task (employee, title, description?, start_now?). Kantor starts empty; never invent "
+                       "employees the user did not ask for. You stay the one answering the user.",
+        "parameters": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": KANTOR_ACTIONS},
+            "name": {"type": "string"}, "new_name": {"type": "string"}, "title": {"type": "string"},
+            "unit": {"type": "string", "description": "organisasi/agency name or id"},
+            "parent": {"type": "string", "description": "parent organisasi/agency name or id"},
+            "manager": {"type": "string", "description": "employee this person reports to"},
+            "employee": {"type": "string"}, "description": {"type": "string"},
+            "job_description": {"type": "string"}, "persona": {"type": "string"},
+            "skills": {"type": "array", "items": {"type": "string"}},
+            "tools": {"type": "array", "items": {"type": "string"},
+                      "description": "built-in tools this employee may use (empty = all)"},
+            "model": {"type": "string"}, "provider": {"type": "string"},
+            "start_now": {"type": "boolean"}}, "required": ["action"]}}),
+
     "office_status": (tool_office_status, {
         "description": "Read the live Neovarch Kantor (office) state: agents, their status and current task, "
                        "Kanban counts, recent activity and the active model. Read-only; use it to answer questions "
@@ -510,8 +546,23 @@ TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
 }
 
 
+def _allowed_builtin(ctx: "ToolContext | None") -> set[str]:
+    names = set(TOOLS)
+    company = getattr(ctx, "company", None) if ctx is not None else None
+    if company is None:
+        if ctx is None or getattr(ctx, "kantor", None) is None:
+            names.discard("kantor")
+        return names
+    names.discard("kantor")  # employees never run the Kantor; the main agent does
+    allowed = company.allowed_tools() if hasattr(company, "allowed_tools") else None
+    if allowed:
+        names &= set(allowed) | {"office_status"}
+    return names
+
+
 def tool_schemas(ctx: "ToolContext | None" = None) -> list[dict[str, Any]]:
-    out = [{"type": "function", "function": {"name": n, **spec}} for n, (_, spec) in TOOLS.items()]
+    allowed = _allowed_builtin(ctx)
+    out = [{"type": "function", "function": {"name": n, **spec}} for n, (_, spec) in TOOLS.items() if n in allowed]
     if ctx is not None and getattr(ctx, "company", None) is not None:
         out += ctx.company.tool_schemas()
     return out
@@ -529,6 +580,8 @@ async def run_tool(name: str, args: dict, ctx: ToolContext) -> str:
         return await company.run_tool(name, args)
     if not entry:
         return f"error: unknown tool {name}"
+    if name not in _allowed_builtin(ctx):
+        return f"refused: alat {name} tidak diizinkan untuk agen ini"
     try:
         return await entry[0](args, ctx)
     except ForeignPathError as exc:

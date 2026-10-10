@@ -19,6 +19,7 @@ import {
   type CompanyCosts,
   type CompanySnapshot,
   type CompanyTicket,
+  type CompanyUnit,
   formatCents,
   formatTokens,
   hasCompany,
@@ -27,7 +28,8 @@ import {
   TICKET_LABEL,
   TICKET_TRANSITIONS,
   type TicketDetail,
-  type TicketStatus
+  type TicketStatus,
+  unitTree
 } from './company-store'
 import { AgentEditor, GoalsAndProjects, Routines, TicketBlockers } from './company-plan'
 import { ErrorLine, useAction } from './company-ui'
@@ -45,53 +47,43 @@ export const COMPANY_TABS: { label: string; value: CompanyTab }[] = [
   { label: 'Aktivitas', value: 'activity' }
 ]
 
+/** Before anything exists only the org view is shown (its empty state creates the first unit). */
+export function visibleCompanyTabs(exists: boolean): { label: string; value: CompanyTab }[] {
+  return exists ? COMPANY_TABS : COMPANY_TABS.filter(tab => tab.value === 'org')
+}
+
 const now = () => Date.now() / 1000
 
 // ------------------------------------------------------------------ setup --
 
 export function CompanySetup() {
   const [name, setName] = useState('')
-  const [mission, setMission] = useState('')
   const [error, run, busy] = useAction()
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    void run(() => companyCall('setup', { mission, name }))
+    void run(async () => {
+      await companyCall('unit.save', { kind: 'organisasi', name })
+      setName('')
+    })
   }
 
   return (
     <section className="nv-co-setup" data-slot="nv-company-setup">
-      <h2>Jadikan Kantor sebuah perusahaan</h2>
+      <h2>Kantor masih kosong</h2>
       <p>
-        Tetapkan misi, susun struktur organisasi (siapa melapor ke siapa), lalu beri tiket. Setiap agen tahu alasan di
-        balik tugasnya, bisa membagi pekerjaan ke bawahannya, dan meminta persetujuanmu. Tidak ada yang berjalan sendiri
-        sampai kamu menyalakan “Jalan otomatis”.
+        Susunannya Organisasi → Agency → Orang, sedalam yang kamu mau. Minta Neovarch Agent di Chat, misalnya “buat
+        organisasi Neovarch Labs dengan agency Kreatif, lalu rekrut Sinta sebagai copywriter”, atau buat organisasi
+        pertamamu di sini. Tidak ada pegawai yang berjalan sendiri sampai kamu menyalakan “Jalan otomatis”.
       </p>
       <form className="nv-co-form" onSubmit={submit}>
         <label>
-          Nama perusahaan
-          <input onChange={e => setName(e.target.value)} placeholder="mis. Neovarch Studio" required value={name} />
-        </label>
-        <label>
-          Misi
-          <textarea
-            onChange={e => setMission(e.target.value)}
-            placeholder="Tujuan besar yang ingin dicapai tim agen"
-            rows={2}
-            value={mission}
-          />
+          Nama organisasi
+          <input onChange={e => setName(e.target.value)} placeholder="mis. Neovarch Labs" required value={name} />
         </label>
         <div className="nv-co-row">
           <button className="nv-co-btn" data-variant="primary" disabled={busy || !name.trim()} type="submit">
-            Buat perusahaan
-          </button>
-          <button
-            className="nv-co-btn"
-            disabled={busy}
-            onClick={() => void run(() => companyCall('seed_demo'))}
-            type="button"
-          >
-            Coba contoh (Dimas, Hana, Raka, Sari)
+            Buat organisasi
           </button>
         </div>
       </form>
@@ -136,12 +128,14 @@ function AgentNode({
   agent,
   agents,
   depth,
-  running
+  running,
+  units = []
 }: {
   agent: CompanyAgent
   agents: CompanyAgent[]
   depth: number
   running: boolean
+  units?: CompanyUnit[]
 }) {
   const navigate = useNavigate()
   const [error, run, busy] = useAction()
@@ -241,17 +235,57 @@ function AgentNode({
         >
           Ubah
         </button>
+        {units.length > 0 && (
+          <select
+            aria-label={`Pindahkan ${agent.name}`}
+            disabled={busy}
+            onChange={e =>
+              void run(() =>
+                companyCall('agent.move', { id: agent.id, unit_id: e.target.value ? Number(e.target.value) : null })
+              )
+            }
+            value={agent.unit_id ?? ''}
+          >
+            <option value="">Tanpa unit</option>
+            {units.map(u => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <button
+          className="nv-co-btn"
+          data-variant="danger"
+          disabled={busy}
+          onClick={() => {
+            if (window.confirm(`Berhentikan dan hapus ${agent.name} dari Kantor?`)) {
+              void run(() => companyCall('agent.delete', { id: agent.id }))
+            }
+          }}
+          type="button"
+        >
+          Berhentikan
+        </button>
       </div>
+      {(agent.skills?.length || agent.tools?.length || agent.persona) && (
+        <p className="nv-co-muted nv-co-node-meta">
+          {agent.skills?.length ? `Skill: ${agent.skills.join(', ')}` : ''}
+          {agent.tools?.length ? `${agent.skills?.length ? ' · ' : ''}Alat: ${agent.tools.join(', ')}` : ''}
+          {agent.persona ? `${agent.skills?.length || agent.tools?.length ? ' · ' : ''}Persona: ${agent.persona}` : ''}
+        </p>
+      )}
       <ErrorLine error={error} />
       {editing && <AgentEditor agent={agent} agents={agents} onClose={() => setEditing(false)} />}
     </li>
   )
 }
 
-function HireForm({ agents }: { agents: CompanyAgent[] }) {
+function HireForm({ agents, units = [] }: { agents: CompanyAgent[]; units?: CompanyUnit[] }) {
   const [name, setName] = useState('')
   const [title, setTitle] = useState('')
   const [reportsTo, setReportsTo] = useState('')
+  const [unit, setUnit] = useState('')
   const [job, setJob] = useState('')
   const [error, run, busy] = useAction()
 
@@ -262,7 +296,8 @@ function HireForm({ agents }: { agents: CompanyAgent[] }) {
         job_description: job,
         name,
         reports_to: reportsTo ? Number(reportsTo) : null,
-        title
+        title,
+        unit_id: unit ? Number(unit) : null
       })
       setName('')
       setTitle('')
@@ -284,6 +319,16 @@ function HireForm({ agents }: { agents: CompanyAgent[] }) {
             </option>
           ))}
         </select>
+        {units.length > 0 && (
+          <select aria-label="Unit" onChange={e => setUnit(e.target.value)} value={unit}>
+            <option value="">Tanpa unit</option>
+            {units.map(u => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
       <textarea
         aria-label="Deskripsi kerja"
@@ -293,31 +338,124 @@ function HireForm({ agents }: { agents: CompanyAgent[] }) {
         value={job}
       />
       <button className="nv-co-btn" data-variant="primary" disabled={busy || !name.trim()} type="submit">
-        Ajukan
+        Rekrut
       </button>
       <ErrorLine error={error} />
     </form>
   )
 }
 
+function UnitForm({ parent, units }: { parent?: CompanyUnit; units: CompanyUnit[] }) {
+  const [name, setName] = useState('')
+  const [parentId, setParentId] = useState(parent ? String(parent.id) : '')
+  const [error, run, busy] = useAction()
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    void run(async () => {
+      await companyCall('unit.save', {
+        kind: parentId ? 'agency' : 'organisasi',
+        name,
+        parent_id: parentId ? Number(parentId) : null
+      })
+      setName('')
+    })
+  }
+
+  return (
+    <form className="nv-co-form nv-co-card" onSubmit={submit}>
+      <h3>Tambah organisasi / agency</h3>
+      <div className="nv-co-row">
+        <input aria-label="Nama unit" onChange={e => setName(e.target.value)} placeholder="Nama" required value={name} />
+        <select aria-label="Di bawah" onChange={e => setParentId(e.target.value)} value={parentId}>
+          <option value="">Organisasi baru (paling atas)</option>
+          {units.map(u => (
+            <option key={u.id} value={u.id}>
+              Agency di bawah {u.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <button className="nv-co-btn" data-variant="primary" disabled={busy || !name.trim()} type="submit">
+        Tambah
+      </button>
+      <ErrorLine error={error} />
+    </form>
+  )
+}
+
+function UnitRow({ depth, people, unit }: { depth: number; people: number; unit: CompanyUnit }) {
+  const [error, run, busy] = useAction()
+
+  return (
+    <li className="nv-co-node" data-kind={unit.kind} style={{ marginLeft: `${depth * 1.5}rem` }}>
+      <div className="nv-co-node-head">
+        <span className="nv-co-node-name">{unit.name}</span>
+        <span className="nv-co-node-title">{unit.kind === 'organisasi' ? 'Organisasi' : 'Agency'}</span>
+        <span className="nv-co-pill">{people} orang</span>
+        <button
+          className="nv-co-btn"
+          data-variant="danger"
+          disabled={busy}
+          onClick={() => {
+            if (window.confirm(`Hapus ${unit.name}? Isinya pindah ke unit di atasnya.`)) {
+              void run(() => companyCall('unit.delete', { id: unit.id }))
+            }
+          }}
+          type="button"
+        >
+          Hapus
+        </button>
+      </div>
+      <ErrorLine error={error} />
+    </li>
+  )
+}
+
 export function OrgChart({ snap }: { snap: CompanySnapshot }) {
   const active = new Set(snap.active_agents ?? [])
+  const units = Array.isArray(snap.units) ? snap.units : []
+  const tree = unitTree(units)
+  const ordered = tree.map(t => t.unit)
 
   return (
     <div className="nv-co-split">
-      <ul aria-label="Struktur organisasi" className="nv-co-org" data-slot="nv-company-org">
-        {snap.agents.length === 0 && <li className="nv-co-empty">Belum ada pegawai.</li>}
-        {orgTree(snap.agents).map(({ agent, depth }) => (
-          <AgentNode
-            agent={agent}
-            agents={snap.agents}
-            depth={depth}
-            key={agent.id}
-            running={active.has(agent.id) || agent.status === 'running'}
-          />
-        ))}
-      </ul>
-      <HireForm agents={snap.agents} />
+      <div>
+        {tree.length > 0 && (
+          <ul aria-label="Organisasi dan agency" className="nv-co-org" data-slot="nv-company-units">
+            {tree.map(({ depth, unit }) => (
+              <UnitRow
+                depth={depth}
+                key={unit.id}
+                people={snap.agents.filter(a => a.unit_id === unit.id).length}
+                unit={unit}
+              />
+            ))}
+          </ul>
+        )}
+        <ul aria-label="Struktur organisasi" className="nv-co-org" data-slot="nv-company-org">
+          {snap.agents.length === 0 && (
+            <li className="nv-co-empty">
+              Belum ada pegawai. Rekrut di sini, atau minta Neovarch Agent di Chat (“rekrut Sinta sebagai copywriter di
+              agency Kreatif”).
+            </li>
+          )}
+          {orgTree(snap.agents).map(({ agent, depth }) => (
+            <AgentNode
+              agent={agent}
+              agents={snap.agents}
+              depth={depth}
+              key={agent.id}
+              running={active.has(agent.id) || agent.status === 'running'}
+              units={ordered}
+            />
+          ))}
+        </ul>
+      </div>
+      <div>
+        <UnitForm units={ordered} />
+        <HireForm agents={snap.agents} units={ordered} />
+      </div>
     </div>
   )
 }

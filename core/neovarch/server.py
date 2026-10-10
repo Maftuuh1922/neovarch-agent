@@ -154,8 +154,10 @@ class LiveSession:
         self.task: asyncio.Task | None = None
         self.status = "idle"
         self.approvals: dict[str, dict] = {}
+        company = getattr(gw, "company", None)
         self.ctx = ToolContext(cwd=Path(rec.get("cwd") or default_cwd()), approve=self.approve,
-                               office=getattr(gw, "office_status", None))
+                               office=getattr(gw, "office_status", None),
+                               kantor=getattr(company, "main_tool", None))
         self.agent = Agent(rec, gw.store, self.ctx, self.emit)
         self.last_text = ""
         # Desktop composers stage images with image.attach* before prompt.submit;
