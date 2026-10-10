@@ -45,11 +45,14 @@ class NvWakeService : Service(), RecognitionListener {
     private val main = Handler(Looper.getMainLooper())
     private var lastHit = 0L
     @Volatile private var stopped = false
+    /** The app's own dictation holds the microphone (see [holdMic]). */
+    @Volatile private var held = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         stopped = false
+        current = this
         startInForeground("Hey Neo menyiapkan…")
         if (speech == null) Thread { prepareAndListen() }.start()
         return START_STICKY
@@ -133,7 +136,7 @@ class NvWakeService : Service(), RecognitionListener {
         lastHit = now
         // Let the app's dictation have the microphone for a while.
         speech?.setPause(true)
-        main.postDelayed({ speech?.setPause(false) }, 20000)
+        main.postDelayed({ if (!held) speech?.setPause(false) }, 20000)
         val open = Intent(this, MainActivity::class.java)
             .putExtra(EXTRA_ROUTE, "voice")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -162,6 +165,7 @@ class NvWakeService : Service(), RecognitionListener {
 
     override fun onDestroy() {
         stopped = true
+        if (current === this) current = null
         main.removeCallbacksAndMessages(null)
         speech?.stop()
         speech?.shutdown()
@@ -204,6 +208,26 @@ class NvWakeService : Service(), RecognitionListener {
         val MODEL_URLS = listOf(MIRROR_URL, MODEL_URL)
         /** Only the phrase (and "unknown"), so ordinary speech never matches. */
         const val GRAMMAR = "[\"hey neo\", \"[unk]\"]"
+
+        @Volatile private var current: NvWakeService? = null
+
+        /**
+         * Give the microphone to the app's dictation (or take it back). Two
+         * recognisers on one mic made dictation fail with an audio error
+         * while "Hey Neo" was listening. No-op when the service is not running.
+         */
+        fun holdMic(on: Boolean): Boolean {
+            val s = current ?: return false
+            s.main.post {
+                s.held = on
+                try {
+                    s.speech?.setPause(on)
+                } catch (e: Exception) {
+                    // the recogniser is shutting down
+                }
+            }
+            return true
+        }
 
         fun matches(text: String?): Boolean = text != null && Regex("\\bhey neo\\b").containsMatchIn(text.lowercase())
 

@@ -2993,6 +2993,27 @@ export const NEOVARCH_ID = {
       "signInBelow": "Pilih penyedia di bawah."
     }
   },
+  "notifications": {
+    "voice": {
+      "configureSpeechToText": "Atur suara-ke-teks untuk memakai mode suara.",
+      "couldNotStartSession": "Sesi suara tidak bisa dimulai",
+      "microphoneAccessDenied": "Akses mikrofon ditolak.",
+      "microphoneConstraintsUnsupported": "Pengaturan mikrofon ini tidak didukung perangkat.",
+      "microphoneFailed": "Mikrofon gagal",
+      "microphoneInUse": "Mikrofon sedang dipakai aplikasi lain.",
+      "microphonePermissionDenied": "Izin mikrofon ditolak.",
+      "microphoneStartFailed": "Perekaman mikrofon tidak bisa dimulai.",
+      "microphoneUnsupported": "Perekaman mikrofon tidak didukung di sini.",
+      "noMicrophone": "Mikrofon tidak ditemukan.",
+      "noSpeechDetected": "Suara tidak terdengar",
+      "playbackFailed": "Pemutaran suara gagal",
+      "recordingFailed": "Perekaman suara gagal",
+      "transcriptionFailed": "Gagal mengubah suara jadi teks",
+      "transcriptionUnavailable": "Dikte suara di PC belum tersedia. Ketik pesan, atau pakai mik di aplikasi HP.",
+      "tryRecordingAgain": "Coba rekam lagi.",
+      "unavailable": "Suara tidak tersedia"
+    }
+  },
   "modelPicker": {
     "proNeedsSubscription": "Model Pro butuh langganan berbayar."
   }

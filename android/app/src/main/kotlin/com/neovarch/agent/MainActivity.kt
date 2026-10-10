@@ -235,6 +235,7 @@ class MainActivity : FlutterActivity() {
                 result.success(NvWakeService.status(this))
             }
             "wakeStatus" -> result.success(NvWakeService.status(this))
+            "wakeHoldMic" -> result.success(NvWakeService.holdMic(call.argument<Boolean>("hold") == true))
             "wakeBackground" -> result.success(openBackgroundSettings(call.argument<String>("kind") ?: "autostart"))
             "updateWidget" -> {
                 NvHomeWidget.save(this, (call.arguments as? Map<*, *>) ?: emptyMap<String, Any?>())

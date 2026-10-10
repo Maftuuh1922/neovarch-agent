@@ -348,25 +348,29 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
     }
     setState(() => _dictating = true);
     var sent = false;
-    await v.startDictation(
-      locale: ref.read(settingsProvider).sttLocale,
-      onText: (t, done) {
-        if (!mounted) return;
-        _input.text = t;
-        _input.selection = TextSelection.collapsed(offset: t.length);
-        if (done) {
-          setState(() => _dictating = false);
-          if (!sent && t.trim().isNotEmpty) {
-            sent = true;
-            _send();
+    try {
+      await v.startDictation(
+        locale: ref.read(settingsProvider).sttLocale,
+        onText: (t, done) {
+          if (!mounted) return;
+          _input.text = t;
+          _input.selection = TextSelection.collapsed(offset: t.length);
+          if (done) {
+            setState(() => _dictating = false);
+            if (!sent && t.trim().isNotEmpty) {
+              sent = true;
+              _send();
+            }
           }
-        }
-      },
-    );
-    if (v.error != null && mounted) {
-      setState(() => _dictating = false);
-      toast(context, v.error!);
+        },
+      );
+    } catch (e) {
+      // startDictation reports through v.error; this only guards the screen.
+      v.error ??= 'Dikte gagal: $e';
     }
+    if (!mounted) return;
+    if (v.error != null || !v.listening) setState(() => _dictating = v.listening);
+    if (v.error != null) toast(context, v.error!);
   }
 
   void _switchSttLanguage() {
