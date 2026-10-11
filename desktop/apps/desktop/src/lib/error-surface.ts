@@ -94,6 +94,41 @@ export interface ErrorSurface {
    *  `resets_at` body field on a 429). Rendered as "Limit resets at HH:mm" next
    *  to Retry. Absent when the provider named no reset or on older backends. */
   resetsAt?: number
+  /** Neovarch core ≥ 1.4.7 stop codes (turn_budget.py): the core writes the plain
+   *  Indonesian title + message and names ONE action, so desktop and phone show
+   *  identical words. When present they win over the i18n tables. */
+  title?: string
+  action?: NeovarchStopAction
+  actionLabel?: string
+}
+
+export type NeovarchStopAction = 'continue' | 'retry' | 'switch_model' | 'settings'
+
+const STOP_ACTIONS: readonly string[] = ['continue', 'retry', 'switch_model', 'settings']
+
+/** The core's `error` event / `error_info` ({code, title, message, action, action_label}) as an ErrorSurface. */
+export function neovarchStopSurface(value: unknown): ErrorSurface | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const raw = value as { action?: unknown; action_label?: unknown; code?: unknown; message?: unknown; title?: unknown }
+
+  if (typeof raw.title !== 'string' || !raw.title || typeof raw.code !== 'string') {
+    return null
+  }
+
+  const action = typeof raw.action === 'string' && STOP_ACTIONS.includes(raw.action) ? (raw.action as NeovarchStopAction) : undefined
+
+  return {
+    code: raw.code,
+    layer: 'runtime',
+    retryable: action === 'retry' || action === 'continue',
+    title: raw.title,
+    ...(typeof raw.message === 'string' ? { message: raw.message } : {}),
+    ...(action ? { action } : {}),
+    ...(typeof raw.action_label === 'string' ? { actionLabel: raw.action_label } : {})
+  }
 }
 
 /** Validate a wire payload into an ErrorSurface, or null when absent/garbled. */
@@ -256,6 +291,10 @@ export interface ErrorRecoveryPlan {
    *  model.switch); Settings → Models deep link fallback when no chat surface
    *  is on screen. */
   switchProvider: boolean
+  /** Neovarch: send "Lanjutkan" so the stopped job continues from where it stopped. */
+  continueTurn?: boolean
+  /** Neovarch: open Settings (e.g. a rejected API key). */
+  openSettings?: boolean
 }
 
 // Layers where the fix is provider/endpoint/auth config, not a retry.
@@ -294,6 +333,19 @@ export function errorRecoveryPlan(surface: ErrorSurface | null | undefined): Err
     startNewSession: false,
     switchProvider: surface != null && SWITCH_PROVIDER_LAYERS.includes(surface.layer),
     updateApiKey: apiKeyRejected
+  }
+
+  if (surface?.title && surface.action) {
+    // Neovarch core stop: exactly the one action the core named (same as the phone).
+    return {
+      ...base,
+      chooseModel: surface.action === 'switch_model',
+      continueTurn: surface.action === 'continue',
+      openSettings: surface.action === 'settings',
+      retry: surface.action === 'retry',
+      signInFreeTier: false,
+      switchProvider: false
+    }
   }
 
   const key = errorCardKey(surface)

@@ -17,6 +17,7 @@ from neovarch import tempest
 from neovarch import tempest_ckpt
 from neovarch import tempest_lint
 from neovarch import tempest_progress
+from neovarch import turn_budget
 from neovarch.llm import Completion, LLMError, stream_chat
 from neovarch.store import SessionStore
 from neovarch.tools import ToolContext, list_skills, run_tool, tool_schemas
@@ -300,7 +301,8 @@ class Agent:
         self._skipped_notice = False
         vision = uploads.supports_vision(cfg, endpoint)
         self.ctx.approvals_mode = str(cfgmod.get_path(cfg, "approvals.mode", "ask") or "ask")
-        max_turns = int(cfgmod.get_path(cfg, "agent.max_turns", 30) or 30)
+        budget = turn_budget.TurnBudget.from_config(lambda k, d: cfgmod.get_path(cfg, k, d))
+        self.budget = budget
         self.interrupted = False
         turn_started = time.time()
         self.ctx.outbox = []
@@ -333,6 +335,9 @@ class Agent:
             if not vision and any(a.get("kind") == "image" for a in attachments):
                 from neovarch import vision as visionmod  # describe images with a vision fallback model
                 await visionmod.prepare_attachments(cfg, endpoint, user_msg["attachments"], self.emit)
+        if turn_budget.is_continue(user_text) and self.rec.get("last_stop"):
+            # "Lanjutkan" after a stopped turn: continue the same job, not start over.
+            user_msg["wire_tail"] = ((user_msg.get("wire_tail") or "") + "\n\n" + turn_budget.CONTINUE_NOTE).strip()
         messages.append(user_msg)
         if not self.rec.get("title"):
             first = user_text.strip().splitlines()[0][:60] if user_text.strip() else ""
@@ -364,6 +369,7 @@ class Agent:
         final_text = ""
         usage: dict[str, Any] = {}
         error = None
+        error_info: dict | None = None
         persona = ""
         company_persona = getattr(self.ctx, "persona", None)
         if company_persona is not None:  # a Perusahaan agent: name, title, ticket, goal ancestry
@@ -440,10 +446,17 @@ class Agent:
         stuck_notified = False
         schemas = self._tools()  # includes Tempest's update_plan when on
         try:
-            for _ in range(max_turns):
+            while True:
                 if self.interrupted:
                     error = "interrupted"
                     break
+                stop = budget.before_call()
+                if stop:
+                    error_info = turn_budget.describe(stop, steps=budget.steps, seconds=time.monotonic() - started,
+                                                      tokens=budget.tokens)
+                    error = error_info["message"]
+                    break
+                self.emit("turn.progress", budget.progress_payload())
                 wire = [{"role": "system", "content": sys_prompt}] + wire_messages(messages, vision, self.ctx.cwd)
                 if not st:  # Tempest has its own cache-safe compaction below
                     wire = scaffold.compact_wire(wire, ctx_len)
@@ -483,6 +496,7 @@ class Agent:
                             "Pengaturan \u25b8 Agen.")})
                 comp: Completion = await self._complete(use, wire, pinned and use is active)
                 usage = comp.usage or usage
+                budget.add_usage(comp.usage)
                 if st:
                     self._turn_prompt += int((comp.usage or {}).get("prompt_tokens") or 0)
                     self._turn_cached += tempest.cached_tokens(comp.usage)
@@ -543,7 +557,8 @@ class Agent:
                                 self.store.save(self.rec)
                                 continue
                             final_text = final_text + tempest.escalation_note(verify_cmd, summary, st["verify_retries"])
-                            error = "verification failed"
+                            error_info = turn_budget.describe("verification")
+                            error = error_info["message"]
                             if self._progress is not None:
                                 self._progress.mark_verified(False)
                             if self._ckpt and self._ckpt_base:
@@ -588,10 +603,16 @@ class Agent:
                                                 "duration_s": round(dur, 2)})
                     for meta in self.ctx.outbox[sent_before:]:
                         self._emit_attachment(meta)
-            else:
-                error = f"stopped after {max_turns} model calls"
+                    halt = budget.record_tool(prep.name, args, result, bool(ledger.tools[-1]["ok"]))
+                    if halt and not error_info:
+                        error_info = turn_budget.describe(halt, steps=budget.steps, tool=budget.loop_tool)
+                if error_info:
+                    error = error_info["message"]
+                    break
         except LLMError as exc:
-            error = _explain(str(exc), active, self.tried)
+            detail = _explain(str(exc), active, self.tried)
+            error_info = turn_budget.describe(turn_budget.classify_llm_error(str(exc) + " " + detail), detail=detail)
+            error = error_info["message"]
         evidence = scaffold.parse_evidence(final_text) if final_text else None
         if evidence and messages and messages[-1].get("role") == "assistant":
             messages[-1]["evidence"] = evidence
@@ -600,7 +621,12 @@ class Agent:
             self.store.save(self.rec)
         if error and error != "interrupted":
             _log.warning("turn error session=%s model=%s: %s", self.rec.get("id"), endpoint.get("model"), error)
-            self.emit("error", {"message": error})
+            self.emit("error", error_info or turn_budget.describe("model", detail=str(error)))
+        if error_info and error_info.get("action") == "continue":
+            self.rec["last_stop"] = {"code": error_info["code"], "ts": time.time()}
+        elif error != "interrupted":
+            self.rec.pop("last_stop", None)
+        self.store.save(self.rec)
         sent = self._finish_attachments(messages, first_new, final_text, user_text, turn_started)
         elapsed = max(time.monotonic() - started, 1e-6)
         out_tokens = int(usage.get("completion_tokens") or 0)
@@ -617,6 +643,8 @@ class Agent:
                       "context_percent": round(100 * int(usage.get("prompt_tokens") or 0) / ctx_len, 1),
                       **cache_stats},
             **({"error": error} if error else {}),
+            **({"error_info": error_info} if error_info else {}),
+            "steps": budget.steps,
             **({"model": active["model"], "model_fallback": self.fallbacks} if self.fallbacks else {}),
             **({"status": "interrupted"} if error == "interrupted" else {}),
             **({"attachments": sent} if sent else {}),

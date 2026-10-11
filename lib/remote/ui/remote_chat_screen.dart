@@ -327,6 +327,12 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
     _scrollToEnd();
   }
 
+  /// "Coba lagi": send the last thing the person wrote again.
+  void _retryLast() {
+    final last = ref.read(remoteProvider).transcript.messages.lastWhere((m) => m.role == 'user', orElse: () => ChatMsg(id: '', role: 'user', ts: 0));
+    if (last.content.trim().isNotEmpty) _send(last.content);
+  }
+
   Future<void> _send([String? preset]) async {
     final text = (preset ?? _input.text).trim();
     final r = ref.read(remoteProvider);
@@ -438,7 +444,7 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
           kicker: 'chat · $pc',
           title: r.title.isNotEmpty ? r.title : (r.storedId == null ? 'Sesi baru' : 'Percakapan'),
           online: r.connected,
-          status: '${r.statusLabel}${r.running ? ' · agen bekerja' : ''}${tps != null ? ' · ${tps.toStringAsFixed(0)} tok/s' : ''}',
+          status: '${r.statusLabel}${r.running ? ' · agen bekerja' : ''}${r.transcript.stepLabel != null ? ' · ${r.transcript.stepLabel}' : ''}${tps != null ? ' · ${tps.toStringAsFixed(0)} tok/s' : ''}',
           actions: [
             GlassHeaderAction(tooltip: 'Riwayat sesi di PC', icon: CupertinoIcons.clock, onPressed: r.connected ? _sessions : null),
             GlassHeaderAction(tooltip: 'Sesi baru', icon: CupertinoIcons.add, onPressed: r.connected ? r.newChat : null),
@@ -560,6 +566,10 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
               isLast: isLast,
               onLink: (u) => launchUrl(Uri.parse(u), mode: LaunchMode.externalApplication),
               onOpenFile: (p) => openPcFile(context, r.gateway, p),
+              // v1.4.7: one-tap actions of a stopped turn (same as the desktop).
+              onContinue: isLast ? () => _send('Lanjutkan') : null,
+              onRetry: isLast ? _retryLast : null,
+              onSwitchProvider: isLast ? () => showModelSheet(context, r) : null,
             ),
           ),
         );

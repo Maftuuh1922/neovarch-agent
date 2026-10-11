@@ -75,6 +75,8 @@ class AssistantMessage extends StatelessWidget {
     this.onSpeak,
     this.onRetry,
     this.onSwitchProvider,
+    this.onContinue,
+    this.onOpenSettings,
     this.isLast = false,
   });
   final ChatMsg msg;
@@ -87,6 +89,8 @@ class AssistantMessage extends StatelessWidget {
   final VoidCallback? onSpeak;
   final VoidCallback? onRetry;
   final VoidCallback? onSwitchProvider;
+  final VoidCallback? onContinue;
+  final VoidCallback? onOpenSettings;
   final bool isLast;
 
   @override
@@ -115,7 +119,14 @@ class AssistantMessage extends StatelessWidget {
             ShimmerText('menyusun jawaban', style: context.tt.bodySmall),
           ]),
         ),
-      if (msg.error != null) FailureCard(message: msg.error!, onRetry: onRetry, onSwitchProvider: onSwitchProvider),
+      if (msg.error != null)
+        FailureCard(
+            message: msg.error!,
+            info: msg.errorInfo,
+            onRetry: onRetry,
+            onSwitchProvider: onSwitchProvider,
+            onContinue: onContinue,
+            onOpenSettings: onOpenSettings),
       if (!msg.streaming && msg.content.isNotEmpty)
         Padding(
           padding: const EdgeInsets.only(top: 2),
@@ -503,10 +514,30 @@ class _ToolRowState extends State<ToolRow> {
 
 /// Failed turns name the failing layer, with matching recovery actions.
 class FailureCard extends StatelessWidget {
-  const FailureCard({super.key, required this.message, this.onRetry, this.onSwitchProvider});
+  const FailureCard({super.key, required this.message, this.info, this.onRetry, this.onSwitchProvider, this.onContinue, this.onOpenSettings});
   final String message;
+
+  /// Structured stop from the core (v1.4.7): title + plain explanation + one action.
+  final Map<String, dynamic>? info;
   final VoidCallback? onRetry;
   final VoidCallback? onSwitchProvider;
+  final VoidCallback? onContinue;
+  final VoidCallback? onOpenSettings;
+
+  VoidCallback? _actionFor(String? action) => switch (action) {
+        'continue' => onContinue,
+        'retry' => onRetry,
+        'switch_model' => onSwitchProvider,
+        'settings' => onOpenSettings,
+        _ => null,
+      };
+
+  static IconData _iconFor(String? action) => switch (action) {
+        'continue' => Icons.play_arrow_rounded,
+        'switch_model' => Icons.swap_horiz,
+        'settings' => Icons.settings_outlined,
+        _ => Icons.refresh,
+      };
 
   (String, bool) get _layer {
     final m = message.toLowerCase();
@@ -524,7 +555,12 @@ class FailureCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (layer, provider) = _layer;
+    final i = info;
+    final structured = i != null && i['title'] != null;
+    final (layer, provider) = structured ? ('${i['title']}', false) : _layer;
+    final shown = structured ? '${i['message'] ?? message}' : message;
+    final action = structured ? '${i['action'] ?? ''}' : null;
+    final primary = structured ? _actionFor(action) : null;
     final c = context.hc.destructive;
     // On liquid glass (phone remote): neutral inset, only the icon is red.
     final glass = GlassForeground.maybeOf(context)?.tone;
@@ -540,17 +576,19 @@ class FailureCard extends StatelessWidget {
         Row(children: [
           Icon(Icons.error_outline, size: 17, color: c),
           const SizedBox(width: 8),
-          Expanded(child: Text('Giliran gagal · $layer', style: context.tt.titleSmall)),
+          Expanded(child: Text(structured ? layer : 'Giliran gagal · $layer', style: context.tt.titleSmall)),
         ]),
         const SizedBox(height: 6),
-        SelectableText(message, style: context.tt.bodySmall?.copyWith(color: context.cs.onSurface)),
+        SelectableText(shown, style: context.tt.bodySmall?.copyWith(color: context.cs.onSurface)),
         Wrap(spacing: 4, children: [
-          if (onRetry != null) TextButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh, size: 16), label: const Text('Coba lagi')),
-          if (provider && onSwitchProvider != null)
+          if (primary != null)
+            TextButton.icon(onPressed: primary, icon: Icon(_iconFor(action), size: 16), label: Text('${i!['action_label'] ?? 'Coba lagi'}')),
+          if (!structured && onRetry != null) TextButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh, size: 16), label: const Text('Coba lagi')),
+          if (!structured && provider && onSwitchProvider != null)
             TextButton.icon(onPressed: onSwitchProvider, icon: const Icon(Icons.swap_horiz, size: 16), label: const Text('Ganti penyedia')),
           TextButton.icon(
             onPressed: () {
-              Clipboard.setData(ClipboardData(text: 'layer: $layer\n$message'));
+              Clipboard.setData(ClipboardData(text: 'layer: $layer\n$shown${structured ? '\ncode: ${i['code']}' : ''}'));
               toast(context, 'Detail galat disalin');
             },
             icon: const Icon(Icons.copy_rounded, size: 16),

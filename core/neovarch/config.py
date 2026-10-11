@@ -15,7 +15,7 @@ Shape (all keys optional)::
     approvals:
       mode: ask                     # ask | off  (off = never ask, run everything)
     agent:
-      max_turns: 30
+      max_turns: 150                # checkpoint: a turn still making progress continues past it (see turn_budget.py)
       system_prompt: ""             # extra instructions appended to SOUL.md
       harness_mode: legacy          # legacy (default) | tempest  (opt-in prototype, see tempest.py; "tempa" = old alias)
       tempest_profile: ringan       # ringan | tinggi | otomatis   (only with harness_mode: tempest)
@@ -60,7 +60,7 @@ DEFAULTS: dict[str, Any] = {
     "providers": {},
     "custom_providers": [],
     "approvals": {"mode": "ask"},
-    "agent": {"max_turns": 30, "system_prompt": ""},
+    "agent": {"max_turns": 150, "system_prompt": ""},
     # Settings › Obrolan › Perilaku and Ruang kerja › Proyek / Shell / File
     "timezone": "",
     "display": {"show_reasoning": True},

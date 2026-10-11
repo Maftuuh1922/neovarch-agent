@@ -2,7 +2,7 @@ import { isSessionNotOwnedError } from '@/app/session/hooks/use-prompt-actions/u
 import { runtimeTranslations, translateNow } from '@/i18n'
 import { textPart } from '@/lib/chat-messages'
 import { coerceGatewayText } from '@/lib/chat-runtime'
-import type { ErrorSurface } from '@/lib/error-surface'
+import { type ErrorSurface, neovarchStopSurface } from '@/lib/error-surface'
 import { errorCardText } from '@/lib/error-surface-copy'
 import { isProviderSetupErrorCode, isProviderSetupErrorMessage } from '@/lib/provider-setup-errors'
 import { type AgentNoticePayload, clearAgentNotice, nativeNoticeInput, showAgentNotice } from '@/store/agent-notices'
@@ -291,7 +291,10 @@ export function handleStatusEvent(ctx: GatewayEventContext): boolean {
     // as a classified turn: a live-owner refusal (SESSION_NOT_OWNED, #106217)
     // is deterministic — Retry hits the same wall, only a new chat helps —
     // and disk-full is a machine problem, not a provider one.
-    const surface: ErrorSurface | null = isSessionNotOwnedError(new Error(errorMessage))
+    // Neovarch core ≥ 1.4.7: a coded stop with its own title / message / action.
+    const stop = neovarchStopSurface(payload)
+
+    const surface: ErrorSurface | null = stop ? stop : isSessionNotOwnedError(new Error(errorMessage))
       ? { code: 'SESSION_NOT_OWNED', layer: 'gateway', retryable: false }
       : isDiskFullErrorMessage(errorMessage)
         ? { code: 'disk_full', layer: 'disk', retryable: false }
@@ -304,6 +307,7 @@ export function handleStatusEvent(ctx: GatewayEventContext): boolean {
     // burying it under a generic "couldn't finish" gloss would hide the one
     // instruction the user needs.
     const card = surface ? errorCardText(runtimeTranslations().assistant.thread, surface) : null
+    // (for a Neovarch stop the card text IS the core's title + message)
     const toastMessage = card ? `${card.title}. ${card.body}` : errorMessage
 
     // A turn that errors out has also ended — drop any open blocking prompt

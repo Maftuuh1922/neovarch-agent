@@ -26,6 +26,11 @@ export function errorCardText(
   thread: Translations['assistant']['thread'],
   surface: ErrorSurface | null | undefined
 ): ErrorCardText {
+  // Neovarch core ≥ 1.4.7 writes the words itself (identical on the phone).
+  if (surface?.title && surface.message) {
+    return { body: surface.message, title: surface.title }
+  }
+
   const provider = errorProviderName(thread, surface)
 
   // A credential rejection is worded by HOW the provider is credentialed
