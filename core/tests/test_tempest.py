@@ -133,3 +133,148 @@ async def test_agent_legacy_wire_unchanged_and_tempest_gate(home, tmp_path, monk
     assert seen[1][-1]["content"].startswith("rejected:")
     assert "[verifikasi otomatis gagal" in seen[3][-1]["content"]
     assert (tmp_path / "m.py").read_text().endswith("return 2\n")
+
+
+# ------------------------------------------------------------ cache layout v2 -----
+
+def test_stable_tools_order_and_keys():
+    a = [{"type": "function", "function": {"name": "b", "parameters": {"y": 1, "x": 2}, "description": "d"}},
+         {"function": {"description": "d", "name": "a"}, "type": "function"}]
+    b = [{"function": {"name": "a", "description": "d"}, "type": "function"},
+         {"function": {"parameters": {"x": 2, "y": 1}, "description": "d", "name": "b"}, "type": "function"}]
+    assert json.dumps(tempest.stable_tools(a)) == json.dumps(tempest.stable_tools(b))
+    assert [t["function"]["name"] for t in tempest.stable_tools(a)] == ["a", "b"]
+
+
+def test_config_change_note():
+    old = [["soul", "s"], ["memory", "m1"], ["cwd", "Current working directory: /a"]]
+    new = [["soul", "s"], ["memory", "m2"], ["skills", "k"], ["cwd", "Current working directory: /b"]]
+    note = tempest.config_change_note(old, new)
+    assert note.startswith("# Perubahan konfigurasi") and "m2" in note and "/b" in note and "k" in note
+    assert "Persona dasar" not in note  # unchanged sections are not repeated
+    assert "dihapus" in tempest.config_change_note(old, old[:2])
+    assert tempest.config_change_note(old, old) == ""
+
+
+def test_place_breakpoints_max_four_and_stable_bytes():
+    wire = [{"role": "system", "content": "STATIC PART\n\nsemi static"}, {"role": "user", "content": "u"}]
+    for i in range(6):
+        wire.append({"role": "assistant", "content": None,
+                     "tool_calls": [{"id": f"c{i}", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]})
+        wire.append({"role": "tool", "tool_call_id": f"c{i}", "content": f"out {i}"})
+    out = tempest.place_breakpoints(wire, len("STATIC PART") + 2, 9)
+    assert tempest.count_breakpoints(out) == 4
+    assert out[0]["content"][0]["text"] == "STATIC PART\n\n" and out[0]["content"][0]["cache_control"]
+    assert out[-1]["content"][-1]["cache_control"] and out[9]["content"][-1]["cache_control"]
+    assert isinstance(out[1]["content"], list) and out[2]["content"] is None  # tool-call turn untouched
+    assert wire[1]["content"] == "u"  # input not mutated
+    # without a split: system + 2 messages = 3, never more than 4
+    assert tempest.count_breakpoints(tempest.place_breakpoints(wire, None, 5)) == 3
+    one = tempest.place_breakpoints(wire, None, None, ttl="1h")
+    assert one[-1]["content"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    # the next call (two more messages) keeps every earlier message byte-identical (markers aside)
+    nxt = wire + [{"role": "assistant", "content": "ok"}, {"role": "user", "content": "lagi"}]
+    assert tempest.prefix_violation(out, tempest.place_breakpoints(nxt, len("STATIC PART") + 2, len(wire) - 1)) is None
+
+
+def test_wants_breakpoints():
+    st = {"cache_v2": True, "cache_breakpoints": "auto"}
+    assert tempest.wants_breakpoints(st, {"model": "anthropic/claude-sonnet-4.5"})
+    assert tempest.wants_breakpoints(st, {"model": "x", "base_url": "https://api.anthropic.com/v1"})
+    assert not tempest.wants_breakpoints(st, {"model": "deepseek-chat"})
+    assert not tempest.wants_breakpoints({"cache_v2": False}, {"model": "claude-3"})
+    assert tempest.wants_breakpoints({**st, "cache_breakpoints": "on"}, {"model": "gpt"})
+    assert not tempest.wants_breakpoints({**st, "cache_breakpoints": "off"}, {"model": "claude"})
+
+
+def test_prefix_violation_and_cached_tokens():
+    a = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
+    assert tempest.prefix_violation(None, a) is None
+    assert tempest.prefix_violation(a, a + [{"role": "assistant", "content": "x"}]) is None
+    assert tempest.prefix_violation(a, [{"role": "system", "content": "s2"}, a[1]]) == 0
+    # the previous call's LAST message may differ (ephemeral tail), anything before may not
+    assert tempest.prefix_violation(a, [a[0], {"role": "user", "content": "u + tail"}]) is None
+    assert tempest.cached_tokens({"prompt_tokens_details": {"cached_tokens": 1280}}) == 1280
+    assert tempest.cached_tokens({"cache_read_input_tokens": 77}) == 77
+    assert tempest.cached_tokens({}) == 0
+
+
+async def _multi_turn(home, tmp_path, monkeypatch, agent_cfg, model="m"):
+    """4 turns with tool calls; between turns the clock moves, a memory note and a skill
+    appear, and the working directory changes. Returns every wire + tools the model saw."""
+    import neovarch.agent as agentmod
+    from neovarch import config as cfgmod
+    from neovarch.agent import Agent
+    from neovarch.llm import Completion, ToolCall
+    from neovarch.store import SessionStore
+    from neovarch.tools import ToolContext
+
+    cfg = cfgmod.load_config()
+    cfg["model"] = {"provider": "custom", "default": model, "base_url": "http://127.0.0.1:9/v1"}
+    cfg["approvals"] = {"mode": "off"}
+    cfg.setdefault("agent", {}).update(agent_cfg)
+    cfgmod.save_config(cfg)
+    monkeypatch.setenv("NEOVARCH_API_KEY", "x")
+    (tmp_path / "a.txt").write_text("hello\n")
+    (tmp_path / "sub").mkdir()
+    clock = ["2026-10-11 09:00"]
+    monkeypatch.setattr(agentmod, "now_text", lambda _c: clock[0])
+    seen = []
+
+    async def fake(*, messages, tools=None, **_kw):
+        seen.append((messages, tools))
+        if messages[-1]["role"] == "user":
+            return Completion(text="", tool_calls=[ToolCall(id=f"r{len(seen)}", name="read_file",
+                                                            arguments=json.dumps({"path": "a.txt"}))])
+        return Completion(text="ok")
+    monkeypatch.setattr(agentmod, "stream_chat", fake)
+    store = SessionStore()
+    rec = store.create(cwd=str(tmp_path))
+    agent = Agent(rec, store, ToolContext(cwd=tmp_path, approve=None), lambda k, p: None)
+    await agent.run_turn("satu")
+    clock[0] = "2026-10-11 09:07"
+    await agent.run_turn("dua")
+    (home / "memory").mkdir(exist_ok=True)
+    (home / "memory" / "proyek.md").write_text("kode: TULIP-7\n")
+    sk = home / "skills" / "baru"
+    sk.mkdir(parents=True)
+    (sk / "SKILL.md").write_text("---\nname: baru\ndescription: skill baru\n---\n")
+    await agent.run_turn("tiga")
+    agent.ctx.cwd = tmp_path / "sub"
+    await agent.run_turn("empat")
+    return seen, rec
+
+
+async def test_cache_v2_prefix_never_changes_across_turns(home, tmp_path, monkeypatch):
+    """The prefix lint: with cache v2 every call's wire extends the previous one byte for byte,
+    even across clock, memory, skill and cwd changes; the changes arrive as appended notes."""
+    seen, rec = await _multi_turn(home, tmp_path, monkeypatch,
+                                  {"harness_mode": "tempest", "tempest_mask": False, "tempest_cache_v2": True})
+    assert len(seen) == 8
+    for (prev, _), (cur, _) in zip(seen, seen[1:]):
+        assert tempest.prefix_violation(prev, cur) is None
+    tools = [json.dumps(t, sort_keys=False) for _, t in seen]
+    assert len(set(tools)) == 1 and json.loads(tools[0]) == tempest.stable_tools(json.loads(tools[0]))
+    last_user = [m for m in seen[-1][0] if m["role"] == "user"]
+    assert "TULIP-7" in last_user[2]["content"] and "baru" in last_user[2]["content"]
+    assert "Perubahan konfigurasi" in last_user[3]["content"] and str(tmp_path / "sub") in last_user[3]["content"]
+    assert "TULIP-7" not in seen[-1][0][0]["content"]  # the system prompt stayed frozen
+
+
+async def test_without_cache_v2_the_prefix_breaks(home, tmp_path, monkeypatch):
+    """Sanity check for the lint: Phase-1 Tempest rebuilds the system prompt (memory/skill/cwd)."""
+    seen, _ = await _multi_turn(home, tmp_path, monkeypatch, {"harness_mode": "tempest", "tempest_mask": False})
+    breaks = [tempest.prefix_violation(p, c) for (p, _), (c, _) in zip(seen, seen[1:])]
+    assert any(b == 0 for b in breaks)
+
+
+async def test_cache_v2_anthropic_breakpoints(home, tmp_path, monkeypatch):
+    seen, _ = await _multi_turn(home, tmp_path, monkeypatch,
+                                {"harness_mode": "tempest", "tempest_mask": False, "tempest_cache_v2": True},
+                                model="claude-haiku-4.5")
+    for wire, _ in seen:
+        assert 1 <= tempest.count_breakpoints(wire) <= 4
+        assert wire[0]["content"][-1].get("cache_control")
+    for (prev, _), (cur, _) in zip(seen, seen[1:]):
+        assert tempest.prefix_violation(prev, cur) is None
+

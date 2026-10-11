@@ -65,15 +65,18 @@ def persona_prompt(session_id: str | None, office: dict | None) -> str:
     return "\n".join(lines)
 
 
-def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "", stable: bool = False) -> str:
-    """The system prompt. ``stable`` (Tempest) leaves out what changes per message or minute
-    (vault notes matched to this message, the clock); those go to :func:`prompt_tail`."""
-    parts = [cfgmod.soul_text().strip(), APP_KNOWLEDGE]
+def system_sections(cfg: dict, cwd: Path, query: str = "", persona: str = "",
+                    stable: bool = False) -> list[tuple[str, str]]:
+    """The system prompt as ordered (key, text) sections; see :func:`system_prompt`.
+
+    Keys: soul, app, persona, extra, memory, vault, skills, cwd. Tempest cache v2 freezes
+    these per session and appends a note for the ones that change later."""
+    parts: list[tuple[str, str]] = [("soul", cfgmod.soul_text().strip()), ("app", APP_KNOWLEDGE)]
     if persona:
-        parts.append(persona)
+        parts.append(("persona", persona))
     extra = str(cfgmod.get_path(cfg, "agent.system_prompt", "") or "").strip()
     if extra:
-        parts.append(extra)
+        parts.append(("extra", extra))
     home = cfgmod.neovarch_home()
     notes = sorted((home / "memory").glob("*.md")) if (home / "memory").exists() else []
     if notes:
@@ -83,19 +86,33 @@ def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "", stab
             if text:
                 mem.append(f"## {p.stem}\n{text[:4000]}")
         if mem:
-            parts.append("# Memory notes (from earlier sessions)\n" + "\n\n".join(mem))
+            parts.append(("memory", "# Memory notes (from earlier sessions)\n" + "\n\n".join(mem)))
     vault = _vault_prompt(cfg, "" if stable else query)
-    parts.extend(vault)
+    if vault:
+        parts.append(("vault", "\n\n".join(vault)))
     skills = list_skills()
     if skills:
-        parts.append("# Skills (read one with the `skill` tool before using it)\n"
-                     + "\n".join(f"- {s['name']}: {s['description']}" for s in skills))
+        parts.append(("skills", "# Skills (read one with the `skill` tool before using it)\n"
+                      + "\n".join(f"- {s['name']}: {s['description']}" for s in skills)))
     if stable:
-        parts.append(f"Current working directory: {cwd}\n(The current date/time and notes matched to a "
-                     "message are given at the end of that user message under '# Konteks saat ini'.)")
+        parts.append(("cwd", f"Current working directory: {cwd}\n(The current date/time and notes matched to a "
+                             "message are given at the end of that user message under '# Konteks saat ini'.)"))
     else:
-        parts.append(f"Current working directory: {cwd}\nDate: {now_text(cfg)}")
-    return "\n\n".join(parts)
+        parts.append(("cwd", f"Current working directory: {cwd}\nDate: {now_text(cfg)}"))
+    return parts
+
+
+STATIC_SECTIONS = ("soul", "app", "persona", "extra")
+
+
+def join_sections(sections) -> str:
+    return "\n\n".join(text for _, text in sections)
+
+
+def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "", stable: bool = False) -> str:
+    """The system prompt. ``stable`` (Tempest) leaves out what changes per message or minute
+    (vault notes matched to this message, the clock); those go to :func:`prompt_tail`."""
+    return join_sections(system_sections(cfg, cwd, query, persona, stable))
 
 
 def prompt_tail(cfg: dict, query: str) -> str:
@@ -207,13 +224,47 @@ class Agent:
                 persona = persona_prompt(self.rec.get("id"), self.ctx.office() if self.ctx.office else None)
             except Exception:  # the Kantor must never break a turn
                 persona = persona_prompt(self.rec.get("id"), None)
+        kantor = ""
         if "@kantor" in user_text.lower() and self.ctx.office is not None:
             try:  # `@kantor` attaches the live Kantor state to this turn
                 from neovarch.tools import office_summary
-                persona += "\n\n# Kantor saat ini (diminta lewat @kantor)\n" + office_summary(self.ctx.office())
+                kantor = "# Kantor saat ini (diminta lewat @kantor)\n" + office_summary(self.ctx.office())
             except Exception:
                 pass
-        sys_prompt = system_prompt(cfg, self.ctx.cwd, user_text, persona, stable=bool(st))
+        system_split = None
+        if st and st.get("cache_v2"):
+            # Cache layout v2: the system prompt is frozen for the session; a later change
+            # rides on this user message as an appended note (the prefix never changes).
+            sections = [[k, v] for k, v in system_sections(cfg, self.ctx.cwd, user_text, persona, stable=True)]
+            prefix = self.rec.get("tempest_prefix")
+            tail_extra = []
+            if not prefix or not prefix.get("frozen"):
+                prefix = {"frozen": sections, "current": sections}
+                self.rec["tempest_prefix"] = prefix
+            else:
+                note = tempest.config_change_note(prefix.get("current") or prefix["frozen"], sections)
+                if note:
+                    tail_extra.append(note)
+                    prefix["current"] = sections
+            if kantor:
+                tail_extra.append(kantor)
+            if tail_extra:
+                user_msg["wire_tail"] = (user_msg.get("wire_tail") or "") + "\n\n" + "\n\n".join(tail_extra)
+            frozen = prefix["frozen"]
+            sys_prompt = join_sections(frozen)
+            static = [x for x in frozen if x[0] in STATIC_SECTIONS]
+            if static and len(static) < len(frozen) and frozen[:len(static)] == static:
+                system_split = len(join_sections(static)) + 2
+            self.store.save(self.rec)
+        else:
+            if kantor:
+                persona += "\n\n" + kantor
+            sys_prompt = system_prompt(cfg, self.ctx.cwd, user_text, persona, stable=bool(st))
+        breakpoints = tempest.wants_breakpoints(st, endpoint)
+        lint_prefix = bool(st and st.get("cache_v2") and not st.get("mask"))
+        self._turn_prompt = 0
+        self._turn_cached = 0
+        prefix_breaks = 0
         pinned = bool(override.get("model") or override.get("provider")) or \
             modelsmod.agent_model(cfg, "session:" + str(self.rec.get("id") or "x"))["source"] == "agent"
         # The endpoint this turn really uses: a free 9Router model that is cooling down
@@ -237,8 +288,21 @@ class Agent:
                 wire = [{"role": "system", "content": sys_prompt}] + wire_messages(messages, vision, self.ctx.cwd)
                 if st:
                     wire = tempest.mask_wire(wire, st)
+                if breakpoints:
+                    wire = tempest.place_breakpoints(wire, system_split, getattr(self, "_prev_last", None),
+                                                     str(st.get("cache_ttl") or ""))
+                    self._prev_last = len(wire) - 1
+                if lint_prefix:
+                    bad = tempest.prefix_violation(getattr(self, "_prev_wire", None), wire)
+                    if bad is not None:
+                        prefix_breaks += 1
+                        _log.warning("tempest prefix changed at message %d session=%s", bad, self.rec.get("id"))
+                    self._prev_wire = wire
                 comp: Completion = await self._complete(active, wire, pinned)
                 usage = comp.usage or usage
+                if st:
+                    self._turn_prompt += int((comp.usage or {}).get("prompt_tokens") or 0)
+                    self._turn_cached += tempest.cached_tokens(comp.usage)
                 assistant: dict[str, Any] = {"role": "assistant", "content": comp.text, "ts": time.time()}
                 if comp.reasoning:
                     assistant["reasoning"] = comp.reasoning
@@ -298,10 +362,16 @@ class Agent:
         elapsed = max(time.monotonic() - started, 1e-6)
         out_tokens = int(usage.get("completion_tokens") or 0)
         ctx_len = int(cfgmod.get_path(cfg, "model.context_length", 128000) or 128000)
+        cache_stats = {}
+        if st:
+            cache_stats = {"cache_read_tokens": self._turn_cached,
+                           "cache_read_ratio": round(self._turn_cached / self._turn_prompt, 4) if self._turn_prompt else None,
+                           "prefix_breaks": prefix_breaks}
         self.emit("message.complete", {
             "text": final_text,
             "usage": {**usage, "avg_tps": round(out_tokens / elapsed, 1) if out_tokens else None,
-                      "context_percent": round(100 * int(usage.get("prompt_tokens") or 0) / ctx_len, 1)},
+                      "context_percent": round(100 * int(usage.get("prompt_tokens") or 0) / ctx_len, 1),
+                      **cache_stats},
             **({"error": error} if error else {}),
             **({"model": active["model"], "model_fallback": self.fallbacks} if self.fallbacks else {}),
             **({"status": "interrupted"} if error == "interrupted" else {}),
@@ -331,6 +401,13 @@ class Agent:
         return (f"rejected: perubahan pada {path} membuat sintaks rusak, file dikembalikan ke isi sebelumnya.\n"
                 f"{err}\nPerbaiki lalu kirim ulang {name}.")
 
+    def _tools(self) -> list[dict]:
+        tools = tool_schemas(self.ctx)
+        st = getattr(self, "_tempest", None)
+        if st and st.get("cache_v2"):
+            tools = tempest.stable_tools(tools)
+        return tools
+
     async def _stream(self, endpoint: dict, wire: list[dict], started: list[bool],
                       on_first: Callable[[], None] | None = None) -> Completion:
         def first() -> None:
@@ -349,7 +426,7 @@ class Agent:
 
         return await stream_chat(
             base_url=endpoint["base_url"], api_key=endpoint["api_key"], model=endpoint["model"],
-            messages=wire, tools=tool_schemas(self.ctx), on_text=on_text, on_reasoning=on_reasoning,
+            messages=wire, tools=self._tools(), on_text=on_text, on_reasoning=on_reasoning,
             extra_headers=endpoint.get("headers") or None,
             verify_ssl=endpoint.get("verify_ssl", True),
             reasoning_effort=getattr(self, "_effort", None),
