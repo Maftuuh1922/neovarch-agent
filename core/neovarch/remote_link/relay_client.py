@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import random
+import socket
 from typing import Callable
 
 import aiohttp
@@ -184,5 +185,19 @@ class RelayClient:
 
 
 def _short(exc: BaseException) -> str:
+    """One Indonesian sentence for the PC's Remote settings (never a raw stack message)."""
     msg = str(exc) or exc.__class__.__name__
+    low = msg.lower()
+    chain = [exc, getattr(exc, "__cause__", None), getattr(exc, "os_error", None)]
+    if any(isinstance(e, socket.gaierror) for e in chain if e is not None) or \
+            "name or service not known" in low or "nodename nor servname" in low or "getaddrinfo" in low \
+            or "no address associated" in low or "temporary failure in name resolution" in low:
+        return ("Alamat relay tidak ditemukan (DNS). Relay ini belum aktif: sambungkan HP lewat Wi-Fi yang sama "
+                "atau Tailscale, atau isi Relay URL milikmu sendiri di Pengaturan › Remote.")
+    if "replaced by another connection" in low:
+        return "PC lain memakai identitas relay yang sama; koneksi ini digantikan."
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or "timeout" in low or "timed out" in low:
+        return "Relay tidak menjawab (waktu habis). Periksa koneksi internet PC."
+    if "403" in low or "401" in low:
+        return "Relay menolak PC ini (kunci ruang tidak cocok)."
     return msg[:160]

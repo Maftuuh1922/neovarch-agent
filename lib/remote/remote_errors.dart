@@ -12,7 +12,11 @@ class RemoteUnreachable implements Exception {
   const RemoteUnreachable({this.relayAvailable = false});
   final bool relayAvailable;
   @override
-  String toString() => relayAvailable ? 'PC tidak terjangkau. Mencoba lewat relay…' : 'PC tidak terjangkau. Pastikan PC menyala dan Neovarch berjalan.';
+  // Shown after every route was tried (LAN, Tailscale, then Bluetooth/relay), so
+  // it says what to check instead of "trying the relay…" (v1.4.7).
+  String toString() => relayAvailable
+      ? 'PC tidak terjangkau lewat Wi-Fi maupun relay. Pastikan PC menyala, HP dan PC di Wi-Fi yang sama (izinkan Neovarch di firewall PC), atau pakai Tailscale.'
+      : 'PC tidak terjangkau. Pastikan PC menyala, HP dan PC di Wi-Fi yang sama (izinkan Neovarch di firewall PC), atau pakai Tailscale.';
 }
 
 /// Prefix of a per-device session token the PC hands out after pairing.

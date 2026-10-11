@@ -170,7 +170,7 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
     this.heartbeat = const Duration(seconds: 15),
     this.pingTimeout = const Duration(seconds: 8),
     this.autoReconnect = true,
-    this.lanTimeout = const Duration(milliseconds: 2500),
+    this.lanTimeout = const Duration(milliseconds: 4000),
     this.wanTimeout = const Duration(seconds: 6),
     math.Random? random,
     this.link,
