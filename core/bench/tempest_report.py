@@ -19,8 +19,12 @@ def load(path: str) -> list[dict]:
     out = []
     for line in open(path, encoding="utf-8"):
         line = line.strip()
-        if line:
+        if not line:
+            continue
+        try:
             out.append(json.loads(line))
+        except json.JSONDecodeError:  # a run killed mid-write; the resumable runner redoes it
+            continue
     # newest record wins for a (task, arm, seed)
     last = {}
     for r in out:
