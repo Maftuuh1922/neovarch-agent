@@ -6,6 +6,8 @@
  * mirror the English key set exactly) are not forced to carry copy they never
  * show. Interpolation uses `{name}` placeholders filled by `fmt()`.
  */
+import { nvPick } from './neovarch-lang'
+
 export const NV_SOCIAL_ID = {
   rail: 'Profil & Teman',
   kicker: 'Profil & Teman',
@@ -88,11 +90,90 @@ export const NV_SOCIAL_ID = {
 
 export type NvSocialKey = keyof typeof NV_SOCIAL_ID
 
+/** The same copy in English (Settings → language: English). */
+export const NV_SOCIAL_EN: Record<NvSocialKey, string> = {
+  rail: "Profile & Friends",
+  kicker: "Profile & Friends",
+  title: "Profile & Friends",
+  sub: "Your profile comes from GitHub, its activity is counted on this PC, then published to a public Gist. Friends = people who follow each other on GitHub.",
+  signIn: "Sign in with GitHub",
+  signOut: "Sign out",
+  signingIn: "Waiting for approval on GitHub…",
+  deviceStep1: "Open {url} and enter this code:",
+  copyCode: "Copy code",
+  openGithub: "Open GitHub",
+  cancel: "Cancel",
+  noClientId: "The GitHub OAuth App Client ID is not set.",
+  noClientIdHelp: "Create an OAuth App on GitHub (Settings → Developer settings → OAuth Apps → New, tick \"Enable Device Flow\"), then paste its Client ID here. No client secret needed.",
+  clientIdLabel: "GitHub Client ID",
+  clientIdSave: "Save",
+  signedOutTitle: "Not signed in",
+  signedOutBody: "Sign in with GitHub to show your profile, activity graph, the stack you use most, and friends who are coding right now.",
+  codingNow: "Coding now",
+  codingIn: "Coding · {project}",
+  idle: "Idle",
+  lastActive: "Active {when}",
+  heatmapTitle: "Activity, last 365 days",
+  heatmapLegendLess: "Less",
+  heatmapLegendMore: "More",
+  heatmapSummary: "{total} activities · {days} active days · {streak}-day streak",
+  heatmapCell: "{date}: {count} activities",
+  stackTitle: "Most-used stack",
+  toolsTitle: "Agent tools",
+  stackEmpty: "No stack data yet.",
+  friendsTitle: "Friends",
+  friendsCount: "{n} friends · {coding} coding now",
+  friendsEmpty: "No friends yet. Friends are GitHub accounts that follow you and that you follow back.",
+  pendingTitle: "Waiting for a follow back",
+  noNeovarch: "Not using Neovarch yet",
+  addFriend: "Add friend",
+  searchPlaceholder: "Search GitHub username…",
+  follow: "Follow",
+  following: "Following",
+  followsYou: "Follows you",
+  unfriend: "Remove friend",
+  unfriendConfirm: "Remove {login} from friends? This unfollows {login} on GitHub.",
+  unfriendYes: "Yes, unfollow",
+  back: "Back",
+  openProfile: "GitHub profile",
+  privacyTitle: "Privacy & publishing",
+  publishHeatmap: "Publish activity graph",
+  publishStack: "Publish stack",
+  publishStatus: "Publish \"coding now\" status",
+  shareProject: "Show the project name while coding",
+  includeContrib: "Include GitHub contributions in the graph",
+  paused: "Pause publishing",
+  publishNow: "Publish now",
+  publishedAt: "Last published {when}",
+  neverPublished: "Never published",
+  gistLink: "View Gist",
+  loading: "Loading…",
+  retry: "Try again",
+  error: "Could not load: {message}",
+  justNow: "just now",
+  minutesAgo: "{n} min ago",
+  hoursAgo: "{n} h ago",
+  daysAgo: "{n} days ago",
+  share: "Share profile",
+  shareTitle: "Share profile",
+  shareFormat: "Card format",
+  shareStory: "Story 9:16",
+  shareSquare: "Square 1:1",
+  sharePreview: "Profile card preview",
+  shareSize: "PNG {w}×{h} pixels",
+  shareSave: "Save PNG",
+  shareSaved: "PNG saved to your downloads folder.",
+  shareCopy: "Copy image",
+  shareCopied: "Image copied to the clipboard.",
+  shareLink: "Copy Gist link",
+  shareLinkCopied: "Profile link copied."
+}
+
 /** Fill `{name}` placeholders. Unknown placeholders are left as-is. */
 export function fmt(template: string, args: Record<string, number | string> = {}): string {
   return template.replace(/\{(\w+)\}/g, (all, key: string) => (key in args ? String(args[key]) : all))
 }
 
 export function socialT(key: NvSocialKey, args?: Record<string, number | string>): string {
-  return fmt(NV_SOCIAL_ID[key], args)
+  return fmt(nvPick({ en: NV_SOCIAL_EN, id: NV_SOCIAL_ID })[key], args)
 }

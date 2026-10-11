@@ -32,7 +32,7 @@ const OVERLAYS = {
   ru: ruOverrides,
   zh: zhOverrides,
   'zh-hant': zhHantOverrides
-} satisfies Record<Exclude<BundledLocale, 'en'>, TranslationOverrides>
+} satisfies Record<Exclude<BundledLocale, 'en' | 'en-us'>, TranslationOverrides>
 
 // `intro` is display-only; intro.test.tsx covers its translated rotation.
 const translatable = (tree: TranslationOverrides) => flattenMessageKeys(tree).filter(key => !key.startsWith('intro.'))
