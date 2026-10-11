@@ -42,6 +42,9 @@ describe('agent attachments (send_file)', () => {
     const assistant = messages.find(m => m.role === 'assistant')
     const text = assistant?.parts.map(p => ('text' in p ? String(p.text) : '')).join('\n') ?? ''
 
-    expect(text).toContain(`MEDIA:"${shot.path}"`)
+    // hydration renders the MEDIA line as the desktop's inline image link
+    expect(text).toContain('Ini dia')
+    expect(text).toContain('[Image: aa11bb22cc33-screenshot.png](#media:')
+    expect(text).toContain(encodeURIComponent(shot.path))
   })
 })
