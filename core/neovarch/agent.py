@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -10,6 +11,7 @@ from typing import Any, Callable
 
 from neovarch import config as cfgmod
 from neovarch import session_settings
+from neovarch import tempa
 from neovarch.llm import Completion, LLMError, stream_chat
 from neovarch.store import SessionStore
 from neovarch.tools import ToolContext, list_skills, run_tool, tool_schemas
@@ -63,7 +65,9 @@ def persona_prompt(session_id: str | None, office: dict | None) -> str:
     return "\n".join(lines)
 
 
-def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "") -> str:
+def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "", stable: bool = False) -> str:
+    """The system prompt. ``stable`` (Tempa) leaves out what changes per message or minute
+    (vault notes matched to this message, the clock); those go to :func:`prompt_tail`."""
     parts = [cfgmod.soul_text().strip(), APP_KNOWLEDGE]
     if persona:
         parts.append(persona)
@@ -80,13 +84,33 @@ def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "") -> s
                 mem.append(f"## {p.stem}\n{text[:4000]}")
         if mem:
             parts.append("# Memory notes (from earlier sessions)\n" + "\n\n".join(mem))
-    parts.extend(_vault_prompt(cfg, query))
+    vault = _vault_prompt(cfg, "" if stable else query)
+    parts.extend(vault)
     skills = list_skills()
     if skills:
         parts.append("# Skills (read one with the `skill` tool before using it)\n"
                      + "\n".join(f"- {s['name']}: {s['description']}" for s in skills))
-    parts.append(f"Current working directory: {cwd}\nDate: {now_text(cfg)}")
+    if stable:
+        parts.append(f"Current working directory: {cwd}\n(The current date/time and notes matched to a "
+                     "message are given at the end of that user message under '# Konteks saat ini'.)")
+    else:
+        parts.append(f"Current working directory: {cwd}\nDate: {now_text(cfg)}")
     return "\n\n".join(parts)
+
+
+def prompt_tail(cfg: dict, query: str) -> str:
+    """Tempa: the dynamic context for one user message (clock + vault notes matched to it)."""
+    out = [f"# Konteks saat ini\nDate: {now_text(cfg)}"]
+    try:
+        from neovarch import obsidian
+        vault = obsidian.vault_path(cfg)
+        notes = obsidian.relevant_notes(vault, query) if (query and vault is not None and vault.is_dir()) else []
+    except Exception:  # retrieval must never break a turn
+        notes = []
+    if notes:
+        out.append("# Relevant vault notes (keyword match for this message)\n"
+                   + "\n\n".join(f"## {n['path']}\n{n['content']}" for n in notes))
+    return "\n\n".join(out)
 
 
 def _vault_prompt(cfg: dict, query: str) -> list[str]:
@@ -141,8 +165,16 @@ class Agent:
         self.ctx.approvals_mode = str(cfgmod.get_path(cfg, "approvals.mode", "ask") or "ask")
         max_turns = int(cfgmod.get_path(cfg, "agent.max_turns", 30) or 30)
         self.interrupted = False
+        st = tempa.settings(cfg)  # None = legacy harness, unchanged
+        self._tempa = st
+        self._changed: list[str] = []
+        verify_attempts = 0
+        verify_cmd = tempa.detect_verify(self.ctx.cwd) if st else None
+        obs_dir = cfgmod.neovarch_home() / "obs" / str(self.rec.get("id") or "session")
         messages = self.rec["messages"]
         user_msg: dict[str, Any] = {"role": "user", "content": user_text, "ts": time.time()}
+        if st:
+            user_msg["wire_tail"] = prompt_tail(cfg, user_text)
         if attachments:
             user_msg["attachments"] = [dict(a) for a in attachments]
             if not vision and any(a.get("kind") == "image" for a in attachments):
@@ -181,7 +213,7 @@ class Agent:
                 persona += "\n\n# Kantor saat ini (diminta lewat @kantor)\n" + office_summary(self.ctx.office())
             except Exception:
                 pass
-        sys_prompt = system_prompt(cfg, self.ctx.cwd, user_text, persona)
+        sys_prompt = system_prompt(cfg, self.ctx.cwd, user_text, persona, stable=bool(st))
         pinned = bool(override.get("model") or override.get("provider")) or \
             modelsmod.agent_model(cfg, "session:" + str(self.rec.get("id") or "x"))["source"] == "agent"
         # The endpoint this turn really uses: a free 9Router model that is cooling down
@@ -203,6 +235,8 @@ class Agent:
                     error = "interrupted"
                     break
                 wire = [{"role": "system", "content": sys_prompt}] + wire_messages(messages, vision, self.ctx.cwd)
+                if st:
+                    wire = tempa.mask_wire(wire, st)
                 comp: Completion = await self._complete(active, wire, pinned)
                 usage = comp.usage or usage
                 assistant: dict[str, Any] = {"role": "assistant", "content": comp.text, "ts": time.time()}
@@ -214,15 +248,37 @@ class Agent:
                                                for c in comp.tool_calls]
                 messages.append(assistant)
                 self.store.save(self.rec)
+                if st and len(messages) >= 2 and messages[-2].get("kind") == "verify" and comp.text:
+                    tempa.save_reflection(cfgmod.neovarch_home() / "notes", str(self.rec.get("id") or ""),
+                                          comp.text)
                 if not comp.tool_calls:
                     final_text = comp.text
+                    if st and self._changed and verify_cmd and not self.interrupted:
+                        self.emit("status.update", {"kind": "verify", "text": "Memverifikasi: " + " ".join(verify_cmd)})
+                        ok, out = await asyncio.to_thread(tempa.run_verify, verify_cmd, self.ctx.cwd)
+                        if not ok:
+                            summary = tempa.failure_summary(out)
+                            if verify_attempts < st["verify_retries"]:
+                                verify_attempts += 1
+                                messages.append({"role": "user", "kind": "verify", "ts": time.time(),
+                                                 "content": tempa.verify_prompt(verify_cmd, summary, verify_attempts,
+                                                                                st["verify_retries"])})
+                                self.store.save(self.rec)
+                                continue
+                            final_text = comp.text + tempa.escalation_note(verify_cmd, summary, st["verify_retries"])
+                            error = "verification failed"
                     break
                 for call in comp.tool_calls:
                     args = call.parsed_args()
                     self.emit("tool.start", {"tool_id": call.id, "name": call.name, "args": args,
                                              "args_text": call.arguments, "preview": _preview(args)})
                     t0 = time.monotonic()
-                    result = await run_tool(call.name, args, self.ctx) if not self.interrupted else "interrupted"
+                    if st and call.name in ("write_file", "edit_file") and not self.interrupted:
+                        result = await self._checked_write(call.name, args)
+                    else:
+                        result = await run_tool(call.name, args, self.ctx) if not self.interrupted else "interrupted"
+                    if st:
+                        result = tempa.offload(result, call.name, call.id, obs_dir, st["offload_tokens"])
                     dur = time.monotonic() - t0
                     _log.info("tool %s session=%s %.2fs", call.name, self.rec.get("id"), dur)
                     messages.append({"role": "tool", "tool_call_id": call.id, "name": call.name,
@@ -252,6 +308,28 @@ class Agent:
         })
         return final_text
 
+
+    async def _checked_write(self, name: str, args: dict) -> str:
+        """Tempa: write/edit, then syntax-check .py/.json/.js/.ts; a broken file is restored."""
+        try:
+            from neovarch.tools import _resolve
+            path = _resolve(self.ctx, str(args.get("path") or ""))
+            before = path.read_bytes() if path.is_file() else None
+        except Exception:
+            return await run_tool(name, args, self.ctx)
+        result = await run_tool(name, args, self.ctx)
+        if not (result.startswith("wrote") or result.startswith("edited")):
+            return result
+        err = await asyncio.to_thread(tempa.syntax_error, path)
+        if not err:
+            self._changed.append(str(path))
+            return result
+        if before is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(before)
+        return (f"rejected: perubahan pada {path} membuat sintaks rusak, file dikembalikan ke isi sebelumnya.\n"
+                f"{err}\nPerbaiki lalu kirim ulang {name}.")
 
     async def _stream(self, endpoint: dict, wire: list[dict], started: list[bool],
                       on_first: Callable[[], None] | None = None) -> Completion:
@@ -387,6 +465,12 @@ def wire_messages(messages: list[dict], vision: bool, cwd: Path) -> list[dict]:
             w = uploads.user_wire(m, vision, i in recent)
         else:
             w = _wire(m)
+        if m.get("role") == "user" and m.get("wire_tail"):  # Tempa: dynamic context of that message
+            tail = "\n\n" + str(m["wire_tail"])
+            if isinstance(w["content"], str):
+                w["content"] = w["content"] + tail
+            elif isinstance(w["content"], list) and w["content"] and w["content"][0].get("type") == "text":
+                w["content"] = [dict(w["content"][0], text=w["content"][0]["text"] + tail)] + w["content"][1:]
         if i == last_user and "@file:" in str(m.get("content") or ""):
             if isinstance(w["content"], str):
                 w["content"] = uploads.expand_file_refs(w["content"], cwd)
