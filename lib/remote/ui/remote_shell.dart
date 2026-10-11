@@ -25,6 +25,9 @@ import 'remote_profile_screen.dart';
 import 'nv_widgets.dart';
 import '../apk_update.dart' show ApkUpdatePhase;
 import 'update_dialog.dart';
+import '../changelog.dart' show WhatsNew;
+import 'changelog_screen.dart' show showWhatsNewSheet;
+import 'lite_mode_panel.dart' show maybeSuggestLiteMode;
 import 'remote_background.dart' show NvAppBackground;
 import '../appearance.dart' show appearanceProvider;
 import '../profile_avatar.dart';
@@ -51,7 +54,21 @@ class _RemoteShellState extends ConsumerState<RemoteShell> with WidgetsBindingOb
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _takeRoute());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _takeRoute();
+      _afterLaunch();
+    });
+  }
+
+  /// Once per launch: "Apa yang baru di vX" after an update, then (once per
+  /// install) the "Mode ringan" suggestion on low-RAM phones.
+  Future<void> _afterLaunch() async {
+    if (!mounted) return;
+    final prefs = ref.read(appearanceProvider).prefs;
+    final entry = WhatsNew.take(prefs);
+    if (entry != null) await showWhatsNewSheet(context, entry);
+    if (!mounted) return;
+    await maybeSuggestLiteMode(context, ref, margin: const EdgeInsets.fromLTRB(16, 0, 16, _barH + _gap + 8));
   }
 
   @override

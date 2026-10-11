@@ -40,6 +40,11 @@ class ToolContext:
     persona: Callable[[], str] | None = None
     # The main agent's Kantor control (CompanyRuntime.main_tool); None outside the gateway.
     kantor: Callable[[dict], str] | None = None
+    # The chat this context serves, and the files send_file staged during the current
+    # turn (upload metadata, origin "agent"); the agent stores them on its reply.
+    session_id: str = ""
+    uploads: Any = None
+    outbox: list = field(default_factory=list)
 
 
 DANGEROUS = [
@@ -68,11 +73,21 @@ def danger_reason(command: str) -> str | None:
     return None
 
 
-def _clip(text: str) -> str:
-    if len(text) <= MAX_OUTPUT:
+def _clip(text: str, limit: int = MAX_OUTPUT) -> str:
+    if len(text) <= limit:
         return text
-    half = MAX_OUTPUT // 2
-    return text[:half] + f"\n… [{len(text) - MAX_OUTPUT} characters omitted] …\n" + text[-half:]
+    half = limit // 2
+    return text[:half] + f"\n… [{len(text) - limit} characters omitted] …\n" + text[-half:]
+
+
+def _setting(key: str, default: float, lo: float, hi: float) -> float:
+    """A number from Settings (config.yaml), clamped; the default when unset or invalid."""
+    try:
+        from neovarch import config as cfgmod
+        val = float(cfgmod.get_path(cfgmod.load_config(), key, default) or default)
+    except Exception:
+        return default
+    return min(max(val, lo), hi)
 
 
 def _resolve(ctx: ToolContext, raw: str) -> Path:
@@ -92,7 +107,8 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
     command = str(args.get("command") or "").strip()
     if not command:
         return "error: command is required"
-    timeout = min(float(args.get("timeout") or SHELL_DEFAULT_TIMEOUT), SHELL_MAX_TIMEOUT)
+    default_timeout = _setting("terminal.timeout", SHELL_DEFAULT_TIMEOUT, 1, SHELL_MAX_TIMEOUT)
+    timeout = min(float(args.get("timeout") or default_timeout), SHELL_MAX_TIMEOUT)
     reason = danger_reason(command)
     if reason and "hermes" in reason.lower():
         return f"refused: this command {reason}."
@@ -106,18 +122,44 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
     started = time.monotonic()
     proc = await asyncio.create_subprocess_shell(
         command, cwd=str(workdir), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        env={**os.environ, **_account_env(), "NEOVARCH_CORE": "1"}, start_new_session=True,
+        env={**os.environ, **_account_env(), "NEOVARCH_CORE": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        start_new_session=os.name != "nt",
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         try:
-            proc.kill()
-        except ProcessLookupError:
+            os.killpg(proc.pid, 9)  # the whole command (start_new_session), not only the shell
+        except (ProcessLookupError, PermissionError, AttributeError, OSError):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        try:
+            await asyncio.wait_for(proc.wait(), 5)
+        except (asyncio.TimeoutError, Exception):
             pass
         return f"error: timed out after {timeout:.0f}s"
-    text = out.decode("utf-8", "replace")
+    text = decode_output(out)
     return _clip(f"exit code {proc.returncode} ({time.monotonic() - started:.1f}s)\n{text}")
+
+
+def decode_output(raw: bytes) -> str:
+    """Command output as text: UTF-8 first; on Windows cmd.exe tools often print in
+    the console/ANSI code page (cp437/cp850/cp1252), so fall back to that instead of
+    turning every accented letter into U+FFFD."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    if os.name == "nt":
+        import locale
+        for enc in ("oem", locale.getpreferredencoding(False)):
+            try:
+                return raw.decode(enc)
+            except (UnicodeDecodeError, LookupError):
+                continue
+    return raw.decode("utf-8", "replace")
 
 
 async def tool_read_file(args: dict, ctx: ToolContext) -> str:
@@ -132,7 +174,7 @@ async def tool_read_file(args: dict, ctx: ToolContext) -> str:
     chunk = lines[start - 1:start - 1 + limit]
     numbered = "\n".join(f"{i:>6}\t{line}" for i, line in enumerate(chunk, start))
     more = f"\n… {len(lines) - (start - 1 + len(chunk))} more lines" if start - 1 + len(chunk) < len(lines) else ""
-    return _clip(numbered + more)
+    return _clip(numbered + more, int(_setting("file_read_max_chars", MAX_OUTPUT, 1000, 1_000_000)))
 
 
 async def tool_write_file(args: dict, ctx: ToolContext) -> str:
@@ -511,7 +553,53 @@ async def tool_kantor(args: dict, ctx: ToolContext) -> str:
 KANTOR_ACTIONS = ["overview", "create_org", "create_agency", "rename_unit", "delete_unit", "hire", "fire", "move",
                   "set_employee", "assign_task"]
 
+async def tool_send_file(args: dict, ctx: ToolContext) -> str:
+    """Attach PC files to the agent's reply so they appear in the chat (phone + desktop)."""
+    from neovarch import outbox
+    from neovarch import uploads as upmod
+    raw = args.get("paths")
+    if isinstance(raw, str):
+        raw = [raw]
+    paths = [str(p) for p in (raw or []) if str(p or "").strip()]
+    if args.get("path"):
+        paths.insert(0, str(args["path"]))
+    if not paths:
+        return "error: berikan `paths` (daftar path berkas di PC ini)"
+    store = ctx.uploads or upmod.UploadStore()
+    lines = []
+    for raw_path in paths:
+        if len(ctx.outbox) >= outbox.MAX_FILES_PER_TURN:
+            lines.append(f"skipped {raw_path}: maks {outbox.MAX_FILES_PER_TURN} berkas per balasan")
+            continue
+        src = str(outbox.resolve(raw_path, ctx.cwd)) if raw_path else raw_path
+        if any(m.get("source_path") == src for m in ctx.outbox):
+            lines.append(f"already sent: {src}")
+            continue
+        try:
+            meta = outbox.stage(store, ctx.session_id, raw_path, ctx.cwd)
+        except (outbox.SendError, OSError) as exc:
+            lines.append(f"error {raw_path}: {exc}")
+            continue
+        ctx.outbox.append(meta)
+        lines.append(f"sent {meta['kind']}: {meta['name']} ({meta['size']} B, id {meta['id']})")
+    ok = any(line.startswith("sent") for line in lines)
+    tail = ("\nThe file(s) now show in the user's chat (inline image / download card on phone and desktop); "
+            "do not repeat the PC path as the way to get them.") if ok else ""
+    return "\n".join(lines) + tail
+
+
 TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
+    "send_file": (tool_send_file, {
+        "description": "Send files from this PC into the chat so the user gets them where they are chatting "
+                       "(phone remote or desktop): images/screenshots show inline, other files (pdf, docx, pptx, "
+                       "zip, …) as download cards. Use it whenever the user asks to send/kirim/share/kasih a file, "
+                       "screenshot, image, report or deck 'here' / 'ke sini' / 'ke HP', and after you create a file "
+                       "the user asked for. Replying with only a PC path does NOT deliver the file. Max 25 MB per "
+                       "file, 10 per reply; folders must be zipped first; keys/credentials are refused.",
+        "parameters": {"type": "object", "properties": {
+            "paths": {"type": "array", "items": {"type": "string"},
+                      "description": "absolute paths (or relative to the working directory) of files to send"},
+            "path": {"type": "string", "description": "a single file to send (same as paths=[path])"}}}}),
     "kantor": (tool_kantor, {
         "description": "Run the user's Kantor (office) ONLY when the user asks for it. Structure: Organisasi → Agency "
                        "→ Orang (pegawai), nested without limit. action: overview (show the org) | create_org "
@@ -642,7 +730,7 @@ def _allowed_builtin(ctx: "ToolContext | None") -> set[str]:
     names.discard("kantor")  # employees never run the Kantor; the main agent does
     allowed = company.allowed_tools() if hasattr(company, "allowed_tools") else None
     if allowed:
-        names &= set(allowed) | {"office_status"}
+        names &= set(allowed) | {"office_status", "send_file"}
     return names
 
 

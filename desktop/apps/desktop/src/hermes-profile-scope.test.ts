@@ -70,7 +70,8 @@ describe('backend action helpers are profile-scoped', () => {
   it('forwards the active profile to audio endpoints', () => {
     setApiRequestProfile('jarvis')
 
-    void transcribeAudio('data:audio/webm;base64,AAAA', 'audio/webm')
+    // The stub answers {} (no transcript), which transcribeAudio rejects; only the routing matters here.
+    void transcribeAudio('data:audio/webm;base64,AAAA', 'audio/webm').catch(() => undefined)
     void speakText('hello')
     void getElevenLabsVoices()
 

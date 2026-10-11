@@ -720,7 +720,7 @@ class CompanyStore:
 
     def assign_ticket(self, tid, agent_id, *, actor: str = "user", actor_id: int | None = None) -> dict:
         t = self.require_ticket(tid)
-        if t["checkout_run_id"] and t["checkout_agent_id"] != (int(agent_id) if agent_id else None):
+        if t["checkout_run_id"] is not None and t["checkout_agent_id"] != (int(agent_id) if agent_id else None):
             raise CompanyError("conflict", f"{t['key']} sedang dikerjakan; hentikan dulu sebelum dialihkan",
                                owner=t["checkout_agent_id"])
         name = None
@@ -889,7 +889,7 @@ class CompanyStore:
     def _ticket_public(self, t: dict) -> dict:
         a = self.agent(t["assignee_id"])
         return {**t, "assignee_name": a["name"] if a else None, "status_label": STATUS_LABEL.get(t["status"], t["status"]),
-                "blocked_by": len(self.open_blockers(t["id"])), "locked": bool(t["checkout_run_id"])}
+                "blocked_by": len(self.open_blockers(t["id"])), "locked": t["checkout_run_id"] is not None}
 
     def list_tickets(self, *, status: str | None = None, assignee_id=None, project_id=None, limit: int = 500) -> list[dict]:
         where, args = [], []

@@ -101,6 +101,11 @@ class RemoteTranscript {
               id: id, name: '${p['name'] ?? 'alat'}', summary: summary, result: result, running: false, failed: failed, durationS: dur));
         }
         _afterTool = true;
+      case 'message.attachment':
+        // A file the PC agent sent into the chat (send_file): same schema as uploads.
+        final a = p['attachment'];
+        if (a is! Map) return false;
+        return _addAgentAttachments([Map<String, dynamic>.from(a)], _open);
       case 'session.title':
         title = '${p['title'] ?? ''}';
       case 'message.complete':
@@ -116,6 +121,8 @@ class RemoteTranscript {
           error = err;
           _open.error = err;
         }
+        final sent = [for (final a in (p['attachments'] as List? ?? const []).whereType<Map>()) Map<String, dynamic>.from(a)];
+        if (sent.isNotEmpty) _addAgentAttachments(sent, _cur ?? _lastAssistant() ?? _open);
         final u = p['usage'];
         if (u is Map) {
           tokensPerSecond = (u['avg_tps'] as num?)?.toDouble() ?? tokensPerSecond;
@@ -136,10 +143,35 @@ class RemoteTranscript {
     return true;
   }
 
+  ChatMsg? _lastAssistant() {
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role == 'user') return null; // only this turn's reply
+      if (messages[i].role == 'assistant') return messages[i];
+    }
+    return null;
+  }
+
+  /// Adds files the agent sent to [host], skipping ids already shown anywhere in
+  /// this turn (the live `message.attachment` and the final `message.complete`
+  /// both carry them).
+  bool _addAgentAttachments(List<Map<String, dynamic>> atts, ChatMsg host) {
+    final shown = {for (final m in messages) for (final a in m.attachments) '${a['id']}'};
+    var changed = false;
+    for (final a in atts) {
+      final id = '${a['id'] ?? ''}';
+      if (id.isEmpty || shown.contains(id)) continue;
+      host.attachments.add(a);
+      shown.add(id);
+      changed = true;
+    }
+    return changed;
+  }
+
   void _dropEmptyTail() {
     if (messages.isEmpty) return;
     final last = messages.last;
-    if (last.role == 'assistant' && last.content.isEmpty && last.tools.isEmpty && last.reasoning.isEmpty && last.error == null) {
+    if (last.role == 'assistant' && last.content.isEmpty && last.tools.isEmpty && last.reasoning.isEmpty && last.error == null &&
+        last.attachments.isEmpty) {
       messages.removeLast();
     }
   }
@@ -167,7 +199,9 @@ class RemoteTranscript {
         final atts = [for (final a in (m['attachments'] as List? ?? const []).whereType<Map>()) Map<String, dynamic>.from(a)];
         out.add(ChatMsg(id: 'h${i++}', role: 'user', content: '$content', ts: ts.toInt(), attachments: atts));
       } else if (role == 'assistant') {
-        out.add(ChatMsg(id: 'h${i++}', role: 'assistant', content: '$content', reasoning: '${m['reasoning'] ?? ''}', ts: ts.toInt()));
+        final atts = [for (final a in (m['attachments'] as List? ?? const []).whereType<Map>()) Map<String, dynamic>.from(a)];
+        out.add(ChatMsg(
+            id: 'h${i++}', role: 'assistant', content: '$content', reasoning: '${m['reasoning'] ?? ''}', ts: ts.toInt(), attachments: atts));
       } else if (role == 'tool') {
         final host = out.isNotEmpty && out.last.role == 'assistant'
             ? out.last

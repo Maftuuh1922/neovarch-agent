@@ -1654,6 +1654,7 @@ export const NEOVARCH_ID = {
         "repoScanExcludePaths": "Path repositori yang dikecualikan"
       },
       "agent": {
+        "systemPrompt": "Instruksi tambahan",
         "maxTurns": "Langkah agen maksimum",
         "imageInputMode": "Lampiran gambar",
         "apiMaxRetries": "Percobaan ulang API",
@@ -1842,6 +1843,7 @@ export const NEOVARCH_ID = {
         "useRealProfile": "Penjelajahan lokal memakai login asli Anda. Neovarch menyalin profil browser bawaan (cookie, login, preferensi) ke snapshot terkelola dan menjalankannya dengan Chromium bawaan — profil aktif Anda tidak pernah dibuka langsung, dan salinannya diperbarui setiap kali jalan. Agen juga bisa membuka sesi profil asli lokal atas permintaan meski backend browser cloud diatur. Hanya browser Chromium (Chrome, Edge, Brave, Chromium) yang didukung; browser bawaan non-Chromium gagal dengan pesan jelas. Mati secara bawaan."
       },
       "agent": {
+        "systemPrompt": "Instruksi tambahan yang diikuti agen di setiap obrolan, setelah SOUL.md.",
         "imageInputMode": "Mengatur cara lampiran gambar dikirim ke model.",
         "maxTurns": "Batas atas giliran pemanggilan tool sebelum Neovarch menghentikan proses."
       },
@@ -2991,6 +2993,27 @@ export const NEOVARCH_ID = {
       "powRequired": "Server meminta proof of work yang belum didukung. Masuk atau buat akun untuk lanjut.",
       "locked": "Sesi ini tidak bisa lanjut tanpa masuk. Masuk atau buat akun untuk lanjut.",
       "signInBelow": "Pilih penyedia di bawah."
+    }
+  },
+  "notifications": {
+    "voice": {
+      "configureSpeechToText": "Atur suara-ke-teks untuk memakai mode suara.",
+      "couldNotStartSession": "Sesi suara tidak bisa dimulai",
+      "microphoneAccessDenied": "Akses mikrofon ditolak.",
+      "microphoneConstraintsUnsupported": "Pengaturan mikrofon ini tidak didukung perangkat.",
+      "microphoneFailed": "Mikrofon gagal",
+      "microphoneInUse": "Mikrofon sedang dipakai aplikasi lain.",
+      "microphonePermissionDenied": "Izin mikrofon ditolak.",
+      "microphoneStartFailed": "Perekaman mikrofon tidak bisa dimulai.",
+      "microphoneUnsupported": "Perekaman mikrofon tidak didukung di sini.",
+      "noMicrophone": "Mikrofon tidak ditemukan.",
+      "noSpeechDetected": "Suara tidak terdengar",
+      "playbackFailed": "Pemutaran suara gagal",
+      "recordingFailed": "Perekaman suara gagal",
+      "transcriptionFailed": "Gagal mengubah suara jadi teks",
+      "transcriptionUnavailable": "Dikte suara di PC belum tersedia. Ketik pesan, atau pakai mik di aplikasi HP.",
+      "tryRecordingAgain": "Coba rekam lagi.",
+      "unavailable": "Suara tidak tersedia"
     }
   },
   "modelPicker": {

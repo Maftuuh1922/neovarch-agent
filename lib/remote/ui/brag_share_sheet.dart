@@ -14,7 +14,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../theme/neovarch_mobile_theme.dart';
 import '../../ui/widgets/common.dart' show toast;
-import '../github_public.dart';
 import '../remote_controller.dart';
 import '../share/brag_card_data.dart';
 import '../share/share_targets.dart';
@@ -59,13 +58,12 @@ Future<void> saveBragPng(BuildContext context, Uint8List png) async {
   }
 }
 
-/// Gather the card from the phone's state (GitHub profile from the PC or the
-/// public profile, Office, Kanban, sessions, default model) and open the sheet.
+/// Gather the card from the phone's state (GitHub profile from the PC, Office, Kanban, sessions, default model) and open the sheet.
 /// [officeShot] is taken from the live Kantor 3D scene when not given.
 Future<void> showBragShareSheet(BuildContext context, WidgetRef ref, {Uint8List? officeShot, Widget? debugBackground}) async {
   final r = ref.read(remoteProvider);
-  final gh = ref.read(githubPublicProvider);
-  final profile = r.socialSignedIn && r.socialProfile != null ? r.socialProfile : gh.profile;
+  // The GitHub profile always comes from the PC's sign-in (no phone login).
+  final profile = r.socialSignedIn ? r.socialProfile : null;
   final shot = officeShot ?? await captureOfficeSnapshot();
   if (!context.mounted) return;
   final data = BragCardData.gather(

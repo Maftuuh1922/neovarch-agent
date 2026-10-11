@@ -11,6 +11,7 @@ import { notify, notifyError } from '@/store/notifications'
 import { useComposerScope } from '../scope'
 import type { VoiceActivityState, VoiceStatus } from '../types'
 
+import { notifyTranscriptionError } from './transcription-error'
 import { useMicRecorder } from './use-mic-recorder'
 
 interface VoiceRecorderOptions {
@@ -129,7 +130,7 @@ export function useVoiceRecorder({
       }
     } catch (error) {
       if (live()) {
-        notifyError(error, voiceCopy.transcriptionFailed)
+        notifyTranscriptionError(error, voiceCopy)
       }
     } finally {
       if (live()) {

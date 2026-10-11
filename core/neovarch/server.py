@@ -55,6 +55,9 @@ from neovarch import router9
 from neovarch.tools import ToolContext, list_skills, tool_schemas
 
 APPROVAL_TIMEOUT_S = 300
+STT_UNAVAILABLE = ("Dikte suara di PC belum tersedia di Neovarch core. Ketik pesan, atau pakai mik di aplikasi HP. "
+                   "/ Voice typing on the PC is not available in the Neovarch core yet. Type your message, "
+                   "or use the mic in the phone app.")
 COMPANY_RPC_CODES = {"invalid": -32602, "not_found": -32004, "conflict": -32009}
 COMPANY_HTTP = {"invalid": 400, "not_found": 404, "conflict": 409}
 
@@ -162,7 +165,8 @@ class LiveSession:
         company = getattr(gw, "company", None)
         self.ctx = ToolContext(cwd=Path(rec.get("cwd") or default_cwd()), approve=self.approve,
                                office=getattr(gw, "office_status", None),
-                               kantor=getattr(company, "main_tool", None))
+                               kantor=getattr(company, "main_tool", None),
+                               session_id=self.id, uploads=getattr(gw, "uploads", None))
         self.agent = Agent(rec, gw.store, self.ctx, self.emit)
         self.last_text = ""
         # Desktop composers stage images with image.attach* before prompt.submit;
@@ -272,7 +276,9 @@ def to_ui_messages(rec: dict) -> list[dict]:
             item["name"] = m.get("name")
         if m.get("reasoning"):
             item["reasoning"] = m["reasoning"]
-        if role == "user" and m.get("attachments"):
+        # Same schema both ways: files the person sent (user) and files the agent
+        # sent with send_file (assistant); the bytes come from GET /api/uploads/<id>.
+        if role in ("user", "assistant") and m.get("attachments"):
             item["attachments"] = [upmod.public(a) for a in m["attachments"] if isinstance(a, dict) and a.get("id")]
         out.append(item)
     return out
@@ -2129,6 +2135,18 @@ def build_app(gw: Gateway) -> web.Application:
     async def voice_live_status(_):
         return web.json_response({"ok": False, "available": False, "reason": "Not available in the Neovarch core."})
 
+    async def audio_transcribe(_request):
+        # No speech engine in the core yet. Answer with a clear, typed refusal
+        # (the desktop turns `code` into its localized "not available" notice)
+        # instead of the quiet fallback, whose missing `transcript` made the
+        # desktop composer crash on `undefined.trim()` (1.4.5).
+        return web.json_response({"ok": False, "available": False, "transcript": "", "code": "stt_unavailable",
+                                  "error": STT_UNAVAILABLE})
+
+    async def audio_stt_lease(request):
+        body = await _json(request)
+        return web.json_response({"ok": True, "active": bool(body.get("active")), "available": False})
+
     async def terminal_backends(_):
         return web.json_response({"active": "local", "backends": [{
             "name": "local", "label": "Local", "description": "Commands run on this computer.",
@@ -2142,6 +2160,8 @@ def build_app(gw: Gateway) -> web.Application:
     r.add_get("/api/local-models/status", local_models_status)
     r.add_get("/api/local-models/jobs", local_models_jobs)
     r.add_get("/api/audio/voice-live/status", voice_live_status)
+    r.add_post("/api/audio/transcribe", audio_transcribe)
+    r.add_post("/api/audio/stt-lease", audio_stt_lease)
     r.add_get("/api/tools/terminal/backends", terminal_backends)
     r.add_post("/api/sessions/owner-backfill", owner_backfill)
     r.add_get("/api/fs/list", fs_list)
@@ -2196,7 +2216,7 @@ def config_schema_payload() -> dict:
         prov_opts += [f"custom:{e['id']}" for e in providers.endpoints_response(cfgmod.load_config())["endpoints"]]
     except Exception:
         pass
-    return {"category_order": ["model", "chat", "safety", "advanced"], "fields": {
+    return {"category_order": ["model", "chat", "workspace", "safety", "advanced"], "fields": {
         "model.default": {"category": "model", "type": "string", "description": "ID model yang dipakai obrolan baru."},
         "model.provider": {"category": "model", "type": "select", "options": prov_opts,
                            "description": "Penyedia model (preset, custom, atau custom:<endpoint>)."},
@@ -2208,6 +2228,18 @@ def config_schema_payload() -> dict:
                            "description": "ask = tanya sebelum perintah berbahaya; off = jalankan tanpa bertanya."},
         "agent.max_turns": {"category": "advanced", "type": "number", "description": "Batas panggilan model per giliran."},
         "agent.system_prompt": {"category": "chat", "type": "text", "description": "Instruksi tambahan setelah SOUL.md."},
+        # Settings › Obrolan › Perilaku
+        "timezone": {"category": "chat", "type": "string", "clearable": True,
+                     "description": "Zona waktu agen (mis. Asia/Jakarta). Kosong = jam PC."},
+        "display.show_reasoning": {"category": "chat", "type": "boolean",
+                                   "description": "Tampilkan proses berpikir model di obrolan."},
+        # Settings › Ruang kerja › Proyek / Shell / File
+        "terminal.cwd": {"category": "workspace", "type": "string", "clearable": True,
+                         "description": "Folder kerja obrolan baru. Kosong = folder home."},
+        "terminal.timeout": {"category": "workspace", "type": "number",
+                             "description": "Batas waktu bawaan perintah shell (detik, maks 600)."},
+        "file_read_max_chars": {"category": "workspace", "type": "number",
+                                "description": "Batas karakter saat agen membaca satu file."},
     }}
 
 

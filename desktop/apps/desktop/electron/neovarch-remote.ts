@@ -26,6 +26,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { DEFAULT_RELAY_URL, normalizeRelayUrl } from './relay-defaults'
+import { ensureFirewallRule, firewallHelp } from './windows-firewall'
 
 export const REMOTE_DEFAULT_PORT = 9319
 /** core/neovarch/background.py RESTART_EXIT_CODE: the gateway asks to be started again. */
@@ -343,7 +344,13 @@ export function portInUse(port: number, host = '127.0.0.1', timeoutMs = 800): Pr
 
 // ---- LAN addresses ----------------------------------------------------------
 
-const VIRTUAL_IFACE = /^(docker|br-|veth|virbr|vmnet|vboxnet|lo|utun|awdl|llw|zt|tun|tap)/i
+// Adapters the phone can never reach the PC through. Linux/macOS names are
+// prefixes; Windows names are descriptive ("vEthernet (WSL)", "VirtualBox
+// Host-Only Network", "VMware Network Adapter VMnet8", "Bluetooth Network
+// Connection"), so they are matched anywhere. Before this, a VirtualBox
+// host-only 192.168.56.1 ranked first on Windows and went into the QR code.
+const VIRTUAL_IFACE =
+  /^(docker|br-|veth|virbr|vmnet|vboxnet|lo\d*$|utun|awdl|llw|zt|tun|tap)|vethernet|hyper-v|\bwsl\b|virtualbox|vmware|virtual|bluetooth|loopback|npcap|tap-|openvpn|wireguard|zerotier|hamachi|radmin|\bvpn\b/i
 
 export function lanAddresses(interfaces = os.networkInterfaces()): RemoteAddress[] {
   const out: RemoteAddress[] = []
@@ -926,6 +933,9 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     return false
   }
 
+  // Windows: ask once per app run for the inbound firewall rule (UAC prompt).
+  let firewallAsked = false
+
   async function start() {
     if (child || starting || closed) {
       return
@@ -980,6 +990,9 @@ export function createRemoteController(deps: RemoteControllerDeps) {
         // password, it presents the HMAC token minted above.
         HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: crypto.randomBytes(24).toString('base64url'),
         HERMES_DASHBOARD_BASIC_AUTH_SECRET: settings.secret,
+        // Windows consoles default to cp1252/cp437; keep the core's stdio UTF-8.
+        PYTHONUTF8: '1',
+        PYTHONIOENCODING: 'utf-8',
         ...linkEnv()
       }
 
@@ -1078,6 +1091,19 @@ export function createRemoteController(deps: RemoteControllerDeps) {
 
       if (running) {
         startLinkPoll()
+      }
+
+      if (running && process.platform === 'win32' && !firewallAsked) {
+        firewallAsked = true
+        void ensureFirewallRule(settings.port)
+          .then(result => {
+            deps.log(`[remote] windows firewall rule for port ${settings.port}: ${result}`)
+
+            if (result === 'declined') {
+              deps.log(`[remote] ${firewallHelp(settings.port)}`)
+            }
+          })
+          .catch(err => deps.log(`[remote] windows firewall check failed: ${(err as Error).message}`))
       }
 
       if (!ready && child === proc) {
@@ -1302,7 +1328,12 @@ export function createRemoteController(deps: RemoteControllerDeps) {
 
       return { ok: false, message: `Gateway menjawab HTTP ${res.status}.` }
     } catch (err) {
-      return { ok: false, message: `Tidak bisa menjangkau ${host}:${settings.port} (${(err as Error).message}). Periksa firewall.` }
+      return {
+        ok: false,
+        message:
+          `Tidak bisa menjangkau ${host}:${settings.port} (${(err as Error).message}). ` +
+          (process.platform === 'win32' ? firewallHelp(settings.port) : 'Periksa firewall.')
+      }
     }
   }
 

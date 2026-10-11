@@ -1110,6 +1110,13 @@ extension RemoteGatewayExtras on RemoteGateway {
 
   Future<FriendsSnapshot> socialFriends() async => FriendsSnapshot.fromJson(Map<String, dynamic>.from(await _json('GET', '/api/social/friends') as Map));
 
+  /// `POST /api/social/login`: asks the PC to start ITS GitHub device flow
+  /// (the token stays on the PC). Returns `{state, user_code,
+  /// verification_uri, expires_at}`; an already pending flow comes back as is,
+  /// a signed-in PC answers `{state: done, login}`.
+  Future<Map<String, dynamic>> socialLoginStart() async =>
+      Map<String, dynamic>.from(await _json('POST', '/api/social/login', body: const {}) as Map);
+
   Future<FriendDetail> socialFriend(String login) async =>
       FriendDetail.fromJson(Map<String, dynamic>.from(await _json('GET', '/api/social/friends/${Uri.encodeComponent(login)}') as Map));
 

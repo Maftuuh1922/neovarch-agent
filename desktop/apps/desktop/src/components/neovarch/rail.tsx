@@ -8,7 +8,9 @@ import { OFFICE_ROUTE } from '@/components/neovarch/office-store'
 import { $socialAvatar, $socialStatus, SOCIAL_ROUTE } from '@/components/neovarch/social-store'
 import { VAULT_ROUTE } from '@/components/neovarch/vault'
 import { Tip } from '@/components/ui/tooltip'
-import { NV_SOCIAL_ID } from '@/i18n/neovarch-social'
+import { type Locale, useI18n } from '@/i18n'
+import { nvPick } from '@/i18n/neovarch-lang'
+import { NV_SOCIAL_EN, NV_SOCIAL_ID } from '@/i18n/neovarch-social'
 import {
   Brain,
   Clock,
@@ -43,11 +45,33 @@ export const NV_COPY = {
   cron: 'Jadwal',
   office: 'Kantor',
   vault: 'Vault Obsidian',
-  social: NV_SOCIAL_ID.rail,
+  social: NV_SOCIAL_ID.rail as string,
   pairPhone: 'Pasangkan HP',
   settings: 'Pengaturan',
   toDark: 'Tema gelap',
   toLight: 'Tema terang'
+}
+
+export const NV_COPY_EN: typeof NV_COPY = {
+  home: 'Home',
+  newChat: 'New chat',
+  sessions: 'Sessions',
+  skills: 'Skills & tools',
+  kanban: 'Tasks (Kanban)',
+  artifacts: 'Artifacts',
+  cron: 'Schedule',
+  office: 'Office',
+  vault: 'Obsidian vault',
+  social: NV_SOCIAL_EN.rail,
+  pairPhone: 'Pair phone',
+  settings: 'Settings',
+  toDark: 'Dark theme',
+  toLight: 'Light theme'
+}
+
+/** The rail's labels in the app's language (Settings → ID/EN). */
+export function nvRailCopy(locale?: Locale): typeof NV_COPY {
+  return nvPick({ en: NV_COPY_EN, id: NV_COPY }, locale)
 }
 
 interface RailItem {
@@ -83,6 +107,7 @@ function RailButton({ item }: { item: RailItem }) {
 export function NeovarchRail() {
   const navigate = useNavigate()
   const location = useLocation()
+  const NV = nvRailCopy(useI18n().locale)
   // One session list: the chat's own sidebar (search, pins, groups, Kanban).
   // The separate rail drawer duplicated it and was removed.
   const sessionsOpen = useStore($sidebarOpen)
@@ -99,7 +124,7 @@ export function NeovarchRail() {
     {
       icon: <Plus className={icon} />,
       id: 'new-chat',
-      label: NV_COPY.newChat,
+      label: NV.newChat,
       onSelect: () => {
         navigate('/')
         requestFreshSession()
@@ -109,7 +134,7 @@ export function NeovarchRail() {
       active: sessionsOpen,
       icon: <MessageSquareText className={icon} />,
       id: 'sessions',
-      label: NV_COPY.sessions,
+      label: NV.sessions,
       onSelect: () => toggleSidebarOpen()
     }
   ]
@@ -119,7 +144,7 @@ export function NeovarchRail() {
       active: path.startsWith(OFFICE_ROUTE),
       icon: <Users className={icon} />,
       id: 'office',
-      label: NV_COPY.office,
+      label: NV.office,
       onSelect: () => navigate(OFFICE_ROUTE)
     },
     {
@@ -130,42 +155,42 @@ export function NeovarchRail() {
         <UserCircle className={icon} />
       ),
       id: 'social',
-      label: NV_COPY.social,
+      label: NV.social,
       onSelect: () => navigate(SOCIAL_ROUTE)
     },
     {
       active: path.startsWith(VAULT_ROUTE),
       icon: <Brain className={icon} />,
       id: 'vault',
-      label: NV_COPY.vault,
+      label: NV.vault,
       onSelect: () => navigate(VAULT_ROUTE)
     },
     {
       active: path.startsWith(CAPABILITIES_ROUTE),
       icon: <Zap className={icon} />,
       id: 'skills',
-      label: NV_COPY.skills,
+      label: NV.skills,
       onSelect: page(CAPABILITIES_ROUTE)
     },
     {
       active: path.startsWith('/kanban'),
       icon: <LayoutDashboard className={icon} />,
       id: 'kanban',
-      label: NV_COPY.kanban,
+      label: NV.kanban,
       onSelect: () => void openNeovarchKanban(navigate)
     },
     {
       active: path.startsWith(ARTIFACTS_ROUTE),
       icon: <FileText className={icon} />,
       id: 'artifacts',
-      label: NV_COPY.artifacts,
+      label: NV.artifacts,
       onSelect: page(ARTIFACTS_ROUTE)
     },
     {
       active: path.startsWith(CRON_ROUTE),
       icon: <Clock className={icon} />,
       id: 'cron',
-      label: NV_COPY.cron,
+      label: NV.cron,
       onSelect: page(CRON_ROUTE)
     }
   ]
@@ -176,29 +201,29 @@ export function NeovarchRail() {
     {
       icon: <QrCode className={icon} />,
       id: 'pair-phone',
-      label: NV_COPY.pairPhone,
+      label: NV.pairPhone,
       onSelect: () => navigate('/settings?tab=remote')
     },
     {
       icon: isDark ? <Sun className={icon} /> : <Moon className={icon} />,
       id: 'theme',
-      label: isDark ? NV_COPY.toLight : NV_COPY.toDark,
+      label: isDark ? NV.toLight : NV.toDark,
       onSelect: () => setMode(isDark ? 'light' : 'dark')
     },
     {
       active: path.startsWith('/settings'),
       icon: <Settings className={icon} />,
       id: 'settings',
-      label: NV_COPY.settings,
+      label: NV.settings,
       onSelect: () => navigate('/settings')
     }
   ]
 
   return (
     <nav aria-label="Neovarch" className="nv-rail" data-slot="nv-rail" style={{ width: NV_RAIL_WIDTH }}>
-      <Tip label={NV_COPY.home} side="right">
+      <Tip label={NV.home} side="right">
         <button
-          aria-label={NV_COPY.home}
+          aria-label={NV.home}
           className="nv-rail-logo"
           data-nv-rail="home"
           onClick={() => navigate('/')}
