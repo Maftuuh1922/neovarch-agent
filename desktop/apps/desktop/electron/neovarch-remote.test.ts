@@ -8,6 +8,9 @@ import {
   isTailnetIp,
   lanAddresses,
   mintAccessToken,
+  mintPairToken,
+  nextPairToken,
+  PAIR_TOKEN_TTL_SECONDS,
   parseTailscaleStatus,
   resolveDeviceName,
   verifyAccessToken
@@ -22,6 +25,28 @@ const PY_TOKEN =
 describe('neovarch remote token', () => {
   it('matches the core basic-auth signer byte for byte', () => {
     expect(mintAccessToken(decodeSecret(SECRET), 1760000000)).toBe(PY_TOKEN)
+  })
+
+  it('mints a short-lived one-time pair token the access check never accepts', () => {
+    const secret = decodeSecret(SECRET)
+    const p = mintPairToken(secret, 1760000000.5)
+    expect(p.exp - Math.floor(p.iat)).toBe(PAIR_TOKEN_TTL_SECONDS)
+    const payload = JSON.parse(Buffer.from(p.token.replace(/-/g, '+').replace(/_/g, '/'), 'base64').subarray(0, -32).toString())
+    expect(payload).toMatchObject({ sub: 'neovarch-remote', kind: 'pair', iat: 1760000000.5, exp: 1760000600 })
+    expect(typeof payload.jti).toBe('string')
+    expect(verifyAccessToken(p.token, secret, 1760000001)).toBe(false) // kind "pair" is not an access token
+    expect(mintPairToken(secret, 1760000000.5).token).not.toBe(p.token) // jti makes each one unique
+  })
+
+  it('keeps the shown pair token until it is used or about to expire', () => {
+    const secret = decodeSecret(SECRET)
+    const p = mintPairToken(secret, 1000)
+    expect(nextPairToken(p, 0, secret, 1100)).toBe(p) // unused, 8+ min left
+    expect(nextPairToken(p, 0, secret, 1000 + PAIR_TOKEN_TTL_SECONDS - 60)).not.toBe(p) // < 2 min left
+    const after = nextPairToken(p, 1200, secret, 1200) // a phone paired at t=1200: spent
+    expect(after).not.toBe(p)
+    expect(after.iat).toBeGreaterThan(1200)
+    expect(nextPairToken(null, 0, secret, 1000).token).toBeTruthy()
   })
 
   it('verifies its own tokens and rejects a rotated secret', () => {

@@ -151,6 +151,9 @@ class SavedDesktops {
     _save();
   }
 
+  /// Save the device session token the PC handed out (replaces the QR's token).
+  Future<void> updateToken(SavedDesktop d, String token) => _writeToken(d.id, token);
+
   /// Save a changed link (enrolled, new relay URL) or the Bluetooth setting.
   void updateLink(SavedDesktop d, {LinkInfo? link, bool? bluetooth}) {
     if (link != null) d.link = link;

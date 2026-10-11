@@ -75,6 +75,9 @@ def _log_unhandled(kind: str, what: str) -> None:
 # ------------------------------------------------------------------- auth -----
 
 DESKTOP_CONTRACT = 8
+DEVICE_TOKEN_PREFIX = "nvd_"  # remote_link.store.SESSION_TOKEN_PREFIX
+SESSION_EXPIRED = "Sesi kedaluwarsa, pasangkan ulang"
+PAIR_ONLY_ROUTES = {("POST", "/api/remote/devices")}
 
 
 class Auth:
@@ -89,44 +92,97 @@ class Auth:
         # Loopback-only credential for this process's own encrypted-link bridge
         # (relay / Bluetooth). Random per start, never written anywhere.
         self.internal_token = secrets.token_urlsafe(32)
+        # () -> remote_link LinkStore | None; set by Gateway (per-device tokens, pair tokens).
+        self.link_store = None
         if not self.session_token and not self.secret:
             # Never run an open gateway: mint one and print it for CLI users.
             self.session_token = secrets.token_urlsafe(24)
             print(f"session token: {self.session_token}", flush=True)
 
-    def verify_signed(self, token: str) -> bool:
+    def _signed_payload(self, token: str) -> dict | None:
         if not self.secret:
-            return False
+            return None
         try:
             blob = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
         except (ValueError, TypeError):
-            return False
+            return None
         if len(blob) <= 32:
-            return False
+            return None
         raw, sig = blob[:-32], blob[-32:]
         if not hmac.compare_digest(sig, hmac.new(self.secret, raw, hashlib.sha256).digest()):
-            return False
+            return None
         try:
             payload = json.loads(raw)
-        except json.JSONDecodeError:
-            return False
-        return payload.get("kind") == "access" and float(payload.get("exp", 0)) > time.time()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        try:
+            if float(payload.get("exp", 0)) <= time.time():
+                return None
+        except (TypeError, ValueError):
+            return None
+        return payload
 
-    def ok(self, request: web.Request) -> bool:
+    def verify_signed(self, token: str) -> bool:
+        p = self._signed_payload(token)
+        return bool(p) and p.get("kind") == "access"
+
+    def verify_pair(self, token: str) -> bool:
+        """A QR pair token (kind "pair", ~10 min): good once, only for POST /api/remote/devices.
+
+        One-time: every successful pairing moves the link store's ``pair_epoch`` past
+        the token's ``iat``."""
+        p = self._signed_payload(token)
+        if not p or p.get("kind") != "pair":
+            return False
+        try:
+            iat = float(p.get("iat"))
+        except (TypeError, ValueError):
+            return False
+        if iat > time.time() + 300:
+            return False
+        store = self.link_store() if self.link_store else None
+        return bool(store) and store.pair_token_fresh(iat)
+
+    def check(self, request: web.Request) -> str | None:
+        """``ok``, ``pair`` (QR pair token), ``expired`` (idle-expired device token) or None.
+
+        Also records ``nv_device`` (a paired phone's id, from its session token or,
+        for this process's own relay/Bluetooth bridge, the link-device header)."""
         candidates = [request.query.get("token", "")]
         auth = request.headers.get("Authorization", "")
         if auth.lower().startswith("bearer "):
             candidates.append(auth[7:].strip())
         candidates.append(request.headers.get("X-Hermes-Session-Token", ""))
         candidates.append(request.headers.get("X-Neovarch-Session-Token", ""))
+        verdict = None
         for c in filter(None, candidates):
             if hmac.compare_digest(c, self.internal_token) and (request.remote or "") in ("127.0.0.1", "::1"):
-                return True
+                dev = request.headers.get("X-Neovarch-Link-Device", "")
+                if dev:
+                    request["nv_device"] = dev
+                return "ok"
             if self.session_token and hmac.compare_digest(c, self.session_token):
-                return True
+                return "ok"
+            if c.startswith(DEVICE_TOKEN_PREFIX):
+                store = self.link_store() if self.link_store else None
+                if store is not None:
+                    state, dev = store.check_session_token(c)
+                    if state == "ok":
+                        request["nv_device"] = dev["id"]
+                        return "ok"
+                    if state == "expired":
+                        verdict = "expired"
+                continue
             if self.verify_signed(c):
-                return True
-        return False
+                return "ok"
+            if self.verify_pair(c):
+                verdict = verdict or "pair"
+        return verdict
+
+    def ok(self, request: web.Request) -> bool:
+        return self.check(request) == "ok"
 
 
 PUBLIC = {"/api/health", "/api/status", "/api/health/idle"}
@@ -285,12 +341,23 @@ def to_ui_messages(rec: dict) -> list[dict]:
 
 
 class Gateway:
+    def _link_store(self):
+        """The paired-device store (creates the LinkService on first use); None without `cryptography`."""
+        if self.link is None:
+            try:
+                from neovarch.remote_link.service import LinkService
+            except ImportError:
+                return None
+            self.link = LinkService(self)
+        return self.link.store
+
     def __init__(self, isolated: bool):
         self.store = SessionStore()
         self.uploads = upmod.UploadStore()
         self.kanban = Kanban()
         self.auth = Auth(isolated)
         self.link = None  # remote_link.LinkService (relay / Bluetooth), created on demand
+        self.auth.link_store = self._link_store
         self.background = None  # background.BackgroundService ("Jalankan di latar belakang"), created on demand
         self.conns: set[Conn] = set()
         self.live: dict[str, LiveSession] = {}
@@ -1013,7 +1080,14 @@ def build_app(gw: Gateway) -> web.Application:
         path = request.path
         if request.method == "OPTIONS":
             return web.Response(status=204, headers=_cors(request))
-        if path.startswith("/api/") and path not in PUBLIC and not gw.auth.ok(request):
+        verdict = gw.auth.check(request) if path.startswith("/api/") and path not in PUBLIC else "ok"
+        if verdict == "pair" and (request.method, path) not in PAIR_ONLY_ROUTES:
+            verdict = None
+        if verdict == "expired":
+            return web.json_response({"detail": SESSION_EXPIRED, "code": "session_expired"}, status=401,
+                                     headers=_cors(request))
+        request["nv_auth"] = verdict
+        if verdict is None:
             access = os.environ.get("NEOVARCH_ACCESS_LOG")
             if access:
                 with open(access, "a", encoding="utf-8") as fh:
