@@ -1,7 +1,8 @@
 // 1.4.4: Profil tab, compact and GitHub-profile-like. Top to bottom:
 // [ProfileHeaderSlot] (photo + name/@login + bio, contribution graph, tech
 // stack), then the settings folded into compact expandable groups: Tampilan
-// (tema, aksen, wallpaper, sudut), Gaya kaca, Ikon aplikasi, Teman.
+// (tema, aksen, wallpaper, sudut, mode ringan), Gaya kaca, Ikon aplikasi,
+// Teman, then Aplikasi (Tentang aplikasi, Riwayat perubahan).
 //
 // The list reserves room for the floating nav bar (its height + gap + the
 // system inset, via the shell's MediaQuery padding) so the last row always
@@ -10,9 +11,13 @@ import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../state/settings_controller.dart';
 import '../../theme/neovarch_mobile_theme.dart';
 import '../../ui/widgets/motion.dart' show reduceMotion;
 import 'app_icon_panel.dart';
+import 'changelog_screen.dart' show ChangelogScreen;
+import 'lite_mode_panel.dart';
+import 'remote_about_screen.dart';
 import 'brag_share_sheet.dart' show showBragShareSheet;
 import 'appearance/appearance_section.dart' show NvAppearanceSection;
 import 'glass_style_picker.dart';
@@ -66,8 +71,8 @@ class RemoteProfileScreen extends StatelessWidget {
             id: 'appearance',
             icon: CupertinoIcons.paintbrush_fill,
             title: 'Tampilan',
-            subtitle: 'Tema, aksen, wallpaper, sudut',
-            children: [NvAppearanceSection(), SizedBox(height: 12), WallpaperColorsPanel()],
+            subtitle: 'Tema, aksen, wallpaper, sudut, mode ringan',
+            children: [NvAppearanceSection(), SizedBox(height: 12), WallpaperColorsPanel(), SizedBox(height: 12), LiteModePanel()],
           ),
           const ProfileGroup(
             id: 'glass',
@@ -90,6 +95,25 @@ class RemoteProfileScreen extends StatelessWidget {
             subtitle: 'Teman GitHub & bagikan profil',
             children: [SocialSection(autoLoad: false, showProfile: false)],
           ),
+          const NvSection('aplikasi'),
+          NvList(children: [
+            NvRow(
+              key: const ValueKey('profile-about'),
+              icon: CupertinoIcons.info_circle,
+              title: 'Tentang aplikasi',
+              subtitle: 'v${SettingsController.appVersion} · pembaruan, tautan, lisensi',
+              trailing: Icon(CupertinoIcons.chevron_right, size: 17, color: NV.muted),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const RemoteAboutScreen())),
+            ),
+            NvRow(
+              key: const ValueKey('profile-changelog'),
+              icon: CupertinoIcons.clock,
+              title: 'Riwayat perubahan',
+              subtitle: 'Yang baru di setiap versi',
+              trailing: Icon(CupertinoIcons.chevron_right, size: 17, color: NV.muted),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ChangelogScreen())),
+            ),
+          ]),
         ],
       ),
     );

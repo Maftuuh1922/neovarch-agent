@@ -189,7 +189,8 @@ def cmd_setup(args) -> int:
     cfg = cfgmod.load_config()
     provider = args.provider
     if provider == "9router":
-        cfg.setdefault("model", {}).update({"provider": "9router", "default": args.model or "oc/big-pickle",
+        from neovarch import router9
+        cfg.setdefault("model", {}).update({"provider": "9router", "default": args.model or router9.DEFAULT_MODEL,
                                             "base_url": ""})
         if args.base_url:
             cfg.setdefault("router9", {})["base_url"] = args.base_url

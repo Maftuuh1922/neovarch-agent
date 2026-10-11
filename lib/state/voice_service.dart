@@ -139,6 +139,9 @@ String sttErrorText(String code) => switch (code) {
       'error_network' || 'error_network_timeout' || 'error_server' => 'Pengenalan suara butuh internet (atau unduh paket bahasa offline di pengaturan Google).',
       'error_language_not_supported' || 'error_language_unavailable' => 'Bahasa ini belum tersedia di pengenal suara HP. Ganti ID/EN (tekan lama tombol mik).',
       'error_busy' || 'error_recognizer_busy' => 'Pengenal suara sedang dipakai aplikasi lain.',
+      'error_audio' => 'Mikrofon sedang dipakai (mis. aplikasi lain atau "Hey Neo"). Coba lagi sebentar lagi.',
+      'error_client' => 'Pengenal suara HP menolak permintaan. Coba lagi, atau mulai ulang aplikasi Google.',
+      'error_timeout' => 'Pengenal suara tidak menjawab. Coba lagi.',
       _ => 'Dikte gagal ($code).',
     };
 
@@ -156,6 +159,9 @@ class VoiceService extends ChangeNotifier {
   /// Tests: the Android fallbacks (RecognizerIntent / Vosk).
   @visibleForTesting
   static SpeechFallback? debugFallback;
+  /// Tests: how long the recogniser may take to start before dictation gives up.
+  @visibleForTesting
+  static Duration initTimeout = const Duration(seconds: 12);
 
   SpeechEngine? _engine;
   SpeechEngine get _e => _engine ??= debugEngine ?? _SttEngine();
@@ -209,6 +215,7 @@ class VoiceService extends ChangeNotifier {
   void _fail(String text) {
     error = text;
     listening = false;
+    _holdWakeMic(false);
     notifyListeners();
     _onError?.call(text);
   }
@@ -231,21 +238,37 @@ class VoiceService extends ChangeNotifier {
         onStatus: (st) {
           if ((st == 'done' || st == 'notListening') && listening && engine == 'recognizer') {
             listening = false;
+            _holdWakeMic(false);
             notifyListeners();
             if (!_gotText && error == null) _fail(sttErrorText('error_no_match'));
           }
         },
-      );
+      ).timeout(initTimeout, onTimeout: () {
+        error = sttErrorText('error_timeout');
+        return false;
+      });
+      if (!_sttReady) error ??= 'Pengenal suara tidak tersedia. Pasang/aktifkan aplikasi Google (Speech Services).';
     } catch (e) {
-      debugPrint('dictation: recognizer init failed: $e');
+      error = e is PlatformException ? sttErrorText(e.code) : 'Pengenal suara HP gagal dimulai: $e';
       _sttReady = false;
     }
     return _sttReady;
   }
 
+  /// "Hey Neo" listens on the same microphone: pause it while dictating.
+  /// Best effort (older builds and other platforms have no such call).
+  static void _holdWakeMic(bool on) {
+    if (debugEngine != null || kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    unawaited(deviceCall<bool>('wakeHoldMic', {'hold': on}).then<void>((_) {}, onError: (_) {}));
+  }
+
   /// Mic → text. Order: Android SpeechRecognizer (speech_to_text), then the
   /// system speech dialog, then offline Vosk (English). [onText] gets partial
   /// words and the final text; [onError] gets any later failure in Indonesian.
+  /// Never throws: every failure (no recogniser, mic denied or busy, plugin
+  /// error, a recogniser that never answers) ends in [error] holding a message
+  /// for the user and [listening] false, so the mic button can never take the
+  /// app down. "Hey Neo" is paused while dictation holds the microphone.
   Future<void> startDictation({
     required String locale,
     required void Function(String text, bool isFinal) onText,
@@ -258,19 +281,41 @@ class VoiceService extends ChangeNotifier {
     _locale = locale;
     _onText = (t, fin) {
       if (t.trim().isNotEmpty) _gotText = true;
-      onText(t, fin);
+      try {
+        onText(t, fin);
+      } catch (e) {
+        error = 'dikte gagal: $e';
+      }
       if (fin) {
         listening = false;
+        _holdWakeMic(false);
         notifyListeners();
       }
     };
     _onError = onError;
+    try {
+      await _startDictation();
+    } catch (e) {
+      listening = false;
+      _holdWakeMic(false);
+      error = _readable(e);
+      notifyListeners();
+    }
+  }
+
+  Future<void> _startDictation() async {
     if (!canDictate && debugEngine == null && debugFallback == null) {
       error = 'dikte suara belum tersedia di platform ini';
       notifyListeners();
       return;
     }
-    if (!await _micPermission()) {
+    bool allowed;
+    try {
+      allowed = await _micPermission().timeout(const Duration(minutes: 2), onTimeout: () => false);
+    } catch (_) {
+      allowed = false;
+    }
+    if (!allowed) {
       error = sttErrorText('error_permission');
       notifyListeners();
       return;
@@ -286,12 +331,13 @@ class VoiceService extends ChangeNotifier {
     }
     if (useRecognizer && await _initStt()) {
       try {
-        _locales ??= await _e.localeIds();
+        _locales ??= await _e.localeIds().timeout(const Duration(seconds: 5));
       } catch (_) {
         _locales = const [];
       }
-      final id = resolveSttLocale(_locales!, locale) ?? locale;
+      final id = resolveSttLocale(_locales!, _locale) ?? _locale;
       engine = 'recognizer';
+      _holdWakeMic(true);
       listening = true;
       notifyListeners();
       try {
@@ -300,13 +346,17 @@ class VoiceService extends ChangeNotifier {
       } catch (e) {
         debugPrint('dictation: listen failed: $e');
         listening = false;
+        _holdWakeMic(false);
+        error = _readable(e);
       }
     }
     if (fb == null) {
-      error = useRecognizer ? 'Pengenal suara tidak tersedia. Pasang/aktifkan aplikasi Google (Speech Services).' : noSpeechServiceText;
+      error ??= useRecognizer ? 'Pengenal suara tidak tersedia. Pasang/aktifkan aplikasi Google (Speech Services).' : noSpeechServiceText;
       notifyListeners();
       return;
     }
+    // The fallbacks report their own outcome.
+    error = null;
     _fellBack = true;
     await _startFallback();
   }
@@ -319,11 +369,13 @@ class VoiceService extends ChangeNotifier {
     } catch (_) {}
     if (caps['intent'] == true) {
       engine = 'intent';
+      _holdWakeMic(true);
       listening = true;
       notifyListeners();
       try {
         final t = await fb.recognizeIntent(_locale);
         listening = false;
+        _holdWakeMic(false);
         notifyListeners();
         if (t != null && t.trim().isNotEmpty) {
           _onText?.call(t, true);
@@ -339,6 +391,7 @@ class VoiceService extends ChangeNotifier {
     final english = _locale.toLowerCase().startsWith('en');
     if (english && caps['vosk'] == true) {
       engine = 'vosk';
+      _holdWakeMic(true);
       listening = true;
       notifyListeners();
       try {
@@ -352,6 +405,16 @@ class VoiceService extends ChangeNotifier {
     _fail(english ? voskModelMissingText : noSpeechServiceText);
   }
 
+  static String _readable(Object e) {
+    if (e is PlatformException) return sttErrorText(e.code);
+    final t = '$e';
+    if (t.contains('error_')) {
+      final code = RegExp(r'error_[a-z_]+').firstMatch(t)?.group(0);
+      if (code != null) return sttErrorText(code);
+    }
+    return 'Dikte gagal: $t';
+  }
+
   Future<void> stopDictation() async {
     try {
       if (engine == 'vosk') {
@@ -361,6 +424,7 @@ class VoiceService extends ChangeNotifier {
       }
     } catch (_) {}
     listening = false;
+    _holdWakeMic(false);
     notifyListeners();
   }
 

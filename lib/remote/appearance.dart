@@ -109,6 +109,7 @@ class AppearanceController extends ChangeNotifier {
   static const _kGlassStyle = 'nv.glass.style';
   static const _kWallColors = 'nv.bg.autoColor';
   static const _kWallSwatches = 'nv.bg.swatches';
+  static const kLite = 'nv.perf.lite';
 
   /// Resolved boot colours, read natively by MainActivity (window background
   /// before Flutter draws) so a cold start opens straight in this look.
@@ -131,6 +132,10 @@ class AppearanceController extends ChangeNotifier {
 
   /// "Gaya kaca" (stored by name: reguler, bening, gelap, warna, tanpa).
   NvGlassStyle glassStyle = NvGlassStyle.reguler;
+
+  /// "Mode ringan": no backdrop blur anywhere (NvGlass, the glass cards,
+  /// LiquidGlass bubbles) — solid surfaces instead, for slower phones.
+  bool liteMode = false;
 
   /// "Warna dari wallpaper": the accent follows the background image.
   /// On by default; a manual accent pick turns it off.
@@ -193,6 +198,7 @@ class AppearanceController extends ChangeNotifier {
     );
     NV.glassSigma.value = background.glass;
     glassStyle = NvGlassStyle.parse(_prefs.getString(_kGlassStyle));
+    liteMode = _prefs.getBool(kLite) ?? false;
     _bindGlass();
     wallpaperColors = _prefs.getBool(_kWallColors) ?? true;
     wallpaperSwatches = [for (final h in _prefs.getStringList(_kWallSwatches) ?? const <String>[]) ?parseHexColor(h)];
@@ -202,7 +208,19 @@ class AppearanceController extends ChangeNotifier {
   /// reduce-transparency switch.
   void _bindGlass() {
     NV.glassStyle = glassStyle;
-    NvGlassFx.reduceTransparency.value = glassStyle == NvGlassStyle.tanpa;
+    NV.liteMode = liteMode;
+    NvGlassFx.reduceTransparency.value = glassStyle == NvGlassStyle.tanpa || liteMode;
+  }
+
+  /// Turns "Mode ringan" on/off (persisted; every glass widget repaints).
+  void setLiteMode(bool v) {
+    if (v == liteMode) return;
+    onBeforeChange?.call();
+    liteMode = v;
+    _bindGlass();
+    _prefs.setBool(kLite, v);
+    revision++;
+    notifyListeners();
   }
 
   void setGlassStyle(NvGlassStyle s) {

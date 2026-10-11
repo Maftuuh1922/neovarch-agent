@@ -2,26 +2,27 @@
 // bio, the contribution graph (theme accent, last ~12 months, scrolls sideways on
 // narrow phones), the pinned repositories and the tech stack as logo chips.
 //
-// Source: the PC's GitHub sign-in (`/api/social/profile`) when the PC has one;
-// otherwise the public profile of a username set here
-// ([GithubPublicController], no token, cached for offline).
+// Source: ONLY the paired PC's GitHub sign-in (`/api/social/profile`). The
+// phone never asks for a username, Client ID or login: it syncs the account
+// from the PC on connect, on resume and on every `social.changed` push. When
+// the PC is signed out it shows "Masuk di PC dulu" ([PcGithubSignInCard]).
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../theme/neovarch_mobile_theme.dart';
-import '../github_public.dart';
 import '../remote_controller.dart';
 import '../social_models.dart';
 import 'nv_widgets.dart';
+import 'pc_github_signin.dart';
 import 'remote_social_screen.dart' show NvAvatar, CodingChip;
 import 'tech_logo.dart' show TechStackChips;
 
 class ProfileHeaderSlot extends ConsumerStatefulWidget {
   const ProfileHeaderSlot({super.key, this.autoLoad = true});
 
-  /// Tests: skip the initial refresh from the PC / GitHub.
+  /// Tests: skip the initial refresh from the PC.
   final bool autoLoad;
 
   @override
@@ -33,36 +34,47 @@ class _ProfileHeaderSlotState extends ConsumerState<ProfileHeaderSlot> {
   void initState() {
     super.initState();
     if (!widget.autoLoad) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final r = ref.read(remoteProvider);
-      if (r.connected) await r.refreshSocial();
-      if (!mounted) return;
-      final gh = ref.read(githubPublicProvider);
-      await gh.load();
-      final stale = gh.fetchedAt == null || DateTime.now().difference(gh.fetchedAt!) > const Duration(hours: 6);
-      if (!ref.read(remoteProvider).socialSignedIn && gh.login != null && stale) await gh.refresh();
+      if (r.connected && !r.socialLoading) r.refreshSocial();
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final r = ref.watch(remoteProvider);
-    final gh = ref.watch(githubPublicProvider);
-    final fromPc = r.socialSignedIn && r.socialProfile != null;
-    final p = fromPc ? r.socialProfile : gh.profile;
+    final p = r.socialSignedIn ? r.socialProfile : null;
+    final Widget top;
+    if (p != null) {
+      top = GithubHeader(profile: p, source: 'lewat PC');
+    } else if (!r.connected) {
+      top = const NvNotice('Hubungkan HP ke Neovarch PC: profil GitHub ikut akun yang masuk di PC.',
+          key: ValueKey('profile-not-connected'), icon: CupertinoIcons.desktopcomputer);
+    } else if (r.socialError != null) {
+      top = NvNotice(r.socialError!,
+          key: const ValueKey('profile-error'),
+          action: TextButton(onPressed: r.refreshSocial, child: const Text('Ulangi')));
+    } else if (!r.socialChecked || r.socialSignedIn) {
+      // not asked yet, or signed in on the PC with the profile still on its way
+      top = Padding(
+        key: const ValueKey('profile-loading'),
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+          const SizedBox(width: 10),
+          Text('menyinkronkan profil dari PC…', style: TextStyle(fontSize: 13, color: NV.muted)),
+        ]),
+      );
+    } else {
+      top = const PcGithubSignInCard();
+    }
     return Padding(
       key: const ValueKey('profile-header-slot'),
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
-        if (p == null)
-          GithubConnectCard(loading: gh.loading || r.socialLoading, error: gh.error, initial: gh.login)
-        else ...[
-          GithubHeader(profile: p, source: fromPc ? 'lewat PC' : 'publik', onEdit: fromPc ? null : () => showGithubLoginSheet(context, gh.login)),
-          if (!fromPc && gh.error != null) ...[
-            const SizedBox(height: 8),
-            Text(gh.error!, key: const ValueKey('github-offline'), style: TextStyle(fontSize: 12, color: NV.muted)),
-          ],
+        top,
+        if (p != null) ...[
           const SizedBox(height: 12),
           ContributionGraphCard(heatmap: p.heatmap),
           if (p.pinned.isNotEmpty) ...[
@@ -89,10 +101,9 @@ class _ProfileHeaderSlotState extends ConsumerState<ProfileHeaderSlot> {
 
 /// Photo, name, @login, bio, coding status.
 class GithubHeader extends StatelessWidget {
-  const GithubHeader({super.key, required this.profile, required this.source, this.onEdit});
+  const GithubHeader({super.key, required this.profile, required this.source});
   final SocialProfile profile;
   final String source;
-  final VoidCallback? onEdit;
   @override
   Widget build(BuildContext context) {
     final p = profile;
@@ -118,97 +129,10 @@ class GithubHeader extends StatelessWidget {
             if (p.status != null) ...[const SizedBox(height: 8), CodingChip(status: p.status)],
           ]),
         ),
-        if (onEdit != null)
-          IconButton(
-            key: const ValueKey('github-edit'),
-            tooltip: 'Ganti akun GitHub',
-            onPressed: onEdit,
-            icon: Icon(CupertinoIcons.pencil, size: 18, color: NV.muted),
-          ),
       ]),
     );
   }
 }
-
-/// No profile yet: ask for a GitHub username (or point at the PC sign-in).
-class GithubConnectCard extends ConsumerStatefulWidget {
-  const GithubConnectCard({super.key, this.loading = false, this.error, this.initial});
-  final bool loading;
-  final String? error;
-  final String? initial;
-  @override
-  ConsumerState<GithubConnectCard> createState() => _GithubConnectCardState();
-}
-
-class _GithubConnectCardState extends ConsumerState<GithubConnectCard> {
-  late final _c = TextEditingController(text: widget.initial ?? '');
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => NvPanel(
-        key: const ValueKey('github-connect'),
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text('Profil GitHub', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: NV.text)),
-          const SizedBox(height: 4),
-          Text('Masukkan username GitHub untuk foto, grafik kontribusi, dan stack. Atau masuk GitHub di Neovarch PC.',
-              style: TextStyle(fontSize: 13, color: NV.muted, height: 1.4)),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(
-              child: TextField(
-                key: const ValueKey('github-login-field'),
-                controller: _c,
-                autocorrect: false,
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _save(),
-                decoration: const InputDecoration(hintText: 'username', prefixText: '@', isDense: true),
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(
-              key: const ValueKey('github-login-save'),
-              onPressed: widget.loading ? null : _save,
-              child: Text(widget.loading ? 'Memuat…' : 'Simpan'),
-            ),
-          ]),
-          if (widget.error != null) ...[
-            const SizedBox(height: 8),
-            Text(widget.error!, style: TextStyle(fontSize: 12.5, color: NV.text)),
-          ],
-        ]),
-      );
-
-  void _save() => ref.read(githubPublicProvider).setLogin(_c.text);
-}
-
-Future<void> showGithubLoginSheet(BuildContext context, String? current) => showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.fromLTRB(16, 0, 16, 20 + MediaQuery.viewInsetsOf(ctx).bottom),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          NvSheetTitle(kicker: 'profil', title: 'Akun GitHub'),
-          const SizedBox(height: 12),
-          GithubConnectCard(initial: current),
-          const SizedBox(height: 8),
-          Consumer(
-            builder: (context, ref, _) => TextButton(
-              key: const ValueKey('github-clear'),
-              onPressed: () {
-                ref.read(githubPublicProvider).setLogin(null);
-                Navigator.pop(ctx);
-              },
-              child: const Text('Hapus akun dari HP ini'),
-            ),
-          ),
-        ]),
-      ),
-    );
 
 /// Contribution levels 0..4 in the active theme accent: the empty cell is a
 /// faint text tint over the card, levels 1-4 the accent at 25/45/70/100%

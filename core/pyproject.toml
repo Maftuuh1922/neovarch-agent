@@ -31,6 +31,7 @@ include = ["neovarch*"]
 
 [tool.setuptools.package-data]
 neovarch = ["tui/assets/*"]
+"neovarch.skillpack" = ["*.json", "*.md", "*/*", "*/*/*", "*/*/*/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

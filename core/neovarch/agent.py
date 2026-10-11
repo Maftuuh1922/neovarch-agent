@@ -34,7 +34,9 @@ talks to this core (the `neovarch serve` gateway). Its pages, from the left rail
 Documents you can make on this PC (also when the request comes from the phone remote, since the phone only
 relays chats to this PC): Word/PDF reports with `report_search` → `report_create` → `report_export`, and
 PowerPoint decks (.pptx, "buatin PPT") with `ppt_setup` → the `ppt-master` skill → `ppt_export`. Finish by
-giving the output file's absolute path so the desktop and phone can open/download it.
+giving the output file's absolute path so the desktop and phone can open/download it. Diagrams (flowchart,
+architecture, ERD, timeline ...): the `diagram` or `diagram-interaktif` skill → `diagram_save` (SVG/HTML/Mermaid
+saved as a page any browser opens) → end with its absolute path.
 How to answer questions about the app:
 - Answer from this description directly. Call `office_status` to see the live Kantor (agents, status, tasks,
   active model); never search the filesystem, the app bundle (app.asar) or Python site-packages to learn
@@ -83,10 +85,28 @@ def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "") -> s
     parts.extend(_vault_prompt(cfg, query))
     skills = list_skills()
     if skills:
-        parts.append("# Skills (read one with the `skill` tool before using it)\n"
-                     + "\n".join(f"- {s['name']}: {s['description']}" for s in skills))
-    parts.append(f"Current working directory: {cwd}\nDate: {time.strftime('%Y-%m-%d %H:%M %Z')}")
+        parts.append(skills_index(skills))
+        from neovarch import skillpack
+        hint = skillpack.hint_block(query, skills) if query else ""
+        if hint:
+            parts.append(hint)
+    parts.append(f"Current working directory: {cwd}\nDate: {now_text(cfg)}")
     return "\n\n".join(parts)
+
+
+def skills_index(skills: list[dict]) -> str:
+    """Every enabled skill, for every provider and model: name, label and a short description,
+    plus the rule to read the matching skill before working (models do not pick skills on their own)."""
+    lines = []
+    for s in skills:
+        label = f" ({s['label']})" if s.get("label") and s["label"].lower() != s["name"] else ""
+        lines.append(f"- {s['name']}{label}: {str(s.get('description') or '')[:300]}")
+    return ("# Skills\n"
+            "Kamu punya skill berikut. Saat tugas pengguna cocok dengan salah satunya (desain, keamanan siber, "
+            "diagram, riset/skripsi, debugging, review kode, dll.), panggil alat `skill` dengan `name` skill itu "
+            "SEBELUM mulai bekerja, lalu ikuti isinya. Jangan menebak isi skill dari namanya.\n"
+            "When the user's task matches a skill below, call the `skill` tool with its name before starting and "
+            "follow it.\n" + "\n".join(lines))
 
 
 def _vault_prompt(cfg: dict, query: str) -> list[str]:
@@ -407,5 +427,30 @@ def _wire(m: dict) -> dict:
     return out
 
 
+def now_text(cfg: dict) -> str:
+    """Local date/time for the prompt, in Settings › Perilaku › timezone when set (e.g. Asia/Jakarta)."""
+    tz = str(cfgmod.get_path(cfg, "timezone", "") or "").strip()
+    if tz:
+        try:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo(tz)).strftime("%Y-%m-%d %H:%M ") + tz
+        except Exception:
+            pass  # unknown zone name: fall back to the PC's clock
+    return time.strftime("%Y-%m-%d %H:%M %Z")
+
+
 def default_cwd() -> Path:
-    return Path(os.environ.get("NEOVARCH_CWD") or os.getcwd())
+    """Where new chats start: NEOVARCH_CWD, else Settings › Ruang kerja › Proyek (terminal.cwd), else here."""
+    env = os.environ.get("NEOVARCH_CWD")
+    if env:
+        return Path(env)
+    try:
+        raw = str(cfgmod.get_path(cfgmod.load_config(), "terminal.cwd", "") or "").strip()
+    except Exception:
+        raw = ""
+    if raw:
+        p = Path(os.path.expanduser(raw))
+        if p.is_dir():
+            return p
+    return Path(os.getcwd())
