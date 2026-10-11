@@ -337,7 +337,9 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
   }
 
   /// Mic: Android SpeechRecognizer (speech_to_text), Indonesian or English;
-  /// partial words fill the field, the final result is sent to the agent.
+  /// without one (many Xiaomi phones) the system speech dialog, then the
+  /// offline Vosk model (English). Partial words fill the field, the final
+  /// result is sent to the agent; every failure shows a message.
   /// Long-press switches ID ↔ EN.
   Future<void> _dictate() async {
     final v = VoiceService.instance;
@@ -348,6 +350,7 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
     }
     setState(() => _dictating = true);
     var sent = false;
+    var errShown = false;
     await v.startDictation(
       locale: ref.read(settingsProvider).sttLocale,
       onText: (t, done) {
@@ -362,8 +365,14 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
           }
         }
       },
+      onError: (e) {
+        errShown = true;
+        if (!mounted) return;
+        setState(() => _dictating = false);
+        toast(context, e);
+      },
     );
-    if (v.error != null && mounted) {
+    if (v.error != null && !errShown && mounted) {
       setState(() => _dictating = false);
       toast(context, v.error!);
     }

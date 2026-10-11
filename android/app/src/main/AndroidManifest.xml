@@ -246,6 +246,10 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- chat dictation fallback when no RecognitionService exists (many Xiaomi phones) -->
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
         <!-- flutter_tts needs to see the TTS engine (Android 11+) -->
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />

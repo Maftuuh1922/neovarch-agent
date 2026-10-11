@@ -1,12 +1,14 @@
 // Voice: dictation (speech_to_text) and read-back (flutter_tts), like
 // Desktop's mic + "Read replies aloud" toggle.
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
-import '../data/device_tools.dart' show ensurePermissions;
+import '../data/device_tools.dart' show deviceCall, ensurePermissions;
 import '../data/platform_caps.dart';
 
 /// The speech recogniser behind dictation (Android SpeechRecognizer through
@@ -40,6 +42,80 @@ class _SttEngine implements SpeechEngine {
   @override
   Future<void> stop() => _stt.stop();
 }
+
+/// Android fallbacks when the phone has no SpeechRecognizer service (common
+/// on Xiaomi without Google): the system speech dialog (RecognizerIntent) and
+/// the offline Vosk model Hey Neo downloads (English only). MainActivity.kt.
+abstract class SpeechFallback {
+  /// `{recognizer, intent, vosk, mic}` booleans.
+  Future<Map<String, bool>> caps();
+  /// The system "Bicara sekarang" dialog; final text or null (cancelled).
+  Future<String?> recognizeIntent(String locale);
+  /// Offline dictation; partial / final text and errors arrive on the callbacks.
+  Future<void> voskStart({required void Function(String text, bool isFinal) onText, required void Function(String error) onError});
+  Future<void> voskStop();
+}
+
+class _ChannelFallback implements SpeechFallback {
+  static const _speech = MethodChannel('neovarch/speech');
+  void Function(String, bool)? _onText;
+  void Function(String)? _onError;
+  String _done = '';
+
+  _ChannelFallback() {
+    _speech.setMethodCallHandler((call) async {
+      final a = (call.arguments as Map?) ?? const {};
+      if (call.method == 'text') {
+        final t = '${a['text'] ?? ''}'.trim();
+        final fin = a['final'] == true;
+        if (a['segment'] == true) {
+          // a finished sentence: keep it and keep listening
+          if (t.isNotEmpty) _done = _done.isEmpty ? t : '$_done $t';
+          _onText?.call(_done, fin);
+        } else if (t.isNotEmpty) {
+          _onText?.call(_done.isEmpty ? t : '$_done $t', fin);
+        }
+      } else if (call.method == 'error') {
+        _onError?.call('${a['message'] ?? 'mikrofon'}');
+      }
+      return null;
+    });
+  }
+
+  @override
+  Future<Map<String, bool>> caps() async {
+    final r = await deviceCall<Map>('speechCaps');
+    return {for (final e in (r ?? const {}).entries) '${e.key}': e.value == true};
+  }
+
+  @override
+  Future<String?> recognizeIntent(String locale) => deviceCall<String>('recognizeSpeechIntent', {'locale': locale});
+
+  @override
+  Future<void> voskStart({required void Function(String text, bool isFinal) onText, required void Function(String error) onError}) async {
+    _onText = onText;
+    _onError = onError;
+    _done = '';
+    await deviceCall<bool>('voskDictate');
+  }
+
+  @override
+  Future<void> voskStop() async {
+    await deviceCall<bool>('voskStop');
+  }
+}
+
+/// No speech service at all on this phone (Indonesian text).
+const noSpeechServiceText = 'HP ini tidak punya layanan pengenal suara. Pasang "Speech Services by Google" (Play Store / GetApps), '
+    'atau ganti dikte ke English (tekan lama tombol mik) untuk memakai model offline Hey Neo.';
+const voskModelMissingText = 'HP ini tidak punya layanan pengenal suara. Untuk dikte offline (English), nyalakan Hey Neo sekali di Profil '
+    'supaya model suara terunduh, atau pasang "Speech Services by Google".';
+
+/// SpeechRecognizer errors that mean "this recogniser can't work here" →
+/// try the fallbacks instead of failing.
+bool sttUnavailableError(String code) => const {
+      'error_client', 'error_server_disconnected', 'error_language_unavailable', 'error_language_not_supported', 'error_cannot_check_support',
+    }.contains(code);
 
 /// Picks the recogniser locale for [wanted] ("id_ID", "en-US"): exact, then
 /// the same language, else null (the recogniser's default).
@@ -77,15 +153,36 @@ class VoiceService extends ChangeNotifier {
   static bool get hasTestEngine => debugEngine != null;
   @visibleForTesting
   static Future<bool> Function()? debugMicPermission;
+  /// Tests: the Android fallbacks (RecognizerIntent / Vosk).
+  @visibleForTesting
+  static SpeechFallback? debugFallback;
 
   SpeechEngine? _engine;
   SpeechEngine get _e => _engine ??= debugEngine ?? _SttEngine();
+  SpeechFallback? _fallbackImpl;
+  SpeechFallback? get _fb {
+    if (debugFallback != null) return debugFallback;
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android || debugEngine != null) return null;
+    return _fallbackImpl ??= _ChannelFallback();
+  }
+
   FlutterTts? _tts;
   bool _sttReady = false;
   bool listening = false;
   bool speaking = false;
   String? error;
   List<String>? _locales;
+
+  /// Which recogniser the current / last dictation used:
+  /// `recognizer`, `intent`, `vosk` (diagnostics, tests).
+  String? engine;
+
+  // current dictation
+  void Function(String text, bool isFinal)? _onText;
+  void Function(String error)? _onError;
+  bool _gotText = false;
+  bool _fellBack = false;
+  String _locale = 'id_ID';
 
   @visibleForTesting
   void debugReset() {
@@ -94,6 +191,7 @@ class VoiceService extends ChangeNotifier {
     _locales = null;
     listening = false;
     error = null;
+    engine = null;
   }
 
   Future<bool> _micPermission() async {
@@ -107,65 +205,160 @@ class VoiceService extends ChangeNotifier {
     }
   }
 
+  /// Error after dictation started (the chat shows it; never silent).
+  void _fail(String text) {
+    error = text;
+    listening = false;
+    notifyListeners();
+    _onError?.call(text);
+  }
+
   Future<bool> _initStt() async {
     if (_sttReady) return true;
-    if (!canDictate && debugEngine == null) {
-      error = 'dikte suara belum tersedia di platform ini';
-      return false;
-    }
-    if (!await _micPermission()) {
-      error = sttErrorText('error_permission');
-      return false;
-    }
     try {
       _sttReady = await _e.initialize(
-        onError: (e) {
-          error = sttErrorText(e);
-          listening = false;
-          notifyListeners();
+        onError: (code) {
+          debugPrint('dictation: recognizer error $code');
+          // A recogniser that can't run here: try the other ways once.
+          if (!_gotText && !_fellBack && sttUnavailableError(code) && _fb != null) {
+            _fellBack = true;
+            _sttReady = false;
+            unawaited(_startFallback());
+            return;
+          }
+          _fail(sttErrorText(code));
         },
-        onStatus: (s) {
-          if (s == 'done' || s == 'notListening') {
+        onStatus: (st) {
+          if ((st == 'done' || st == 'notListening') && listening && engine == 'recognizer') {
             listening = false;
             notifyListeners();
+            if (!_gotText && error == null) _fail(sttErrorText('error_no_match'));
           }
         },
       );
-      if (!_sttReady) error = 'Pengenal suara tidak tersedia. Pasang/aktifkan aplikasi Google (Speech Services).';
     } catch (e) {
-      error = 'pengenalan suara tidak tersedia: $e';
+      debugPrint('dictation: recognizer init failed: $e');
       _sttReady = false;
     }
     return _sttReady;
   }
 
-  Future<void> startDictation({required String locale, required void Function(String text, bool isFinal) onText}) async {
+  /// Mic → text. Order: Android SpeechRecognizer (speech_to_text), then the
+  /// system speech dialog, then offline Vosk (English). [onText] gets partial
+  /// words and the final text; [onError] gets any later failure in Indonesian.
+  Future<void> startDictation({
+    required String locale,
+    required void Function(String text, bool isFinal) onText,
+    void Function(String error)? onError,
+  }) async {
     error = null;
-    if (!await _initStt()) {
-      error ??= 'pengenalan suara tidak tersedia di perangkat ini';
+    engine = null;
+    _gotText = false;
+    _fellBack = false;
+    _locale = locale;
+    _onText = (t, fin) {
+      if (t.trim().isNotEmpty) _gotText = true;
+      onText(t, fin);
+      if (fin) {
+        listening = false;
+        notifyListeners();
+      }
+    };
+    _onError = onError;
+    if (!canDictate && debugEngine == null && debugFallback == null) {
+      error = 'dikte suara belum tersedia di platform ini';
       notifyListeners();
       return;
     }
-    try {
-      _locales ??= await _e.localeIds();
-    } catch (_) {
-      _locales = const [];
-    }
-    final id = resolveSttLocale(_locales!, locale) ?? locale;
-    listening = true;
-    notifyListeners();
-    try {
-      await _e.listen(localeId: id, onResult: onText);
-    } catch (e) {
-      listening = false;
-      error = 'dikte gagal: $e';
+    if (!await _micPermission()) {
+      error = sttErrorText('error_permission');
       notifyListeners();
+      return;
     }
+    var useRecognizer = true;
+    final fb = _fb;
+    if (fb != null) {
+      try {
+        final caps = await fb.caps();
+        useRecognizer = caps['recognizer'] ?? true;
+        debugPrint('dictation caps: $caps');
+      } catch (_) {}
+    }
+    if (useRecognizer && await _initStt()) {
+      try {
+        _locales ??= await _e.localeIds();
+      } catch (_) {
+        _locales = const [];
+      }
+      final id = resolveSttLocale(_locales!, locale) ?? locale;
+      engine = 'recognizer';
+      listening = true;
+      notifyListeners();
+      try {
+        await _e.listen(localeId: id, onResult: (t, fin) => _onText?.call(t, fin));
+        return;
+      } catch (e) {
+        debugPrint('dictation: listen failed: $e');
+        listening = false;
+      }
+    }
+    if (fb == null) {
+      error = useRecognizer ? 'Pengenal suara tidak tersedia. Pasang/aktifkan aplikasi Google (Speech Services).' : noSpeechServiceText;
+      notifyListeners();
+      return;
+    }
+    _fellBack = true;
+    await _startFallback();
+  }
+
+  Future<void> _startFallback() async {
+    final fb = _fb!;
+    Map<String, bool> caps = const {};
+    try {
+      caps = await fb.caps();
+    } catch (_) {}
+    if (caps['intent'] == true) {
+      engine = 'intent';
+      listening = true;
+      notifyListeners();
+      try {
+        final t = await fb.recognizeIntent(_locale);
+        listening = false;
+        notifyListeners();
+        if (t != null && t.trim().isNotEmpty) {
+          _onText?.call(t, true);
+        } else {
+          _fail(sttErrorText('error_no_match'));
+        }
+        return;
+      } catch (e) {
+        debugPrint('dictation: speech dialog failed: $e');
+        listening = false;
+      }
+    }
+    final english = _locale.toLowerCase().startsWith('en');
+    if (english && caps['vosk'] == true) {
+      engine = 'vosk';
+      listening = true;
+      notifyListeners();
+      try {
+        await fb.voskStart(onText: (t, fin) => _onText?.call(t, fin), onError: (e) => _fail('Dikte offline berhenti: $e'));
+        return;
+      } catch (e) {
+        _fail('Dikte offline gagal: $e');
+        return;
+      }
+    }
+    _fail(english ? voskModelMissingText : noSpeechServiceText);
   }
 
   Future<void> stopDictation() async {
     try {
-      await _e.stop();
+      if (engine == 'vosk') {
+        await _fb?.voskStop();
+      } else {
+        await _e.stop();
+      }
     } catch (_) {}
     listening = false;
     notifyListeners();
