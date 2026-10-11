@@ -786,6 +786,10 @@ extension RemoteGatewayExtras on RemoteGateway {
   Uri downloadUri(RemoteAttachment a) =>
       _rest(a.url ?? '/api/uploads/${a.id}', {'download': '1', if (token.isNotEmpty) 'token': token});
 
+  /// Download URL for any file the PC agent wrote (a .pptx deck, a .docx
+  /// report): `GET /api/fs/download?path=…&token=…`.
+  Uri fsDownloadUri(String path) => _rest('/api/fs/download', {'path': path, if (token.isNotEmpty) 'token': token});
+
   /// `POST /api/uploads` (multipart). [onProgress] gets 0..1 as bytes go out.
   Future<RemoteAttachment> uploadAttachment({
     required String sessionId,

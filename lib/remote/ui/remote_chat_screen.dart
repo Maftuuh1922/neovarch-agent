@@ -483,7 +483,7 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
                                     showReasoning: s.showReasoning,
                                     isLast: i == msgs.length - 1,
                                     onLink: (u) => launchUrl(Uri.parse(u), mode: LaunchMode.externalApplication),
-                                    onOpenFile: (p) => toast(context, 'Berkas ada di PC: $p'),
+                                    onOpenFile: (p) => openPcFile(context, r.gateway, p),
                                   ),
                                 ),
                         );

@@ -205,11 +205,15 @@ async def tool_skill(args: dict, ctx: ToolContext) -> str:
     """List or read skills (folders with SKILL.md in ~/.neovarch/skills)."""
     root = neovarch_home() / "skills"
     root.mkdir(parents=True, exist_ok=True)
+    ensure_builtin_skills(root)
     name = str(args.get("name") or "")
     if not name:
         return "\n".join(f"{s['name']}: {s['description']}" for s in list_skills()) or "(no skills installed)"
     path = root / re.sub(r"[^a-zA-Z0-9_.-]+", "-", name) / "SKILL.md"
-    return path.read_text(encoding="utf-8") if path.exists() else f"(no skill named {name})"
+    if not path.exists():
+        return f"(no skill named {name})"
+    # Skills such as ppt-master need the host to tell them their absolute folder.
+    return f"SKILL_DIR: {path.parent}\n\n" + path.read_text(encoding="utf-8")
 
 
 def _vault():
@@ -281,22 +285,56 @@ Gunakan skill ini saat pengguna bertanya tentang aplikasi Neovarch itu sendiri.
 """
 
 
+PPT_SKILL_NAME = "ppt"
+PPT_SKILL_VERSION = "1"
+PPT_SKILL = f"""---
+name: {PPT_SKILL_NAME}
+description: Buat presentasi PowerPoint (.pptx) yang bisa diedit dengan PPT Master / Make editable PowerPoint (.pptx) decks with PPT Master.
+builtin: true
+version: {PPT_SKILL_VERSION}
+---
+# PPT / PowerPoint
+
+Pakai saat pengguna minta PPT, slide, presentasi, atau deck (misalnya "buatin PPT dari ...").
+Use when the user asks for a PPT, slides, a presentation or a deck. Permintaan dari HP juga dijalankan di PC ini.
+
+1. Panggil `ppt_setup` (sekali; aman diulang). Hasilnya memberi `SKILL_DIR`, `PYTHON` dan folder kerja.
+   Jika Python 3.10+ tidak ada, sampaikan pesan errornya apa adanya ke pengguna dan berhenti.
+   Sumber PDF butuh `ppt_setup` dengan `pdf: true` (PyMuPDF, lisensi AGPL-3.0); tanyakan dulu ke pengguna.
+2. Baca skill `ppt-master` (`skill` dengan name `ppt-master`) lalu ikuti alurnya. Ganti setiap `python3` di
+   perintahnya dengan `PYTHON` dari langkah 1, dan `${{SKILL_DIR}}` dengan jalur absolutnya.
+   Buat proyek dengan `--dir` ke folder kerja dari langkah 1. Untuk permintaan biasa dari obrolan/HP pakai
+   alur Quick (`project_manager.py init <nama> --quick-generate --dir <folder kerja>`), kecuali pengguna minta
+   alur lengkap.
+3. Ekspor dengan `ppt_export` (`project_path`, `quick`), bukan dengan menebak perintah.
+4. Akhiri dengan jalur absolut file .pptx supaya desktop bisa membukanya dan HP bisa mengunduhnya.
+
+PPT Master: https://github.com/hugohe3/ppt-master (MIT, Copyright (c) 2025-2026 Hugo He).
+"""
+
+BUILTINS = [
+    (BUILTIN_SKILL_NAME, BUILTIN_SKILL_VERSION, BUILTIN_SKILL),
+    (PPT_SKILL_NAME, PPT_SKILL_VERSION, PPT_SKILL),
+]
+
+
 def ensure_builtin_skills(root: Path | None = None) -> None:
-    """Install (or refresh) the built-in skill; a copy the user edited is kept."""
+    """Install (or refresh) the built-in skills; a copy the user edited is kept."""
     root = root or (neovarch_home() / "skills")
-    target = root / BUILTIN_SKILL_NAME / "SKILL.md"
-    try:
-        from neovarch import skills_admin
-        if not target.exists() and skills_admin.archived(BUILTIN_SKILL_NAME):
-            return  # the user archived it
-        if target.exists():
-            text = target.read_text(encoding="utf-8", errors="replace")
-            if "builtin: true" not in text or f"version: {BUILTIN_SKILL_VERSION}" in text:
-                return
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(BUILTIN_SKILL, encoding="utf-8")
-    except OSError:
-        pass
+    for name, version, body in BUILTINS:
+        target = root / name / "SKILL.md"
+        try:
+            from neovarch import skills_admin
+            if not target.exists() and skills_admin.archived(name):
+                continue  # the user archived it
+            if target.exists():
+                text = target.read_text(encoding="utf-8", errors="replace")
+                if "builtin: true" not in text or f"version: {version}" in text:
+                    continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body, encoding="utf-8")
+        except OSError:
+            pass
 
 
 def list_skills(include_disabled: bool = False) -> list[dict[str, Any]]:
@@ -314,6 +352,9 @@ def list_skills(include_disabled: bool = False) -> list[dict[str, Any]]:
         m = re.search(r"(?m)^description:\s*(.+)$", text)
         if m:
             desc = m.group(1).strip()
+            if desc in (">", "|", ">-", "|-"):  # folded YAML block (e.g. ppt-master)
+                fold = re.search(r"(?m)^description:\s*[>|]-?\s*\n((?:[ \t]+.*\n?)+)", text)
+                desc = " ".join(ln.strip() for ln in fold.group(1).splitlines())[:300] if fold else ""
         else:
             body = [ln for ln in text.splitlines() if ln.strip() and not ln.startswith(("---", "#", "name:"))]
             desc = body[0][:160] if body else ""
@@ -382,6 +423,34 @@ async def tool_report_export(args: dict, ctx: ToolContext) -> str:
         lines.append(f"Buka di Obsidian: {res['obsidian_uri']}")
     lines += [f"warning: {w}" for w in res["warnings"]]
     return "exported\n" + "\n".join(lines)
+
+
+async def tool_ppt_setup(args: dict, ctx: ToolContext) -> str:
+    import asyncio
+    from neovarch import pptmaster as ppt
+    try:
+        res = await asyncio.to_thread(ppt.setup, pdf=bool(args.get("pdf")), force=bool(args.get("force")))
+    except ppt.PptError as exc:
+        return f"error: {exc}"
+    return (f"PPT Master {res['version']} siap / ready.\n"
+            f"SKILL_DIR={res['skill_dir']}\n"
+            f"PYTHON={res['python']}   (pakai ini sebagai pengganti python3 / use instead of python3)\n"
+            f"WORK_DIR={res['presentations_dir']}   (project_manager.py init <nama> --quick-generate --dir WORK_DIR)\n"
+            f"PDF input: {'aktif / on (PyMuPDF, AGPL-3.0)' if res['pdf_input'] else 'mati / off (ppt_setup pdf=true untuk sumber PDF)'}\n"
+            "Next: read the skill `ppt-master` and follow it; export with ppt_export.")
+
+
+async def tool_ppt_export(args: dict, ctx: ToolContext) -> str:
+    import asyncio
+    from neovarch import pptmaster as ppt
+    try:
+        res = await asyncio.to_thread(ppt.export, str(args.get("project_path") or ""),
+                                      quick=args.get("quick", True) is not False,
+                                      notes=args.get("notes", True) is not False,
+                                      output=args.get("output") or None)
+    except ppt.PptError as exc:
+        return f"error: {exc}"
+    return "exported\n" + "\n".join(f"pptx: {f}" for f in res["files"])
 
 
 def office_summary(snap: dict) -> str:
@@ -540,6 +609,23 @@ TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
             "formats": {"type": "array", "items": {"type": "string", "enum": ["docx", "pdf", "md"]}},
             "style": {"type": "string", "enum": ["apa", "ieee"]},
             "save_to_vault": {"type": "boolean"}}, "required": ["path"]}}),
+    "ppt_setup": (tool_ppt_setup, {
+        "description": "Prepare PowerPoint (.pptx) generation with PPT Master (MIT, github.com/hugohe3/ppt-master): checks "
+                       "Python 3.10+ on this PC, downloads the official skill once into ~/.neovarch/skills/ppt-master and "
+                       "installs its packages in a private venv. Returns SKILL_DIR, PYTHON and WORK_DIR. pdf=true also "
+                       "installs PyMuPDF (AGPL-3.0) for PDF sources; ask the user first.",
+        "parameters": {"type": "object", "properties": {
+            "pdf": {"type": "boolean", "description": "also install PDF input support (PyMuPDF, AGPL-3.0)"},
+            "force": {"type": "boolean", "description": "re-download the skill"}}}}),
+    "ppt_export": (tool_ppt_export, {
+        "description": "Export a PPT Master project (its svg_output/ pages, after the final quality check) to a native, "
+                       "editable .pptx with the skill's own exporter. Returns the .pptx path(s).",
+        "parameters": {"type": "object", "properties": {
+            "project_path": {"type": "string", "description": "PPT Master project folder"},
+            "quick": {"type": "boolean", "description": "Quick workflow project (default true); false for the full workflow"},
+            "notes": {"type": "boolean", "description": "include speaker notes (default true)"},
+            "output": {"type": "string", "description": "optional explicit output .pptx path"}},
+            "required": ["project_path"]}}),
     "obsidian_links": (tool_obsidian_links, {
         "description": "List the backlinks (notes that [[link]] to this one) and outgoing links of a vault note.",
         "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}),
