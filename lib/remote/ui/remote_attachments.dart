@@ -19,6 +19,7 @@ import '../attachments.dart';
 import '../remote_controller.dart';
 import '../remote_gateway.dart';
 import 'nv_widgets.dart';
+import '../remote_errors.dart';
 
 enum AttachSource { gallery, camera, file }
 
@@ -70,7 +71,7 @@ Future<void> attachFrom(BuildContext context, RemoteController r, AttachSource s
     final err = await r.addAttachment(picked.name, picked.bytes, mime: picked.mime);
     if (err != null && context.mounted) toast(context, err);
   } catch (e) {
-    if (context.mounted) toast(context, '$e');
+    if (context.mounted) toast(context, friendlyRemoteError(e));
   }
 }
 
@@ -87,7 +88,7 @@ Future<void> pasteClipboardImage(BuildContext context, RemoteController r) async
     final err = await r.addAttachment('${m['name'] ?? 'tempel.png'}', bytes, mime: m['mime'] as String?);
     if (err != null && context.mounted) toast(context, err);
   } catch (e) {
-    if (context.mounted) toast(context, '$e');
+    if (context.mounted) toast(context, friendlyRemoteError(e));
   }
 }
 

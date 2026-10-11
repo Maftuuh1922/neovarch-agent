@@ -54,6 +54,8 @@ dependencies:
   mobile_scanner: ^7.4.2
   # Kartu Neovarch QR (pure Dart encoder, painted by BragQrPainter)
   qr: ^3.0.2
+  # Remote dari mana saja: X25519 + ChaCha20-Poly1305 end-to-end crypto (pure Dart, Apache-2.0)
+  cryptography: ^2.7.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

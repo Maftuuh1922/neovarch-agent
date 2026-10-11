@@ -150,7 +150,7 @@ class _RemoteCompanyScreenState extends ConsumerState<RemoteCompanyScreen> {
                 key: const ValueKey('company-offline'),
                 kicker: 'perusahaan',
                 title: 'PC tidak terhubung',
-                body: 'Perusahaan berjalan di PC. Sambungkan HP ke PC (Wi-Fi yang sama atau Tailscale) untuk melihat dan mengaturnya.',
+                body: 'Perusahaan berjalan di PC. Sambungkan HP ke PC (pindai QR di PC sekali) untuk melihat dan mengaturnya.',
                 action: _retryButton(),
               )
             else if (s == null && error != null)

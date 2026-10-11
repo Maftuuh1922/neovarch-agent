@@ -105,7 +105,7 @@ class RemotePcScreen extends ConsumerWidget {
                     flex: 2,
                     child: Text(
                       key: const ValueKey('pc-route'),
-                      '${routeLabel(r.gateway!.activeUrl)}${r.gateway!.lastRtt != null ? ' · ${r.gateway!.lastRtt!.inMilliseconds} ms' : ''}',
+                      '${routeLabel(r.gateway!.activeUrl, transport: r.gateway!.transport)}${r.gateway!.lastRtt != null ? ' · ${r.gateway!.lastRtt!.inMilliseconds} ms' : ''}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontSize: 14, color: NV.text, fontWeight: FontWeight.w500),
@@ -192,6 +192,17 @@ class RemotePcScreen extends ConsumerWidget {
               value: r.notifyApprovals,
               onChanged: r.setNotifyApprovals,
             ),
+            if (d != null)
+              _SwitchRow(
+                key: const ValueKey('pc-bluetooth'),
+                icon: CupertinoIcons.bluetooth,
+                title: 'Bluetooth',
+                subtitle: d.link?.bluetooth != null
+                    ? 'Sambung ke PC di dekat Anda tanpa internet'
+                    : 'Aktifkan juga Bluetooth di PC (Pengaturan ▸ Remote), lalu sambungkan sekali lewat Wi-Fi',
+                value: d.bluetooth,
+                onChanged: (v) => r.setBluetooth(v),
+              ),
             _SwitchRow(
               icon: CupertinoIcons.lightbulb,
               title: 'Tampilkan proses berpikir',
@@ -245,7 +256,7 @@ class _Stat extends StatelessWidget {
 }
 
 class _SwitchRow extends StatelessWidget {
-  const _SwitchRow({required this.icon, required this.title, required this.subtitle, required this.value, required this.onChanged});
+  const _SwitchRow({super.key, required this.icon, required this.title, required this.subtitle, required this.value, required this.onChanged});
   final IconData icon;
   final String title;
   final String subtitle;
@@ -261,11 +272,23 @@ class _SwitchRow extends StatelessWidget {
       );
 }
 
-/// "LAN" / "Tailscale" / "Internet" for the address the socket uses.
-String routeLabel(String url) => switch (gatewayRoute(url)) {
-      'lan' => 'LAN · ${Uri.tryParse(url)?.host ?? url}',
-      'tailscale' => 'Tailscale · ${Uri.tryParse(url)?.host ?? url}',
-      _ => Uri.tryParse(url)?.host ?? url,
+/// How the phone reaches the PC right now: "Langsung (LAN)", "Lewat relay",
+/// "Lewat Bluetooth" (or the VPN / host for other direct addresses).
+String routeLabel(String url, {String transport = 'lan'}) => switch (transport) {
+      'relay' => 'Lewat relay · terenkripsi',
+      'bluetooth' => 'Lewat Bluetooth',
+      _ => switch (gatewayRoute(url)) {
+          'lan' => 'Langsung (LAN) · ${Uri.tryParse(url)?.host ?? url}',
+          'tailscale' => 'Langsung (VPN) · ${Uri.tryParse(url)?.host ?? url}',
+          _ => 'Langsung · ${Uri.tryParse(url)?.host ?? url}',
+        },
+    };
+
+/// Short chip text for the status pill.
+String transportChip(String transport, String url) => switch (transport) {
+      'relay' => 'Lewat relay',
+      'bluetooth' => 'Lewat Bluetooth',
+      _ => gatewayRoute(url) == 'lan' ? 'Langsung (LAN)' : 'Langsung',
     };
 
 /// Theme picker ("Tampilan"): follow the PC (default) or a local look —

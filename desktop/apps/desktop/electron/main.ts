@@ -13851,6 +13851,18 @@ ipcMain.handle('neovarch:remote:set-enabled', (_event, on) => neovarchRemote.set
 ipcMain.handle('neovarch:remote:rotate', () => neovarchRemote.rotate())
 ipcMain.handle('neovarch:remote:update', (_event, patch) => neovarchRemote.update(patch && typeof patch === 'object' ? patch : {}))
 ipcMain.handle('neovarch:remote:check', () => neovarchRemote.check())
+ipcMain.handle('neovarch:remote:set-relay', (_event, patch) =>
+  neovarchRemote.setRelay(
+    patch && typeof patch === 'object'
+      ? {
+          enabled: typeof patch.enabled === 'boolean' ? patch.enabled : undefined,
+          url: typeof patch.url === 'string' || patch.url === null ? patch.url : undefined
+        }
+      : {}
+  )
+)
+ipcMain.handle('neovarch:remote:set-bluetooth', (_event, on) => neovarchRemote.setBluetooth(on === true))
+ipcMain.handle('neovarch:remote:revoke-device', (_event, id) => neovarchRemote.revokeDevice(String(id ?? '')))
 
 // Neovarch wallpaper (Settings ▸ Tampilan ▸ Latar belakang): the picked image is
 // copied into userData so it survives the original moving (neovarch-wallpaper.ts).

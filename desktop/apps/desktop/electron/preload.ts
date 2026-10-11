@@ -403,6 +403,9 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     rotate: () => ipcRenderer.invoke('neovarch:remote:rotate'),
     update: patch => ipcRenderer.invoke('neovarch:remote:update', patch),
     check: () => ipcRenderer.invoke('neovarch:remote:check'),
+    setRelay: patch => ipcRenderer.invoke('neovarch:remote:set-relay', patch),
+    setBluetooth: on => ipcRenderer.invoke('neovarch:remote:set-bluetooth', on),
+    revokeDevice: id => ipcRenderer.invoke('neovarch:remote:revoke-device', id),
     onChanged: callback => {
       const listener = (_event, status) => callback(status)
       ipcRenderer.on('neovarch:remote:changed', listener)

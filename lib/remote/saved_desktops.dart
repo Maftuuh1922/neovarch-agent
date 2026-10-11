@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'link/link_crypto.dart';
+import 'link/link_info.dart';
 import 'pairing.dart';
 
 class SavedDesktop {
@@ -24,6 +26,12 @@ class SavedDesktop {
 
   /// The address that answered last (tried first next time).
   String? lastUrl;
+
+  /// Relay / Bluetooth identity of this PC (Remote dari mana saja).
+  LinkInfo? link;
+
+  /// Phone-side setting: also try Bluetooth when the LAN is not reachable.
+  bool bluetooth;
   SavedDesktop(
       {required this.id,
       required this.name,
@@ -33,7 +41,9 @@ class SavedDesktop {
       required this.addedAt,
       this.lastConnected,
       this.alternates = const [],
-      this.lastUrl});
+      this.lastUrl,
+      this.link,
+      this.bluetooth = false});
 
   /// Candidate addresses in connect order: LAN first, then Tailscale.
   List<String> get candidates => orderedGatewayUrls([url, ...alternates]);
@@ -48,6 +58,8 @@ class SavedDesktop {
         'lastConnected': lastConnected?.toIso8601String(),
         'alternates': alternates,
         'lastUrl': lastUrl,
+        if (link != null) 'link': link!.toJson(),
+        'bluetooth': bluetooth,
       };
   factory SavedDesktop.fromJson(Map<String, dynamic> j) => SavedDesktop(
         id: '${j['id']}',
@@ -59,6 +71,8 @@ class SavedDesktop {
         lastConnected: DateTime.tryParse('${j['lastConnected'] ?? ''}'),
         alternates: [for (final a in (j['alternates'] as List? ?? const [])) '$a'],
         lastUrl: j['lastUrl'] as String?,
+        link: LinkInfo.tryParse(j['link']),
+        bluetooth: j['bluetooth'] == true,
       );
 }
 
@@ -93,10 +107,15 @@ class SavedDesktops {
   SavedDesktop? get active => items.where((d) => d.id == activeId).firstOrNull ?? items.firstOrNull;
 
   /// Add or update (same URL = same desktop) and make it active.
-  Future<SavedDesktop> upsert(GatewayPairing p) async {
-    final existing = items.where((d) => d.url == p.url).firstOrNull;
+  /// The id [upsert] will use for [p] (so a device key can be made first).
+  String idFor(GatewayPairing p) =>
+      items.where((d) => d.url == p.url || (p.link != null && d.link?.pcId == p.link!.pcId)).firstOrNull?.id ??
+      'pc_${DateTime.now().microsecondsSinceEpoch}';
+
+  Future<SavedDesktop> upsert(GatewayPairing p, {String? id}) async {
+    final existing = items.where((d) => d.id == id || d.url == p.url || (p.link != null && d.link?.pcId == p.link!.pcId)).firstOrNull;
     final d = SavedDesktop(
-      id: existing?.id ?? 'pc_${DateTime.now().microsecondsSinceEpoch}',
+      id: existing?.id ?? id ?? 'pc_${DateTime.now().microsecondsSinceEpoch}',
       name: p.displayName,
       url: p.url,
       profile: p.profile,
@@ -104,6 +123,11 @@ class SavedDesktops {
       addedAt: existing?.addedAt ?? DateTime.now(),
       lastConnected: DateTime.now(),
       alternates: p.alternates.isNotEmpty ? p.alternates : (existing?.alternates ?? const []),
+      // A fresh QR replaces the link (new pairing code); an old QR keeps what we had.
+      link: p.link != null && existing?.link?.pcPk == p.link!.pcPk && existing?.link?.enrolled == true
+          ? p.link!.copyWith(enrolled: true, clearPairCode: true, deviceId: existing!.link!.deviceId)
+          : (p.link ?? existing?.link),
+      bluetooth: existing?.bluetooth ?? false,
     );
     items
       ..removeWhere((x) => x.id == d.id)
@@ -127,12 +151,51 @@ class SavedDesktops {
     _save();
   }
 
+  /// Save a changed link (enrolled, new relay URL) or the Bluetooth setting.
+  void updateLink(SavedDesktop d, {LinkInfo? link, bool? bluetooth}) {
+    if (link != null) d.link = link;
+    if (bluetooth != null) d.bluetooth = bluetooth;
+    _save();
+  }
+
+  /// This phone's X25519 device key for desktop [id] (created on first use,
+  /// kept in secure storage, one per PC so a revoke on one PC affects only it).
+  Future<LinkKeyPair> linkKey(String id) async {
+    final k = 'remote.linkkey.$id';
+    String? raw;
+    try {
+      raw = kIsWeb ? _prefs.getString(k) : await _secure.read(key: k);
+    } catch (_) {
+      raw = _prefs.getString('$k.fallback');
+    }
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        return await LinkKeyPair.fromPrivate(b64d(raw));
+      } catch (_) {}
+    }
+    final kp = await LinkKeyPair.generate();
+    final enc = b64e(kp.privateBytes);
+    try {
+      if (kIsWeb) {
+        await _prefs.setString(k, enc);
+      } else {
+        await _secure.write(key: k, value: enc);
+      }
+    } catch (_) {
+      await _prefs.setString('$k.fallback', enc);
+    }
+    return kp;
+  }
+
   Future<void> remove(String id) async {
     items.removeWhere((d) => d.id == id);
     if (activeId == id) activeId = items.firstOrNull?.id;
     try {
       await _secure.delete(key: 'remote.token.$id');
+      await _secure.delete(key: 'remote.linkkey.$id');
     } catch (_) {}
+    await _prefs.remove('remote.linkkey.$id');
+    await _prefs.remove('remote.linkkey.$id.fallback');
     await _prefs.remove('remote.tokenfallback.$id');
     _save();
   }

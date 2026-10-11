@@ -49,6 +49,10 @@ declare global {
     profile: string | null
     error: string | null
     logTail: string
+    /** Remote dari mana saja: outbound relay connection of the remote gateway. */
+    relay?: { enabled: boolean; url: string; defaultUrl: string; state: string; error: string | null; phones: number }
+    bluetooth?: { enabled: boolean; state: string; error: string | null; address: string | null; phones: number }
+    devices?: { id: string; name: string | null; added: number | null; last_seen: number | null; via: string | null }[]
   }
 
   interface NeovarchWallpaperImport {
@@ -436,6 +440,9 @@ declare global {
         rotate: () => Promise<NeovarchRemoteStatus>
         update: (patch: { deviceName?: string; preferredAddress?: string | null }) => Promise<NeovarchRemoteStatus>
         check: () => Promise<{ ok: boolean; message: string }>
+        setRelay?: (patch: { enabled?: boolean; url?: string | null }) => Promise<NeovarchRemoteStatus>
+        setBluetooth?: (on: boolean) => Promise<NeovarchRemoteStatus>
+        revokeDevice?: (id: string) => Promise<NeovarchRemoteStatus>
         onChanged: (callback: (status: NeovarchRemoteStatus) => void) => () => void
       }
       setDisableF12?: (blocked: boolean) => void
