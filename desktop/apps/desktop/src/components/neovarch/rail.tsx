@@ -45,7 +45,7 @@ export const NV_COPY = {
   cron: 'Jadwal',
   office: 'Kantor',
   vault: 'Vault Obsidian',
-  social: NV_SOCIAL_ID.rail,
+  social: NV_SOCIAL_ID.rail as string,
   pairPhone: 'Pasangkan HP',
   settings: 'Pengaturan',
   toDark: 'Tema gelap',

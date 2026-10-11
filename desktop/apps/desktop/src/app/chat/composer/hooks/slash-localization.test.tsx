@@ -66,7 +66,8 @@ describe('desktop slash description localization', () => {
       for (const command of Object.keys(TRANSLATIONS.en.composer.commandDescs)) {
         expect(copy.composer.commandDescs[command], `${locale}: ${command}`).toBeTruthy()
 
-        if (locale !== 'en') {
+        // en-us is the upstream English catalog under its own id; only real translations must differ.
+        if (locale !== 'en' && locale !== 'en-us') {
           expect(copy.composer.commandDescs[command], `${locale}: ${command}`).not.toBe(
             TRANSLATIONS.en.composer.commandDescs[command]
           )

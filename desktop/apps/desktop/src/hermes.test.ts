@@ -656,13 +656,13 @@ describe('Hermes REST helpers', () => {
     api.mockResolvedValueOnce({
       ok: true,
       provider: 'openai',
-      text: 'transcribed text'
+      transcript: 'transcribed text'
     })
 
     await expect(transcribeAudio('data:audio/webm;base64,AA==', 'audio/webm')).resolves.toEqual({
       ok: true,
       provider: 'openai',
-      text: 'transcribed text'
+      transcript: 'transcribed text'
     })
 
     expect(api).toHaveBeenCalledWith({

@@ -550,13 +550,17 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
           avatar: avatar,
           live: m.streaming,
           appear: appear,
-          child: AssistantMessage(
-            msg: m,
-            scale: scale,
-            showReasoning: showReasoning,
-            isLast: isLast,
-            onLink: (u) => launchUrl(Uri.parse(u), mode: LaunchMode.externalApplication),
-            onOpenFile: (p) => openPcFile(context, r.gateway, p),
+          child: withAgentFiles(
+            m,
+            r.gateway,
+            AssistantMessage(
+              msg: m,
+              scale: scale,
+              showReasoning: showReasoning,
+              isLast: isLast,
+              onLink: (u) => launchUrl(Uri.parse(u), mode: LaunchMode.externalApplication),
+              onOpenFile: (p) => openPcFile(context, r.gateway, p),
+            ),
           ),
         );
     if (!m.streaming) return turn();

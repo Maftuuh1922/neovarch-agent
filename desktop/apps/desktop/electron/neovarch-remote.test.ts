@@ -49,6 +49,21 @@ describe('neovarch remote token', () => {
     expect(list.map(a => a.address)).toEqual(['192.168.1.5', '172.17.0.1'])
   })
 
+  it('skips Windows virtual adapters (Hyper-V/WSL, VirtualBox, VMware, Bluetooth) for the QR', () => {
+    const v4 = (address: string) => [{ address, family: 'IPv4', internal: false } as never]
+    const list = lanAddresses({
+      'VirtualBox Host-Only Network': v4('192.168.56.1'),
+      'vEthernet (WSL)': v4('172.28.144.1'),
+      'vEthernet (Default Switch)': v4('172.20.0.1'),
+      'VMware Network Adapter VMnet8': v4('192.168.137.1'),
+      'Bluetooth Network Connection': v4('192.168.44.1'),
+      'Local Area Connection': v4('10.0.0.7'),
+      'Wi-Fi': v4('192.168.1.23')
+    })
+    expect(list[0]).toEqual({ address: '192.168.1.23', iface: 'Wi-Fi', kind: 'lan' })
+    expect(list[1]?.address).toBe('10.0.0.7')
+  })
+
   it('falls back to a readable PC name when the hostname is empty or "(none)"', () => {
     expect(resolveDeviceName('')).toBe(FALLBACK_DEVICE_NAME)
     expect(resolveDeviceName('  ')).toBe(FALLBACK_DEVICE_NAME)

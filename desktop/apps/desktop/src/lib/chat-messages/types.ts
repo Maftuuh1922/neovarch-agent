@@ -81,6 +81,10 @@ export type GatewayEventPayload = {
   timestamp?: number
   text?: string
   rendered?: string
+  // message.complete / message.attachment — files the agent sent with send_file
+  // (upload metadata: id, name, mime, size, kind, url, path, origin).
+  attachments?: unknown
+  attachment?: unknown
   status?: string
   message?: string
   id?: string
