@@ -68,7 +68,7 @@ void main() {
     ));
     await tester.pump();
     expect(find.text('Mati'), findsOneWidget);
-    expect(n.calls, ['wakeStatus']);
+    expect(n.calls, ['wakeStatus', 'wakeBackgroundStatus']);
     await tester.tap(find.byKey(const ValueKey('wake-switch')));
     await tester.pump();
     await tester.pump();

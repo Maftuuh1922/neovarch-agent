@@ -54,4 +54,45 @@ void main() {
     expect(calls, contains('wakeBackground'));
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('background rows: granted state, no MIUI text off Xiaomi, message when no Settings page opens', (tester) async {
+    var bg = {'overlay': false, 'battery': false, 'xiaomi': false};
+    var opened = 'none';
+    final kinds = <String>[];
+    final c = WakeWordController(
+      call: (m, [a]) async {
+        if (m == 'wakeBackgroundStatus') return bg;
+        if (m == 'wakeBackground') {
+          kinds.add('${a?['kind']}');
+          return opened;
+        }
+        return {'enabled': false, 'state': 'off'};
+      },
+      permissions: () async => true,
+    );
+    await tester.pumpWidget(ProviderScope(
+      overrides: [wakeWordProvider.overrideWith((ref) => c)],
+      child: const MaterialApp(home: Scaffold(body: SingleChildScrollView(child: WakeWordPanel()))),
+    ));
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('Xiaomi'), findsNothing);
+    expect(find.text('Matikan pengoptimalan baterai untuk Neovarch Agent.'), findsOneWidget);
+    // every page missing → a visible message, not a silent no-op
+    await tester.tap(find.byKey(const ValueKey('wake-overlay')));
+    await tester.pump();
+    await tester.pump();
+    expect(kinds, ['overlay']);
+    expect(find.textContaining('Tidak bisa membuka Pengaturan'), findsOneWidget);
+    // granted in Settings, back in the app → row shows it
+    opened = 'overlay';
+    bg = {'overlay': true, 'battery': false, 'xiaomi': true};
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Sudah diizinkan.'), findsOneWidget);
+    expect(find.textContaining('Xiaomi/MIUI'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
 }

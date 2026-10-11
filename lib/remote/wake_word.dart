@@ -61,6 +61,12 @@ class WakeWordStatus {
   }
 }
 
+@immutable
+class BackgroundPerms {
+  const BackgroundPerms({this.overlay = false, this.battery = false, this.xiaomi = false});
+  final bool overlay, battery, xiaomi;
+}
+
 /// Talks to the native side over `neovarch/device` (`wakeWord`, `wakeStatus`).
 class WakeWordController extends ChangeNotifier {
   WakeWordController({
@@ -90,10 +96,27 @@ class WakeWordController extends ChangeNotifier {
     return mic;
   }
 
-  /// Opens MIUI autostart / battery (or overlay) settings for background use.
+  /// Granted state of the two background rows (`overlay`, `battery`) and
+  /// whether this is a Xiaomi/Redmi/POCO phone (MIUI hint).
+  BackgroundPerms background = const BackgroundPerms();
+
+  Future<void> refreshBackground() async {
+    try {
+      final m = await _call('wakeBackgroundStatus');
+      if (m is Map) {
+        background = BackgroundPerms(overlay: m['overlay'] == true, battery: m['battery'] == true, xiaomi: m['xiaomi'] == true);
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  /// Opens the overlay page (or battery / autostart for background use).
+  /// Returns the page that opened; null when none could be opened (the
+  /// panel then shows a message instead of silently doing nothing).
   Future<String?> openBackgroundSettings({bool overlay = false}) async {
     try {
-      return '${await _call('wakeBackground', {'kind': overlay ? 'overlay' : 'autostart'})}';
+      final r = '${await _call('wakeBackground', {'kind': overlay ? 'overlay' : 'autostart'})}';
+      return r == 'none' || r == 'null' ? null : r;
     } catch (e) {
       error = '$e';
       notifyListeners();

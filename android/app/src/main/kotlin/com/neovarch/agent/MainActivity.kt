@@ -240,6 +240,7 @@ class MainActivity : FlutterActivity() {
             }
             "wakeStatus" -> result.success(NvWakeService.status(this))
             "wakeBackground" -> result.success(openBackgroundSettings(call.argument<String>("kind") ?: "autostart"))
+            "wakeBackgroundStatus" -> result.success(backgroundStatus())
             "updateWidget" -> {
                 NvHomeWidget.save(this, (call.arguments as? Map<*, *>) ?: emptyMap<String, Any?>())
                 result.success(true)
@@ -665,23 +666,67 @@ class MainActivity : FlutterActivity() {
         private val ICON_IDS = listOf("merah", "biru", "ungu", "toska", "hijau", "oranye", "monokrom")
     }
 
-    /** MIUI autostart / battery / overlay pages so Hey Neo can run and open the app from the background. */
+    private fun isXiaomi(): Boolean =
+        Build.MANUFACTURER.lowercase(Locale.ROOT) in setOf("xiaomi", "redmi", "poco") ||
+            Build.BRAND.lowercase(Locale.ROOT) in setOf("xiaomi", "redmi", "poco")
+
+    private fun canOverlay(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
+
+    private fun ignoresBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        return pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    /** Profil → Hey Neo rows: what is already granted, and whether to show the MIUI hint. */
+    private fun backgroundStatus(): Map<String, Any> = mapOf(
+        "overlay" to canOverlay(),
+        "battery" to ignoresBatteryOptimizations(),
+        "xiaomi" to isXiaomi(),
+        "manufacturer" to Build.MANUFACTURER,
+    )
+
+    /**
+     * Settings pages so Hey Neo can run and open the app from the background.
+     * Generic Android pages first (they exist on every phone, MIUI included);
+     * vendor pages only as fallbacks / on Xiaomi. Each start is tried on its
+     * own, so a missing activity falls through instead of doing nothing.
+     * Returns the page that opened, or "none" (Dart then shows a message).
+     */
     private fun openBackgroundSettings(kind: String): String {
         val pkg = Uri.parse("package:$packageName")
-        val tries = mutableListOf<Pair<String, Intent>>()
+        val tries = mutableListOf<Pair<String, () -> Intent>>()
         if (kind == "overlay") {
-            tries += "overlay" to Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg)
-            tries += "miui-perms" to Intent("miui.intent.action.APP_PERM_EDITOR").setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity").putExtra("extra_pkgname", packageName)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                tries += "overlay" to { Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg) }
+            }
+            tries += "miui-perms" to {
+                Intent("miui.intent.action.APP_PERM_EDITOR")
+                    .setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity")
+                    .putExtra("extra_pkgname", packageName)
+            }
+            tries += "miui-perms-action" to { Intent("miui.intent.action.APP_PERM_EDITOR").putExtra("extra_pkgname", packageName) }
         } else {
-            tries += "miui-autostart" to Intent().setComponent(ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"))
-            tries += "battery" to Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !ignoresBatteryOptimizations()) {
+                tries += "battery-request" to { Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg) }
+            }
+            if (isXiaomi()) {
+                tries += "miui-autostart" to {
+                    Intent().setComponent(ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"))
+                }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                tries += "battery" to { Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS) }
+            }
         }
-        tries += "app-details" to Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)
-        for ((name, i) in tries) {
+        tries += "app-details" to { Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg) }
+        for ((name, make) in tries) {
             try {
-                startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                startActivity(make().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 return name
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                android.util.Log.w("NeovarchWake", "settings page $name unavailable: ${e.message}")
+            }
         }
         return "none"
     }

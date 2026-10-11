@@ -15,14 +15,17 @@ class WakeWordPanel extends ConsumerStatefulWidget {
   ConsumerState<WakeWordPanel> createState() => _WakeWordPanelState();
 }
 
-class _WakeWordPanelState extends ConsumerState<WakeWordPanel> {
+class _WakeWordPanelState extends ConsumerState<WakeWordPanel> with WidgetsBindingObserver {
   Timer? _poll;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) ref.read(wakeWordProvider).refresh();
+      if (!mounted) return;
+      ref.read(wakeWordProvider).refresh();
+      ref.read(wakeWordProvider).refreshBackground();
     });
     // live download progress / errors from the service (every second while on)
     _poll = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -33,7 +36,23 @@ class _WakeWordPanelState extends ConsumerState<WakeWordPanel> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Back from Settings: show the rows as granted.
+    if (state == AppLifecycleState.resumed && mounted) ref.read(wakeWordProvider).refreshBackground();
+  }
+
+  Future<void> _open(WakeWordController w, {bool overlay = false}) async {
+    final r = await w.openBackgroundSettings(overlay: overlay);
+    if (r == null && mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+        content: Text('Tidak bisa membuka Pengaturan. Buka Setelan → Aplikasi → Neovarch Agent, lalu atur izinnya di sana.'),
+      ));
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _poll?.cancel();
     super.dispose();
   }
@@ -92,15 +111,21 @@ class _WakeWordPanelState extends ConsumerState<WakeWordPanel> {
         key: const ValueKey('wake-background'),
         icon: CupertinoIcons.bolt,
         title: 'Izinkan jalan di latar',
-        body: 'Xiaomi/MIUI: nyalakan Mulai otomatis dan Baterai → Tanpa batasan.',
-        onTap: () => w.openBackgroundSettings(),
+        body: w.background.battery
+            ? (w.background.xiaomi ? 'Baterai sudah tanpa batasan. Di MIUI, nyalakan juga Mulai otomatis.' : 'Sudah diizinkan: baterai tanpa batasan.')
+            : (w.background.xiaomi
+                ? 'Xiaomi/MIUI: nyalakan Mulai otomatis dan Baterai → Tanpa batasan.'
+                : 'Matikan pengoptimalan baterai untuk Neovarch Agent.'),
+        granted: w.background.battery && !w.background.xiaomi,
+        onTap: () => _open(w),
       ),
       _Row(
         key: const ValueKey('wake-overlay'),
         icon: CupertinoIcons.rectangle_on_rectangle,
         title: 'Tampil di atas aplikasi lain',
-        body: 'Supaya "Hey Neo" bisa membuka Chat saat HP di layar lain.',
-        onTap: () => w.openBackgroundSettings(overlay: true),
+        body: w.background.overlay ? 'Sudah diizinkan.' : 'Supaya "Hey Neo" bisa membuka Chat saat HP di layar lain.',
+        granted: w.background.overlay,
+        onTap: () => _open(w, overlay: true),
       ),
     ]),
     );
@@ -108,9 +133,10 @@ class _WakeWordPanelState extends ConsumerState<WakeWordPanel> {
 }
 
 class _Row extends StatelessWidget {
-  const _Row({super.key, required this.icon, required this.title, required this.body, required this.onTap});
+  const _Row({super.key, required this.icon, required this.title, required this.body, required this.onTap, this.granted = false});
   final IconData icon;
   final String title, body;
+  final bool granted;
   final VoidCallback onTap;
   @override
   Widget build(BuildContext context) => InkWell(
@@ -127,7 +153,7 @@ class _Row extends StatelessWidget {
                 Text(body, style: TextStyle(fontSize: 12, height: 1.3, color: NV.muted)),
               ]),
             ),
-            Icon(CupertinoIcons.chevron_right, size: 14, color: NV.muted),
+            Icon(granted ? CupertinoIcons.checkmark_alt : CupertinoIcons.chevron_right, size: granted ? 16 : 14, color: granted ? NV.red : NV.muted),
           ]),
         ),
       );
