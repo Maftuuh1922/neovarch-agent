@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -12,6 +13,7 @@ from typing import Any, Callable
 from neovarch import config as cfgmod
 from neovarch import session_settings
 from neovarch import tempest
+from neovarch import tempest_ckpt
 from neovarch import tempest_lint
 from neovarch.llm import Completion, LLMError, stream_chat
 from neovarch.store import SessionStore
@@ -189,6 +191,8 @@ class Agent:
         self._before: dict[str, bytes | None] = {}  # content of each changed file before this turn
         verify_attempts = 0
         lint_attempts = 0
+        self._ckpt = None       # ShadowRepo once the first modifying tool of this turn runs
+        self._ckpt_base = None  # checkpoint sha taken before that tool
         verify_cmd = tempest.detect_verify(self.ctx.cwd) if st else None
         obs_dir = cfgmod.neovarch_home() / "obs" / str(self.rec.get("id") or "session")
         messages = self.rec["messages"]
@@ -341,6 +345,8 @@ class Agent:
                     if st and self._changed and verify_cmd and not self.interrupted:
                         self.emit("status.update", {"kind": "verify", "text": "Memverifikasi: " + " ".join(verify_cmd)})
                         ok, out = await asyncio.to_thread(tempest.run_verify, verify_cmd, self.ctx.cwd)
+                        if ok and self._ckpt:
+                            await asyncio.to_thread(self._ckpt_mark, "akhir turn: verifikasi lulus", "green")
                         if not ok:
                             summary = tempest.failure_summary(out)
                             if verify_attempts < st["verify_retries"]:
@@ -352,12 +358,19 @@ class Agent:
                                 continue
                             final_text = final_text + tempest.escalation_note(verify_cmd, summary, st["verify_retries"])
                             error = "verification failed"
+                            if self._ckpt and self._ckpt_base:
+                                final_text += await asyncio.to_thread(self._rollback, verify_cmd)
+                    elif st and self._ckpt and self._changed:
+                        await asyncio.to_thread(self._ckpt_mark, "akhir turn", None)
                     break
                 for call in comp.tool_calls:
                     args = call.parsed_args()
                     self.emit("tool.start", {"tool_id": call.id, "name": call.name, "args": args,
                                              "args_text": call.arguments, "preview": _preview(args)})
                     t0 = time.monotonic()
+                    if st and st.get("checkpoints") and self._ckpt is None and not self.interrupted \
+                            and call.name in ("write_file", "edit_file", "shell"):
+                        await asyncio.to_thread(self._ckpt_start, st)
                     if st and call.name in ("write_file", "edit_file") and not self.interrupted:
                         result = await self._checked_write(call.name, args)
                     else:
@@ -431,6 +444,52 @@ class Agent:
         self.emit("status.update", {"kind": "compact", "text": f"Konteks dipadatkan (tahap {rep['stage']}): "
                                                                f"~{rep['before']} → ~{rep['after']} token"})
         return tempest.apply_compaction(wire, new_state), sys_prompt, system_split
+
+    def _ckpt_start(self, st: dict) -> None:
+        """Tempest: snapshot the project before this turn's first modifying tool."""
+        repo = tempest_ckpt.ShadowRepo(self.ctx.cwd, cfgmod.neovarch_home(), int(st.get("checkpoint_max_files") or 5000))
+        ok, why = repo.usable()
+        if not ok:
+            _log.info("tempest checkpoints off for %s: %s", self.ctx.cwd, why)
+            self._ckpt = False
+            return
+        try:
+            self._ckpt_base = repo.checkpoint(f"awal turn ({self.rec.get('id')})")
+            self._ckpt = repo
+        except (tempest_ckpt.CheckpointError, OSError, subprocess.SubprocessError) as exc:
+            _log.warning("tempest checkpoint failed: %s", exc)
+            self._ckpt = False
+
+    def _ckpt_mark(self, label: str, status: str | None) -> None:
+        try:
+            self._ckpt.checkpoint(label, status)
+        except (tempest_ckpt.CheckpointError, OSError, subprocess.SubprocessError) as exc:
+            _log.warning("tempest checkpoint failed: %s", exc)
+
+    def _rollback(self, verify_cmd: list[str]) -> str:
+        """Verify gave up: go back to the last green checkpoint (this turn's start, verified on
+        demand when its status is unknown). The failed state stays as a checkpoint."""
+        repo, base = self._ckpt, self._ckpt_base
+        try:
+            red = repo.checkpoint("verifikasi gagal", "red")
+            status = repo.status(base)
+            if status == "red":
+                return ""
+            repo.restore(base)
+            if status != "green":
+                ok, _ = tempest.run_verify(verify_cmd, self.ctx.cwd)
+                if not ok:
+                    repo.set_status(base, "red")
+                    repo.restore(red)
+                    repo.checkpoint("kembali ke versi gagal (awal turn juga merah)", "red")
+                    return ""
+            repo.checkpoint(f"dipulihkan ke {base[:8]}", "green")
+        except (tempest_ckpt.CheckpointError, OSError, subprocess.SubprocessError) as exc:
+            _log.warning("tempest rollback failed: %s", exc)
+            return ""
+        self.emit("status.update", {"kind": "rollback", "text": f"File dikembalikan ke checkpoint hijau {base[:8]}"})
+        return (f"\n\n↩️ File dikembalikan ke checkpoint hijau terakhir ({base[:8]}, sebelum perubahan turn ini). "
+                f"Versi yang gagal disimpan sebagai checkpoint {red[:8]}; pulihkan dengan `neovarch rewind {red[:8]}`.")
 
     def _lint_delta(self, st: dict) -> list:
         tools = None

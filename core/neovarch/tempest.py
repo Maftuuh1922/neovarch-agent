@@ -45,6 +45,11 @@ Fase 1 additions (each behind its own ``agent.tempest_*`` switch, see :data:`FEA
    changed files, the available checkers (builtin, ruff, pyright, mypy, tsc) run on the
    changed files before and after; only NEW diagnostics block, at most ``lint_retries``
    times, out of the same retry budget as the verify gate (see tempest_lint.py).
+9. shadow-git checkpoints (``tempest_checkpoints``) - a snapshot before the first modifying
+   tool of a turn and at its end, tagged green/red/unknown by the verify gate, in a separate
+   git dir (the user's git is untouched). When the verify gate gives up, the files go back
+   to the last green checkpoint (the turn start, verified on demand); ``neovarch rewind``
+   restores by hand (see tempest_ckpt.py).
 """
 
 from __future__ import annotations
@@ -82,6 +87,8 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "lint_retries": 1,             # how often new diagnostics block a finish (shares verify_retries)
     "lint_tools": "auto",          # auto | comma list of builtin,ruff,pyright,mypy,tsc
     "lint_timeout": 60,
+    "checkpoints": False,          # shadow-git checkpoints + rollback to last green (tempest_ckpt.py)
+    "checkpoint_max_files": 5000,
 }
 
 HEAD_LINES = 30
