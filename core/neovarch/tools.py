@@ -73,11 +73,21 @@ def danger_reason(command: str) -> str | None:
     return None
 
 
-def _clip(text: str) -> str:
-    if len(text) <= MAX_OUTPUT:
+def _clip(text: str, limit: int = MAX_OUTPUT) -> str:
+    if len(text) <= limit:
         return text
-    half = MAX_OUTPUT // 2
-    return text[:half] + f"\n… [{len(text) - MAX_OUTPUT} characters omitted] …\n" + text[-half:]
+    half = limit // 2
+    return text[:half] + f"\n… [{len(text) - limit} characters omitted] …\n" + text[-half:]
+
+
+def _setting(key: str, default: float, lo: float, hi: float) -> float:
+    """A number from Settings (config.yaml), clamped; the default when unset or invalid."""
+    try:
+        from neovarch import config as cfgmod
+        val = float(cfgmod.get_path(cfgmod.load_config(), key, default) or default)
+    except Exception:
+        return default
+    return min(max(val, lo), hi)
 
 
 def _resolve(ctx: ToolContext, raw: str) -> Path:
@@ -97,7 +107,8 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
     command = str(args.get("command") or "").strip()
     if not command:
         return "error: command is required"
-    timeout = min(float(args.get("timeout") or SHELL_DEFAULT_TIMEOUT), SHELL_MAX_TIMEOUT)
+    default_timeout = _setting("terminal.timeout", SHELL_DEFAULT_TIMEOUT, 1, SHELL_MAX_TIMEOUT)
+    timeout = min(float(args.get("timeout") or default_timeout), SHELL_MAX_TIMEOUT)
     reason = danger_reason(command)
     if reason and "hermes" in reason.lower():
         return f"refused: this command {reason}."
@@ -118,8 +129,15 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         try:
-            proc.kill()
-        except ProcessLookupError:
+            os.killpg(proc.pid, 9)  # the whole command (start_new_session), not only the shell
+        except (ProcessLookupError, PermissionError, AttributeError, OSError):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        try:
+            await asyncio.wait_for(proc.wait(), 5)
+        except (asyncio.TimeoutError, Exception):
             pass
         return f"error: timed out after {timeout:.0f}s"
     text = decode_output(out)
@@ -156,7 +174,7 @@ async def tool_read_file(args: dict, ctx: ToolContext) -> str:
     chunk = lines[start - 1:start - 1 + limit]
     numbered = "\n".join(f"{i:>6}\t{line}" for i, line in enumerate(chunk, start))
     more = f"\n… {len(lines) - (start - 1 + len(chunk))} more lines" if start - 1 + len(chunk) < len(lines) else ""
-    return _clip(numbered + more)
+    return _clip(numbered + more, int(_setting("file_read_max_chars", MAX_OUTPUT, 1000, 1_000_000)))
 
 
 async def tool_write_file(args: dict, ctx: ToolContext) -> str:

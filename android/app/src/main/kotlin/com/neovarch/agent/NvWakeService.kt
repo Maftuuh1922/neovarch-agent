@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
@@ -45,12 +46,34 @@ class NvWakeService : Service(), RecognitionListener {
     private val main = Handler(Looper.getMainLooper())
     private var lastHit = 0L
     @Volatile private var stopped = false
+    /** The app's own dictation holds the microphone (see [holdMic]). */
+    @Volatile private var held = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         stopped = false
-        startInForeground("Hey Neo menyiapkan…")
+        try {
+            startInForeground("Hey Neo menyiapkan…")
+        } catch (e: Exception) {
+            // Android 12+/14: a microphone service may not start from the background.
+            Log.w(TAG, "startForeground refused: ${e.message}")
+            setState(this, "stopped")
+            notifyUser(this, "Hey Neo berhenti", "Ketuk untuk menyalakan lagi", "wake", BOOT_ID)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        // Restarted by the system after MIUI/Android killed it (intent == null):
+        // since Android 11 a background start gets a silent microphone, so the
+        // service would run "deaf". Ask the user to reopen it instead.
+        if (intent == null && Build.VERSION.SDK_INT >= 30) {
+            Log.w(TAG, "sticky restart from background: microphone would be silenced")
+            setState(this, "stopped")
+            notifyUser(this, "Hey Neo dihentikan sistem", "Ketuk untuk menyalakan lagi", "wake", BOOT_ID)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        current = this
         if (speech == null) Thread { prepareAndListen() }.start()
         return START_STICKY
     }
@@ -73,15 +96,18 @@ class NvWakeService : Service(), RecognitionListener {
                 download(dir)
             }
             if (stopped) return
+            Log.i(TAG, "loading model from ${dir.absolutePath}")
             val m = Model(dir.absolutePath)
             model = m
             val rec = Recognizer(m, 16000f, GRAMMAR)
             val s = SpeechService(rec, 16000f)
             speech = s
             s.startListening(this)
+            Log.i(TAG, "listening, grammar=$GRAMMAR")
             setState(this, "listening")
             update("Mendengarkan \"Hey Neo\"")
         } catch (e: Exception) {
+            Log.e(TAG, "prepare failed", e)
             setState(this, "error:" + (e.message ?: e.toString()))
             update("Hey Neo gagal: ${e.message ?: e}")
         }
@@ -126,23 +152,47 @@ class NvWakeService : Service(), RecognitionListener {
         if (!staging.renameTo(dir)) throw IllegalStateException("model tidak bisa dipasang")
     }
 
+    private var lastHeardAt = 0L
+
+    /** "Tes Hey Neo": the last thing the recogniser heard, for the panel. */
+    private fun heard(text: String) {
+        if (text.isBlank()) return
+        val now = System.currentTimeMillis()
+        if (now - lastHeardAt < 250) return
+        val p = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        // only while "Tes Hey Neo" runs (no constant disk writes otherwise)
+        if (now >= p.getLong("testUntil", 0)) return
+        lastHeardAt = now
+        p.edit().putString("heard", text).putLong("heardAt", now).apply()
+        Log.d(TAG, "heard: $text")
+    }
+
     private fun hit(text: String) {
+        heard(text)
         if (!matches(text)) return
+        Log.i(TAG, "wake phrase matched: $text")
         val now = System.currentTimeMillis()
         if (now - lastHit < 4000) return
         lastHit = now
         // Let the app's dictation have the microphone for a while.
         speech?.setPause(true)
-        main.postDelayed({ speech?.setPause(false) }, 20000)
+        main.postDelayed({ if (!held) speech?.setPause(false) }, 20000)
         val open = Intent(this, MainActivity::class.java)
             .putExtra(EXTRA_ROUTE, "voice")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        try {
-            startActivity(open)
-        } catch (e: Exception) {
-            // background start blocked: the notification below opens it
+        var opened = false
+        // Background activity starts are allowed with "Tampil di atas aplikasi lain".
+        if (Build.VERSION.SDK_INT < 29 || android.provider.Settings.canDrawOverlays(this)) {
+            try {
+                startActivity(open)
+                opened = true
+            } catch (e: Exception) {
+                Log.w(TAG, "activity start blocked: ${e.message}")
+            }
         }
-        notifyUser(this, "Hey Neo", "Ketuk untuk bicara ke agen", "voice", HIT_ID)
+        // Otherwise (or as well): heads-up notification with a full-screen intent,
+        // which Android shows over the lock screen / opens directly when allowed.
+        notifyUser(this, "Hey Neo", "Ketuk untuk bicara ke agen", "voice", HIT_ID, fullScreen = !opened)
     }
 
     override fun onPartialResult(hypothesis: String?) {
@@ -155,6 +205,7 @@ class NvWakeService : Service(), RecognitionListener {
 
     override fun onFinalResult(hypothesis: String?) {}
     override fun onError(exception: Exception?) {
+        Log.e(TAG, "recognizer error", exception)
         setState(this, "error:" + (exception?.message ?: "mikrofon"))
         update("Hey Neo berhenti: ${exception?.message ?: "mikrofon"}")
     }
@@ -162,6 +213,7 @@ class NvWakeService : Service(), RecognitionListener {
 
     override fun onDestroy() {
         stopped = true
+        if (current === this) current = null
         main.removeCallbacksAndMessages(null)
         speech?.stop()
         speech?.shutdown()
@@ -202,10 +254,35 @@ class NvWakeService : Service(), RecognitionListener {
         /** GitHub mirror first (fast CDN, range requests), then the original. */
         const val MIRROR_URL = "https://raw.githubusercontent.com/Maftuuh1922/neovrach_Agent/assets-vosk/vosk-model-small-en-us-0.15.zip"
         val MODEL_URLS = listOf(MIRROR_URL, MODEL_URL)
-        /** Only the phrase (and "unknown"), so ordinary speech never matches. */
-        const val GRAMMAR = "[\"hey neo\", \"[unk]\"]"
+        private const val TAG = "NeovarchWake"
+        /** Only the phrase (in-vocabulary sound-alikes) and "unknown"; see [WakePhrase]. */
+        val GRAMMAR = WakePhrase.GRAMMAR
 
-        fun matches(text: String?): Boolean = text != null && Regex("\\bhey neo\\b").containsMatchIn(text.lowercase())
+        fun matches(text: String?): Boolean = WakePhrase.matches(text)
+
+        /** "Tes Hey Neo": log what is heard for the next 60 s (also shown in the panel). */
+        fun startTest(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putLong("testUntil", System.currentTimeMillis() + 60000).remove("heard").remove("heardAt").apply()
+
+        @Volatile private var current: NvWakeService? = null
+
+        /**
+         * Give the microphone to the app's dictation (or take it back). Two
+         * recognisers on one mic made dictation fail with an audio error
+         * while "Hey Neo" was listening. No-op when the service is not running.
+         */
+        fun holdMic(on: Boolean): Boolean {
+            val s = current ?: return false
+            s.main.post {
+                s.held = on
+                try {
+                    s.speech?.setPause(on)
+                } catch (e: Exception) {
+                    // the recogniser is shutting down
+                }
+            }
+            return true
+        }
 
         fun modelDir(c: Context) = File(c.filesDir, "vosk-model-en")
         fun enabled(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("enabled", false)
@@ -218,6 +295,10 @@ class NvWakeService : Service(), RecognitionListener {
                 "enabled" to p.getBoolean("enabled", false),
                 "state" to p.getString("state", "off"),
                 "modelReady" to (File(d, "am").exists() || File(d, "conf").exists()),
+                "heard" to p.getString("heard", null),
+                "heardAt" to p.getLong("heardAt", 0),
+                "testUntil" to p.getLong("testUntil", 0),
+                "matched" to matches(p.getString("heard", null)),
             )
         }
 
@@ -250,14 +331,16 @@ class NvWakeService : Service(), RecognitionListener {
                 Notification.Builder(c)
             }
 
-        fun notifyUser(c: Context, title: String, body: String, route: String, id: Int) {
-            val n = builder(c, CHANNEL_ALERT, "Hey Neo (panggilan)", NotificationManager.IMPORTANCE_HIGH)
+        fun notifyUser(c: Context, title: String, body: String, route: String, id: Int, fullScreen: Boolean = false) {
+            val b = builder(c, CHANNEL_ALERT, "Hey Neo (panggilan)", NotificationManager.IMPORTANCE_HIGH)
                 .setSmallIcon(R.mipmap.ic_launcher_foreground)
                 .setContentTitle(title)
                 .setContentText(body)
                 .setAutoCancel(true)
+                .setCategory(Notification.CATEGORY_CALL)
                 .setContentIntent(openApp(c, route, id))
-                .build()
+            if (fullScreen) b.setFullScreenIntent(openApp(c, route, id + 1), true)
+            val n = b.build()
             try {
                 (c.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id, n)
             } catch (e: SecurityException) {

@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import '../../state/settings_controller.dart';
 import '../../theme/neovarch_mobile_theme.dart';
 import '../apk_update.dart';
+import 'changelog_screen.dart' show ReleaseNotesView;
 
 final apkUpdateProvider = ChangeNotifierProvider<ApkUpdateController>((ref) => ApkUpdateController());
 
@@ -72,6 +73,15 @@ class _UpdateDialogState extends ConsumerState<UpdateDialog> with WidgetsBinding
             ? 'Versi v$latest siap dipasang (terpasang v${SettingsController.appVersion}). '
                 'Berkas${size != null ? ' ${formatMb(size)} MB' : ''} diunduh di dalam aplikasi, lalu penginstal Android terbuka.'
             : 'Versi v$latest tersedia (terpasang v${SettingsController.appVersion}). Halaman unduhan dibuka di browser.';
+        final notes = '${u['notes'] ?? ''}'.trim();
+        if (notes.isNotEmpty) {
+          extra = Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            const SizedBox(height: 14),
+            Text('CATATAN RILIS', style: NV.monoLabel(size: 10, color: NV.redInk)),
+            const SizedBox(height: 8),
+            ReleaseNotesView(notes, maxHeight: 220),
+          ]);
+        }
         actions
           ..add(TextButton(onPressed: close, child: const Text('Nanti')))
           ..add(FilledButton(key: const ValueKey('nv-update-start'), onPressed: () => c.start(u), child: const Text('Perbarui')));

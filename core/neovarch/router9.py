@@ -39,9 +39,14 @@ from neovarch import config as cfgmod
 PROVIDER = "9router"
 LABEL = "9Router"
 DEFAULT_BASE_URL = "http://localhost:20128/v1"
-DEFAULT_MODEL = "oc/big-pickle"
+# Default model on a fresh install: Xiaomi MiMo V2.6 Flash through OpenCode Free.
+DEFAULT_MODEL = "oc/mimo-v2.6-flash-free"
+# MiMo V2.6 Pro: the default instead once 9Router lists it (a MiMo account is connected).
+PRO_MODEL = "mimo/mimo-v2.6-pro"
 # Used in this order when the live OpenCode Free list no longer has the default.
-FREE_FALLBACKS = ["oc/nemotron-3-ultra-free", "oc/ling-3.1-flash-free", "oc/mimo-v2.6-flash-free"]
+FREE_FALLBACKS = ["oc/nemotron-3-ultra-free", "oc/ling-3.1-flash-free", "oc/big-pickle"]
+# OpenCode Free models whose id has no "-free" suffix.
+FREE_NAMED = {"oc/big-pickle"}
 KEY_ENV = "NEOVARCH_9ROUTER_API_KEY"
 KEY_NAME = "neovarch"
 INSTALL_COMMAND = "npm install -g 9router"
@@ -60,7 +65,7 @@ ALIAS_GROUPS = {
     "oc": "OpenCode Free", "ocg": "OpenCode Go", "ocz": "OpenCode Zen", "kr": "Kiro", "cc": "Claude Code",
     "cx": "Codex", "gh": "GitHub Copilot", "gc": "Gemini CLI", "ag": "Antigravity", "vertex": "Vertex AI",
     "if": "iFlow", "qw": "Qwen", "cu": "Cursor", "openrouter": "OpenRouter", "or": "OpenRouter",
-    "glm": "GLM", "kimi": "Kimi", "minimax": "MiniMax", "ds": "DeepSeek", "deepseek": "DeepSeek",
+    "glm": "GLM", "kimi": "Kimi", "mimo": "MiMo", "minimax": "MiniMax", "ds": "DeepSeek", "deepseek": "DeepSeek",
     "openai": "OpenAI", "anthropic": "Anthropic", "gemini": "Gemini", "groq": "Groq", "xai": "xAI",
 }
 FREE_ALIASES = {"oc"}
@@ -79,11 +84,11 @@ _LIMITED: dict[str, float] = {}   # model id -> monotonic time its cooldown ends
 def is_free_model(model: str) -> bool:
     mid = str(model or "")
     alias, _, name = mid.partition("/")
-    return alias in FREE_ALIASES and bool(name) and (mid == DEFAULT_MODEL or name.endswith("-free"))
+    return alias in FREE_ALIASES and bool(name) and (mid == DEFAULT_MODEL or mid in FREE_NAMED or name.endswith("-free"))
 
 
 def free_order(live_ids: list[str] | None = None) -> list[str]:
-    """OpenCode Free models in fallback order: big-pickle, the named fallbacks, then the
+    """OpenCode Free models in fallback order: the default (MiMo V2.6 Flash), the named fallbacks, then the
     other ``oc/*-free`` models 9Router lists."""
     ids = LAST_MODEL_IDS if live_ids is None else live_ids
     order = [DEFAULT_MODEL] + list(FREE_FALLBACKS)
@@ -205,12 +210,18 @@ def endpoint_spec(cfg: dict | None = None) -> dict[str, Any]:
     return {"base_url": base_url(cfg), "key_env": KEY_ENV, "model": default_model_id(cfg)}
 
 
-def default_model_id(cfg: dict | None = None) -> str:
-    return str(settings(cfg).get("default_model") or DEFAULT_MODEL)
+def default_model_id(cfg: dict | None = None, live_ids: list[str] | None = None) -> str:
+    """The built-in default: ``router9.default_model`` if set, else MiMo V2.6 Pro when
+    9Router lists it, else MiMo V2.6 Flash (OpenCode Free)."""
+    ids = LAST_MODEL_IDS if live_ids is None else live_ids
+    return str(settings(cfg).get("default_model") or (PRO_MODEL if PRO_MODEL in ids else DEFAULT_MODEL))
 
 
-def choose_default(free_ids: list[str]) -> str:
-    """Best OpenCode Free model available: the default, else the fallbacks, else the first."""
+def choose_default(free_ids: list[str], all_ids: list[str] | None = None) -> str:
+    """Best default available: MiMo V2.6 Pro when 9Router lists it (``all_ids``), else
+    MiMo V2.6 Flash, else the free fallbacks, else the first free model."""
+    if all_ids and PRO_MODEL in all_ids:
+        return PRO_MODEL
     ids = [i if i.startswith("oc/") else f"oc/{i}" for i in free_ids]
     if not ids or DEFAULT_MODEL in ids:
         return DEFAULT_MODEL

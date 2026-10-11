@@ -100,7 +100,8 @@ void main() {
       // no new permission for sharing (MediaStore on API 29+ needs none);
       // 21 = 1.4.4's set + REQUEST_INSTALL_PACKAGES (in-app update)
       // + SYSTEM_ALERT_WINDOW / REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (Hey Neo rows)
-      expect('uses-permission'.allMatches(manifest).length, 24);
+      // + USE_FULL_SCREEN_INTENT (Hey Neo heard while the app is closed)
+      expect('uses-permission'.allMatches(manifest).length, 25);
       expect(manifest.contains('android.permission.REQUEST_INSTALL_PACKAGES'), isTrue);
     });
   });

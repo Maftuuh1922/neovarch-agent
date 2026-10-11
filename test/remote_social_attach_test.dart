@@ -511,7 +511,9 @@ void main() {
       final r = controller()..socialSignedIn = false;
       await tester.pumpWidget(host(r, const RemoteSocialScreen(autoLoad: false)));
       await settle(tester);
-      expect(find.text('PC belum masuk ke GitHub'), findsOneWidget);
+      expect(find.text('Masuk di PC dulu'), findsOneWidget);
+      expect(find.byKey(const ValueKey('pc-github-login')), findsOneWidget);
+      expect(find.byType(TextField), findsNothing); // no username on the phone
       await tester.pumpWidget(const SizedBox());
     });
   });

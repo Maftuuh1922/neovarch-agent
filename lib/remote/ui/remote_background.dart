@@ -2,9 +2,12 @@
 // has something to refract), its controls in Tampilan, the "Tampilan" sheet
 // reachable before pairing, and the accent tint for the red slide artwork.
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
+import 'package:flutter/foundation.dart' show SynchronousFuture;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -80,8 +83,12 @@ class NvAppBackground extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final b = ref.watch(appearanceProvider).background;
-    final img = debugImage ?? backgroundImage(b);
-    if (img == null) return const SizedBox.shrink();
+    final src = debugImage ?? backgroundImage(b);
+    if (src == null) return const SizedBox.shrink();
+    // Decode at the screen's size (a 12 MP gallery photo would otherwise sit
+    // in memory at full resolution and be scaled down every frame).
+    final mq = MediaQuery.maybeOf(context);
+    final img = mq == null ? src : CoverSizedImage.forScreen(src, mq.size, mq.devicePixelRatio);
     Widget pic = Image(image: img, fit: BoxFit.cover, filterQuality: FilterQuality.medium, gaplessPlayback: true,
         errorBuilder: (context, e, s) => const SizedBox.shrink());
     if (b.isAsset) {
@@ -92,17 +99,77 @@ class NvAppBackground extends ConsumerWidget {
     if (b.blur > 0) {
       pic = ImageFiltered(imageFilter: ImageFilter.blur(sigmaX: b.blur, sigmaY: b.blur, tileMode: TileMode.mirror), child: pic);
     }
+    // Own layer: the glass above repaints (streamed text, scrolling) without
+    // re-rasterising the blurred picture.
     return IgnorePointer(
-      child: Stack(key: const ValueKey('nv-app-background'), fit: StackFit.expand, children: [
+      child: RepaintBoundary(child: Stack(key: const ValueKey('nv-app-background'), fit: StackFit.expand, children: [
         ColoredBox(color: NV.bg),
         ClipRect(child: pic),
         if (b.tint > 0) ColoredBox(color: NV.red.withValues(alpha: b.tint)),
         // light mode: at least a light veil, so dark text over a dark photo stays readable
         if (b.dim > 0 || !NV.palette.dark)
           ColoredBox(color: NV.bg.withValues(alpha: NV.palette.dark ? b.dim : (b.dim > NV.lightWallpaperVeil ? b.dim : NV.lightWallpaperVeil))),
-      ]),
+      ])),
     );
   }
+}
+
+/// Decodes [image] just large enough to cover [width] × [height] physical
+/// pixels (BoxFit.cover), keeping its aspect ratio and never upscaling.
+/// Unlike ResizeImage (fit inside), the short side still fills the screen.
+class CoverSizedImage extends ImageProvider<CoverSizedImageKey> {
+  const CoverSizedImage(this.image, {required this.width, required this.height});
+  final ImageProvider image;
+  final int width, height;
+
+  /// [logical] screen size × [dpr], rounded up to 64 px steps so small
+  /// window changes (MIUI insets) do not trigger a re-decode.
+  factory CoverSizedImage.forScreen(ImageProvider image, Size logical, double dpr) {
+    int step(double v) => ((v / 64).ceil() * 64).clamp(64, 8192);
+    final w = step(logical.width * dpr), h = step(logical.height * dpr);
+    return CoverSizedImage(image, width: w, height: h);
+  }
+
+  /// The decoded size for an image of [iw] × [ih] (pure, tested).
+  static (int, int) targetSize(int iw, int ih, int width, int height) {
+    if (iw <= 0 || ih <= 0) return (iw, ih);
+    final s = math.max(width / iw, height / ih);
+    if (s >= 1) return (iw, ih);
+    return ((iw * s).ceil(), (ih * s).ceil());
+  }
+
+  @override
+  Future<CoverSizedImageKey> obtainKey(ImageConfiguration configuration) {
+    final inner = image.obtainKey(configuration);
+    // Stay synchronous when the inner provider is (assets, memory, files),
+    // as ResizeImage does, so the first frame can already show the picture.
+    if (inner is SynchronousFuture<Object>) {
+      late CoverSizedImageKey key;
+      inner.then((k) => key = CoverSizedImageKey(k, width, height));
+      return SynchronousFuture<CoverSizedImageKey>(key);
+    }
+    return inner.then((k) => CoverSizedImageKey(k, width, height));
+  }
+
+  @override
+  ImageStreamCompleter loadImage(CoverSizedImageKey key, ImageDecoderCallback decode) {
+    Future<ui.Codec> decodeCover(ui.ImmutableBuffer buffer, {ui.TargetImageSizeCallback? getTargetSize}) => decode(buffer, getTargetSize: (iw, ih) {
+          final (w, h) = targetSize(iw, ih, key.width, key.height);
+          return ui.TargetImageSize(width: w, height: h);
+        });
+    return image.loadImage(key.inner, decodeCover);
+  }
+}
+
+@immutable
+class CoverSizedImageKey {
+  const CoverSizedImageKey(this.inner, this.width, this.height);
+  final Object inner;
+  final int width, height;
+  @override
+  bool operator ==(Object other) => other is CoverSizedImageKey && other.inner == inner && other.width == width && other.height == height;
+  @override
+  int get hashCode => Object.hash(inner, width, height);
 }
 
 /// "Tampilan" bottom sheet (theme + background), e.g. from the connect

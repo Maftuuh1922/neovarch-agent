@@ -671,7 +671,11 @@ void main() {
         await look();
         app.previewTab = 3;
         // no pending approval, so the approval banner doesn't cover the settings
-        final r = _controller(prefs)..debugApprovals = [];
+        // The profile is the PC's GitHub account (the phone has no username field).
+        final r = _controller(prefs)
+          ..debugApprovals = []
+          ..socialSignedIn = true
+          ..socialProfile = gh.profile;
         await run(tester, '48_profil_github_$mode', () => const RemoteShell(), remote: r, extra: [githubPublicProvider.overrideWith((ref) => gh)]);
       });
 

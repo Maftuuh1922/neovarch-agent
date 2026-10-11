@@ -903,7 +903,9 @@ class NvGlass extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final br = borderRadius ?? BorderRadius.circular(radius ?? NV.rCard);
-    final st = style ?? NV.glassStyle;
+    // "Mode ringan": the app-wide look becomes the solid "tanpa" surface; an
+    // explicit preview style keeps its colours but loses the blur.
+    final st = style ?? (NV.liteMode ? NvGlassStyle.tanpa : NV.glassStyle);
     // Tanpa efek: the caller's tint is made opaque; others keep it.
     final fill = st == NvGlassStyle.tanpa
         ? NV.glassFill(st)
@@ -921,7 +923,7 @@ class NvGlass extends StatelessWidget {
       ),
     );
     final scale = NV.glassSigmaScale(st);
-    if (!backdrop || scale == 0) return ClipRRect(borderRadius: br, child: inner);
+    if (!backdrop || scale == 0 || NV.liteMode) return ClipRRect(borderRadius: br, child: inner);
     return ClipRRect(
       borderRadius: br,
       child: ValueListenableBuilder<double>(

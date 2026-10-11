@@ -1,7 +1,8 @@
 // Profil & Teman on the phone: the GitHub-backed profile (avatar, bio, 365-day
 // heatmap in the accent colour, top stack, "lagi ngoding") and the friend
 // list (mutual follows, coding first), read through the paired PC. The phone
-// has no GitHub login: sign-in, publishing and follows happen on the PC.
+// has no GitHub login and no username field: it syncs the PC's account; when
+// the PC is signed out it can only ask the PC to start its device flow.
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +13,7 @@ import '../../ui/widgets/common.dart' show CenterLoader;
 import '../remote_controller.dart';
 import '../social_models.dart';
 import 'nv_widgets.dart';
+import 'pc_github_signin.dart';
 import 'tech_logo.dart';
 import 'profile_header_slot.dart' show contributionColor;
 import 'profile_share_card.dart' show showProfileShareSheet;
@@ -87,12 +89,14 @@ class _SocialSectionState extends ConsumerState<SocialSection> {
       if (r.socialLoading && p == null && f == null)
         const SizedBox(height: 240, child: CenterLoader(label: 'memuat profil dari PC…'))
       else if (!r.socialSignedIn && r.socialError == null)
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16),
-          child: NvEmpty(
-            title: 'PC belum masuk ke GitHub',
-            body: 'Buka Neovarch di PC → Profil & Teman → "Masuk dengan GitHub". HP ini ikut membaca profil dan teman lewat PC.',
-          ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          // The Profil tab's header already holds the sign-in card; here just
+          // point at it instead of showing it twice.
+          child: widget.showProfile
+              ? const PcGithubSignInCard()
+              : const NvNotice('Teman ikut akun GitHub yang masuk di PC. Masuk di PC dulu (kartu di atas).',
+                  key: ValueKey('social-signed-out'), icon: CupertinoIcons.desktopcomputer),
         )
       else ...[
         if (p != null && widget.showProfile) Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: SocialProfileCard(profile: p)),

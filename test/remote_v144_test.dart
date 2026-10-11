@@ -1,6 +1,7 @@
 // v1.4.4: Kantor 3D (three.js WebView fed over the JS bridge), the agent
 // sheet with "Kasih tugas", the list/3D toggle and live updates from the
 // gateway event stream.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -22,6 +23,7 @@ import 'package:neovarch_agent/remote/remote_gateway.dart' show RemoteStatus, Ka
 import 'package:neovarch_agent/remote/ui/remote_tasks_screen.dart';
 import 'package:neovarch_agent/remote/saved_desktops.dart';
 import 'package:neovarch_agent/remote/ui/remote_chat_screen.dart';
+import 'package:neovarch_agent/remote/ui/model_picker.dart' show providerLabel, modelPillText;
 import 'package:neovarch_agent/remote/ui/remote_office_3d.dart';
 import 'package:neovarch_agent/state/voice_service.dart';
 import 'package:neovarch_agent/remote/ui/remote_app.dart' show themeFor;
@@ -534,6 +536,46 @@ void main() {
     });
   });
 
+  group('Voice failures are never fatal', () {
+    tearDown(() {
+      VoiceService.debugEngine = null;
+      VoiceService.debugMicPermission = null;
+      VoiceService.initTimeout = const Duration(seconds: 12);
+      VoiceService.instance.debugReset();
+    });
+
+    Future<void> tapMic(WidgetTester tester) async {
+      await tester.tap(find.byTooltip('Dikte perintah (tekan lama: ganti bahasa)'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    for (final c in <(String, FakeEngine, String)>[
+      ('recogniser throws on start', ThrowingEngine(onInit: true), 'gagal dimulai'),
+      ('mic busy (error_audio)', ThrowingEngine(listenError: PlatformException(code: 'error_audio')), 'Mikrofon sedang dipakai'),
+      ('recogniser never answers', ThrowingEngine(hang: true), 'tidak menjawab'),
+    ]) {
+      testWidgets('mic: ${c.$1} -> message, app keeps running', (tester) async {
+        VoiceService.debugEngine = c.$2;
+        VoiceService.debugMicPermission = () async => true;
+        VoiceService.initTimeout = const Duration(milliseconds: 300);
+        VoiceService.instance.debugReset();
+        final r = controller();
+        await pump(tester, r, home: RemoteChatScreen(onOpenApprovals: () {}));
+        await tester.pump(const Duration(milliseconds: 300));
+        await tapMic(tester);
+        expect(tester.takeException(), isNull);
+        expect(VoiceService.instance.listening, isFalse);
+        expect(VoiceService.instance.error, contains(c.$3));
+        expect(find.textContaining(c.$3), findsOneWidget);
+        // the mic still works after the failure
+        expect(find.byKey(const ValueKey('composer-mic')), findsOneWidget);
+        await tester.pump(const Duration(seconds: 5));
+      });
+    }
+  });
+
   group('Models (9Router contract v1, fake adapter)', () {
     late FakeModels api;
     setUp(() => api = FakeModels());
@@ -589,6 +631,47 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('model-follow-default')));
       await tester.pumpAndSettle();
       expect(api.agentSets.last, ('session:s1', null));
+    });
+
+    test('pill text: label · provider, "—" without a PC', () {
+      expect(providerLabel('9router'), '9Router');
+      expect(providerLabel('custom:foo'), 'Kustom');
+      expect(providerLabel('openrouter'), 'Openrouter');
+      expect(providerLabel(''), '');
+      final off = controller()..status = RemoteStatus.disconnected;
+      expect(modelPillText(off), '—');
+    });
+
+    testWidgets('top-bar model pill: shows the PC model, tap opens the picker, picking switches it', (tester) async {
+      final r = controller()..debugModelsApi = api;
+      await r.refreshModels();
+      await pump(tester, r, home: RemoteChatScreen(onOpenApprovals: () {}));
+      await tester.pump(const Duration(milliseconds: 300));
+      final pillText = find.byKey(const ValueKey('model-switcher-text'));
+      expect(tester.widget<Text>(pillText).data, 'Big Pickle · 9Router');
+      await tester.tap(find.byKey(const ValueKey('model-switcher-pill')));
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.byKey(const ValueKey('model-picker')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('model-kr/claude-sonnet-4.5')));
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(api.defaults.single, 'kr/claude-sonnet-4.5');
+      expect(tester.widget<Text>(pillText).data, 'Claude Sonnet 4.5 · 9Router');
+    });
+
+    testWidgets('top-bar model pill: greyed "—" and not tappable with no PC', (tester) async {
+      final r = controller()..status = RemoteStatus.disconnected;
+      await pump(tester, r, home: RemoteChatScreen(onOpenApprovals: () {}));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.widget<Text>(find.byKey(const ValueKey('model-switcher-text'))).data, '—');
+      await tester.tap(find.byKey(const ValueKey('model-switcher-pill')), warnIfMissed: false);
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.byKey(const ValueKey('model-picker')), findsNothing);
     });
 
     testWidgets('older PC without /api/models: no chip', (tester) async {
@@ -651,5 +734,23 @@ class FakeModels implements ModelsApi {
   Future<AgentModel> setAgentModel(String agentId, String? model, {String? provider}) async {
     agentSets.add((agentId, model));
     return AgentModel(agentId: agentId, model: model ?? 'oc/big-pickle', provider: '9router');
+  }
+}
+
+class ThrowingEngine extends FakeEngine {
+  ThrowingEngine({this.onInit = false, this.listenError, this.hang = false});
+  final bool onInit;
+  final Object? listenError;
+  final bool hang;
+  @override
+  Future<bool> initialize({required void Function(String error) onError, required void Function(String status) onStatus}) {
+    if (hang) return Completer<bool>().future;
+    if (onInit) throw StateError('SpeechRecognizer crashed');
+    return Future.value(true);
+  }
+  @override
+  Future<void> listen({required String localeId, required void Function(String words, bool isFinal) onResult}) async {
+    if (listenError != null) throw listenError!;
+    return super.listen(localeId: localeId, onResult: onResult);
   }
 }
