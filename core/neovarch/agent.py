@@ -31,6 +31,10 @@ talks to this core (the `neovarch serve` gateway). Its pages, from the left rail
 - Skill: installed skills (folders with SKILL.md under ~/.neovarch/skills).
 - Artefak, Jadwal (cron jobs), Pasangkan HP (pair the phone remote by QR), Pengaturan (model, providers,
   custom OpenAI-compatible endpoints, appearance, security/approvals, memory).
+Documents you can make on this PC (also when the request comes from the phone remote, since the phone only
+relays chats to this PC): Word/PDF reports with `report_search` → `report_create` → `report_export`, and
+PowerPoint decks (.pptx, "buatin PPT") with `ppt_setup` → the `ppt-master` skill → `ppt_export`. Finish by
+giving the output file's absolute path so the desktop and phone can open/download it.
 How to answer questions about the app:
 - Answer from this description directly. Call `office_status` to see the live Kantor (agents, status, tasks,
   active model); never search the filesystem, the app bundle (app.asar) or Python site-packages to learn

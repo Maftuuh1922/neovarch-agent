@@ -10,12 +10,20 @@ import 'package:flutter_riverpod/legacy.dart';
 import '../data/device_tools.dart';
 
 class WakeWordStatus {
-  const WakeWordStatus({this.enabled = false, this.state = 'off', this.modelReady = false});
+  const WakeWordStatus({this.enabled = false, this.state = 'off', this.modelReady = false, this.heard, this.heardAt = 0, this.testUntil = 0});
   factory WakeWordStatus.fromMap(Map<dynamic, dynamic>? m) => WakeWordStatus(
         enabled: m?['enabled'] == true,
         state: '${m?['state'] ?? 'off'}',
         modelReady: m?['modelReady'] == true,
+        heard: m?['heard'] is String ? m!['heard'] as String : null,
+        heardAt: m?['heardAt'] is int ? m!['heardAt'] as int : 0,
+        testUntil: m?['testUntil'] is int ? m!['testUntil'] as int : 0,
       );
+  /// "Tes Hey Neo": last text the recogniser heard (epoch ms), test window end.
+  final String? heard;
+  final int heardAt;
+  final int testUntil;
+  bool testing(DateTime now) => testUntil > now.millisecondsSinceEpoch;
   final bool enabled;
   /// `off`, `downloading[:done:total]`, `retrying:n:reason`, `listening`,
   /// `stopped` or `error:` + reason
@@ -61,6 +69,12 @@ class WakeWordStatus {
   }
 }
 
+@immutable
+class BackgroundPerms {
+  const BackgroundPerms({this.overlay = false, this.battery = false, this.xiaomi = false});
+  final bool overlay, battery, xiaomi;
+}
+
 /// Talks to the native side over `neovarch/device` (`wakeWord`, `wakeStatus`).
 class WakeWordController extends ChangeNotifier {
   WakeWordController({
@@ -90,10 +104,38 @@ class WakeWordController extends ChangeNotifier {
     return mic;
   }
 
-  /// Opens MIUI autostart / battery (or overlay) settings for background use.
+  /// "Tes Hey Neo": the service shows what it hears for 60 s.
+  Future<void> startTest() async {
+    try {
+      status = WakeWordStatus.fromMap(await _call('wakeTest') as Map?);
+      error = null;
+    } catch (e) {
+      error = '$e';
+    }
+    notifyListeners();
+  }
+
+  /// Granted state of the two background rows (`overlay`, `battery`) and
+  /// whether this is a Xiaomi/Redmi/POCO phone (MIUI hint).
+  BackgroundPerms background = const BackgroundPerms();
+
+  Future<void> refreshBackground() async {
+    try {
+      final m = await _call('wakeBackgroundStatus');
+      if (m is Map) {
+        background = BackgroundPerms(overlay: m['overlay'] == true, battery: m['battery'] == true, xiaomi: m['xiaomi'] == true);
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  /// Opens the overlay page (or battery / autostart for background use).
+  /// Returns the page that opened; null when none could be opened (the
+  /// panel then shows a message instead of silently doing nothing).
   Future<String?> openBackgroundSettings({bool overlay = false}) async {
     try {
-      return '${await _call('wakeBackground', {'kind': overlay ? 'overlay' : 'autostart'})}';
+      final r = '${await _call('wakeBackground', {'kind': overlay ? 'overlay' : 'autostart'})}';
+      return r == 'none' || r == 'null' ? null : r;
     } catch (e) {
       error = '$e';
       notifyListeners();

@@ -253,6 +253,8 @@ Still stuck? Open an [issue on GitHub](https://github.com/Maftuuh1922/neovrach_A
 
 Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) by Nous Research.
 
+PowerPoint decks are made with [PPT Master](https://github.com/hugohe3/ppt-master) by Hugo He (MIT), downloaded on demand. See [`docs/ppt.md`](docs/ppt.md).
+
 ---
 
 ## License

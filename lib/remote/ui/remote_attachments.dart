@@ -330,3 +330,21 @@ Future<void> showImagePreview(BuildContext context, ImageProvider image, String 
         ]),
       ),
     );
+
+/// Test seam: how the phone opens a download URL (default: the system browser /
+/// download manager, which keeps the `?token=` auth).
+Future<bool> Function(Uri url) launchDownload =
+    (url) => launchUrl(url, mode: LaunchMode.externalApplication);
+
+/// A file path the PC agent mentioned in chat. Decks and reports it made
+/// (.pptx, .docx, .pdf …) are downloaded from the PC, just like attachments;
+/// anything else (source files, folders) only says where it lives on the PC.
+Future<void> openPcFile(BuildContext context, RemoteGateway? gateway, String path) async {
+  if (gateway != null && isDownloadableDoc(path)) {
+    toast(context, 'Mengunduh ${path.split(RegExp(r'[\\/]')).last} dari PC…');
+    final ok = await launchDownload(gateway.fsDownloadUri(path));
+    if (!ok && context.mounted) toast(context, 'Gagal membuka unduhan. Berkas ada di PC: $path');
+    return;
+  }
+  toast(context, 'Berkas ada di PC: $path');
+}

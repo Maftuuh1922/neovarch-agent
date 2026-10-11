@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- In-app update: only the downloaded APKs in cache/updates/ (lib/remote/apk_update.dart). -->
+<paths>
+    <cache-path name="updates" path="updates/" />
+</paths>

@@ -136,6 +136,31 @@ class RemoteController extends ChangeNotifier {
   String title = '';
   RemoteTranscript transcript = RemoteTranscript();
   bool opening = false;
+
+  /// Streamed tokens (message / reasoning deltas into the open bubble) bump
+  /// this instead of notifying the whole controller, at most once per
+  /// [streamFrame] (~30 fps): only the streaming bubble and the chat's
+  /// follow-scroll listen, so the shell, nav bar and other tabs no longer
+  /// rebuild per token. Anything structural (a new message, a tool row,
+  /// completion) still notifies normally.
+  final streamTick = ValueNotifier<int>(0);
+  static Duration streamFrame = const Duration(milliseconds: 33);
+  Timer? _streamTimer;
+  DateTime _lastStreamTick = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _tickStream() {
+    if (_streamTimer != null) return;
+    final wait = streamFrame - DateTime.now().difference(_lastStreamTick);
+    if (wait <= Duration.zero) return _fireStream();
+    _streamTimer = Timer(wait, _fireStream);
+  }
+
+  void _fireStream() {
+    _streamTimer?.cancel();
+    _streamTimer = null;
+    _lastStreamTick = DateTime.now();
+    streamTick.value++;
+  }
   bool notifyApprovals = true;
   void setNotifyApprovals(bool v) {
     notifyApprovals = v;
@@ -164,11 +189,24 @@ class RemoteController extends ChangeNotifier {
   bool get updateAvailable =>
       update['available'] == true && update['latest'] != null && update['latest'] != dismissedUpdate;
 
-  Future<void> checkUpdate() async {
-    final u = await updateChecker.check(fallback: gateway?.updateInfo);
+  /// Called once per newly released version (system notification on
+  /// Android; set by `runRemoteApp`).
+  void Function(Map<String, dynamic> update)? onNewUpdate;
+
+  /// Throttled by [UpdateChecker.minInterval] (persisted when the checker has
+  /// prefs), so calling it on every start / status refresh is cheap.
+  Future<void> checkUpdate({bool force = false}) async {
+    Map<String, dynamic>? u;
+    try {
+      u = await updateChecker.check(fallback: gateway?.updateInfo, force: force);
+    } catch (_) {}
     if (u != null) {
       update = u;
       notifyListeners();
+      final latest = '${u['latest'] ?? ''}';
+      if (u['available'] == true && latest.isNotEmpty && latest != dismissedUpdate && updateChecker.shouldNotify(latest)) {
+        onNewUpdate?.call(u);
+      }
     }
   }
   void dismissUpdate() {
@@ -194,6 +232,8 @@ class RemoteController extends ChangeNotifier {
 
   /// Called once at start: reconnect to the last desktop.
   Future<void> start() async {
+    // Update notice without opening About or pairing first (throttled).
+    unawaited(checkUpdate());
     final d = desktops.active;
     if (d != null) await connectTo(d);
   }
@@ -392,9 +432,17 @@ class RemoteController extends ChangeNotifier {
     }
     if (f.type == 'sessions.changed' || f.type == 'session.title') unawaited(loadSessions());
     if (f.sessionId != null && f.sessionId == runtimeId) {
+      final count = transcript.messages.length;
+      final wasRunning = transcript.running;
       if (transcript.apply(f)) {
         if (f.type == 'session.title') title = transcript.title ?? title;
-        notifyListeners();
+        final delta = f.type == 'message.delta' || f.type == 'reasoning.delta' || f.type == 'thinking.delta';
+        if (delta && transcript.messages.length == count && wasRunning) {
+          _tickStream();
+        } else {
+          notifyListeners();
+          if (delta) _fireStream();
+        }
       }
     }
   }
@@ -862,6 +910,8 @@ class RemoteController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _streamTimer?.cancel();
+    streamTick.dispose();
     unawaited(_teardown());
     super.dispose();
   }

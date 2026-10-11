@@ -51,6 +51,8 @@ String mimeForName(String name, [String? fallback]) {
     'heic': 'image/heic', 'bmp': 'image/bmp', 'pdf': 'application/pdf', 'txt': 'text/plain', 'md': 'text/markdown',
     'csv': 'text/csv', 'json': 'application/json', 'zip': 'application/zip', 'docx':
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   };
   return map[ext] ?? fallback ?? 'application/octet-stream';
 }
@@ -71,3 +73,9 @@ String humanSize(int bytes) {
   if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
+
+/// Files the PC agent makes that the phone should download instead of showing
+/// "the file is on the PC": Word/PDF reports and PowerPoint decks.
+final _downloadableDoc = RegExp(r'\.(pptx?|docx?|pdf|xlsx?|odt|odp|csv|zip)$', caseSensitive: false);
+
+bool isDownloadableDoc(String path) => _downloadableDoc.hasMatch(path.trim());

@@ -286,6 +286,15 @@ IconData toolIcon(String name) {
   return Icons.build_outlined;
 }
 
+/// Output files a document tool reported (`pptx: /path/deck.pptx`,
+/// `docx: …` from ppt_export / report_export), so the chat can offer them.
+final _producedLine = RegExp(r'^(pptx|docx|pdf|md):\s*(\S.*?)\s*$', multiLine: true);
+
+List<String> producedFiles(ToolActivity t) {
+  if (t.running || t.failed || (t.name != 'ppt_export' && t.name != 'report_export')) return const [];
+  return [for (final m in _producedLine.allMatches(t.result ?? '')) m.group(2)!];
+}
+
 /// One tool call: icon, name, structured summary, duration; expands to
 /// arguments and output. A result may OFFER a preview — never opens it.
 class ToolRow extends StatefulWidget {
@@ -360,6 +369,20 @@ class _ToolRowState extends State<ToolRow> {
                 onPressed: () => url != null ? widget.onLink(url) : widget.onOpenFile(path!),
                 icon: Icon(url != null ? Icons.open_in_browser : Icons.visibility_outlined, size: 16),
                 label: Text(url != null ? 'Pratinjau halaman' : 'Buka $path', style: const TextStyle(fontSize: 12.5)),
+              ),
+            ),
+          ),
+        for (final f in producedFiles(t))
+          Padding(
+            padding: const EdgeInsets.only(left: 26, bottom: 2),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: ValueKey('nv-produced-$f'),
+                style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 8)),
+                onPressed: () => widget.onOpenFile(f),
+                icon: Icon(f.toLowerCase().endsWith('.pptx') ? Icons.slideshow_outlined : Icons.download_outlined, size: 16),
+                label: Text('Unduh ${f.split(RegExp(r'[\\/]')).last}', style: const TextStyle(fontSize: 12.5)),
               ),
             ),
           ),

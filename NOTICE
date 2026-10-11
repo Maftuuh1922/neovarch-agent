@@ -28,6 +28,39 @@ License, Copyright (c) 2025 Nous Research; the full text is in desktop/LICENSE
 and desktop/NOTICE and applies to the derived code in that directory. Those
 notices are kept as-is.
 
+PPT Master (PowerPoint decks)
+-----------------------------
+The PowerPoint feature (core/neovarch/pptmaster.py, tools ppt_setup/ppt_export)
+uses PPT Master by Hugo He (https://github.com/hugohe3/ppt-master, MIT License,
+Copyright (c) 2025-2026 Hugo He). Its code is not bundled in this repository:
+on first use the official skill-only release is downloaded on the user's PC,
+checked against a pinned SHA-256 and kept unchanged, with its own LICENSE and
+attribution files, in ~/.neovarch/skills/ppt-master. Its optional PDF input
+depends on PyMuPDF, which is AGPL-3.0 (Artifex); Neovarch installs PyMuPDF only
+when the user asks for PDF sources and never redistributes it. See docs/ppt.md.
+
+MIT License text for PPT Master:
+
+  Copyright (c) 2025-2026 Hugo He
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
 Trademarks
 ----------
 "Hermes", "Hermes Agent", "Hermes Desktop", "Hermes Cloud" and "Nous Portal"

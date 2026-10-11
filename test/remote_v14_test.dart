@@ -452,7 +452,7 @@ void main() {
       await pump(tester, r, const RemoteShell());
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('Update tersedia v1.4.0'), findsOneWidget);
-      expect(find.text('Unduh'), findsOneWidget);
+      expect(find.text('Perbarui'), findsOneWidget);
       await tester.tap(find.byTooltip('Tutup'));
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('Update tersedia v1.4.0'), findsNothing);

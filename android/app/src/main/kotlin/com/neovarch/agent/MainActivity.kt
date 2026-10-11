@@ -121,8 +121,91 @@ class MainActivity : FlutterActivity() {
         return id
     }
 
+    // ------------------------------------------------------ chat dictation --
+    // Fallbacks for phones without a SpeechRecognizer service (many Xiaomi
+    // phones ship without Google's): the system RecognizerIntent, then the
+    // offline Vosk model Hey Neo downloads (English). Results stream to Dart
+    // over "neovarch/speech" ("text" {text, final}, "error" {message}).
+    private var speechChannel: MethodChannel? = null
+    private val speechRequests = HashMap<Int, MethodChannel.Result>()
+    private var dictSpeech: org.vosk.android.SpeechService? = null
+    private var dictModel: org.vosk.Model? = null
+
+    private fun recognizerIntent(lang: String?): Intent =
+        Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Bicara sekarang…")
+            .apply { if (!lang.isNullOrEmpty()) putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, lang.replace('_', '-')) }
+
+    private fun speechCaps(): Map<String, Any> {
+        val d = NvWakeService.modelDir(this)
+        val intentOk = try {
+            recognizerIntent(null).resolveActivity(packageManager) != null
+        } catch (e: Exception) { false }
+        return mapOf(
+            "recognizer" to android.speech.SpeechRecognizer.isRecognitionAvailable(this),
+            "intent" to intentOk,
+            "vosk" to (java.io.File(d, "am").exists() || java.io.File(d, "conf").exists()),
+            "mic" to granted(Manifest.permission.RECORD_AUDIO),
+        )
+    }
+
+    private fun speechEmit(method: String, args: Map<String, Any?>) =
+        Handler(Looper.getMainLooper()).post { speechChannel?.invokeMethod(method, args) }
+
+    private fun voskStart(result: MethodChannel.Result) {
+        if (!granted(Manifest.permission.RECORD_AUDIO)) { result.error("permission", "izin mikrofon belum diberikan", null); return }
+        voskStop()
+        Thread {
+            try {
+                val m = org.vosk.Model(NvWakeService.modelDir(this).absolutePath)
+                dictModel = m
+                val s = org.vosk.android.SpeechService(org.vosk.Recognizer(m, 16000f), 16000f)
+                dictSpeech = s
+                s.startListening(object : org.vosk.android.RecognitionListener {
+                    override fun onPartialResult(h: String?) {
+                        h?.let { speechEmit("text", mapOf("text" to org.json.JSONObject(it).optString("partial"), "final" to false)) }
+                    }
+                    override fun onResult(h: String?) {
+                        h?.let { speechEmit("text", mapOf("text" to org.json.JSONObject(it).optString("text"), "final" to false, "segment" to true)) }
+                    }
+                    override fun onFinalResult(h: String?) {
+                        h?.let { speechEmit("text", mapOf("text" to org.json.JSONObject(it).optString("text"), "final" to true, "segment" to true)) }
+                    }
+                    override fun onError(e: Exception?) {
+                        android.util.Log.e("NeovarchSpeech", "vosk error", e)
+                        speechEmit("error", mapOf("message" to (e?.message ?: "mikrofon")))
+                    }
+                    override fun onTimeout() {}
+                })
+                android.util.Log.i("NeovarchSpeech", "vosk dictation started")
+                Handler(Looper.getMainLooper()).post { result.success(true) }
+            } catch (e: Exception) {
+                android.util.Log.e("NeovarchSpeech", "vosk start failed", e)
+                Handler(Looper.getMainLooper()).post { result.error("failed", e.message ?: e.toString(), null) }
+            }
+        }.start()
+    }
+
+    private fun voskStop() {
+        try {
+            dictSpeech?.stop()
+            dictSpeech?.shutdown()
+        } catch (_: Exception) {}
+        dictSpeech = null
+        try { dictModel?.close() } catch (_: Exception) {}
+        dictModel = null
+    }
+
+    override fun onDestroy() {
+        voskStop()
+        super.onDestroy()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        speechChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neovarch/speech")
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
             try {
                 handle(call, result)
@@ -230,13 +313,40 @@ class MainActivity : FlutterActivity() {
             "saveWidgetSnapshot", "widgetsPlaced" -> result.success(NvWidgets.handle(this, call.method, call.arguments))
             "setLauncherIcon" -> result.success(setLauncherIcon(call.argument<String>("id") ?: ""))
             "takeRoute" -> { result.success(pendingRoute); pendingRoute = null }
+            // In-app update (lib/remote/apk_update.dart)
+            "canInstallApks" -> result.success(canInstallApks())
+            "openInstallSourcesSettings" -> result.success(openInstallSourcesSettings())
+            "installApk" -> result.success(installApk(call.argument<String>("path") ?: ""))
+            // "Mode ringan" suggestion (lib/remote/lite_mode.dart): total RAM + the low-RAM flag
+            "memoryInfo" -> {
+                val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                val mi = android.app.ActivityManager.MemoryInfo()
+                am.getMemoryInfo(mi)
+                result.success(mapOf("total" to mi.totalMem, "low_ram" to am.isLowRamDevice, "mem_class" to am.memoryClass))
+            }
             "wakeWord" -> {
                 NvWakeService.setEnabled(this, call.argument<Boolean>("enable") == true)
                 result.success(NvWakeService.status(this))
             }
             "wakeStatus" -> result.success(NvWakeService.status(this))
+            "speechCaps" -> result.success(speechCaps())
+            "recognizeSpeechIntent" -> {
+                val code = nextCode++
+                speechRequests[code] = result
+                try {
+                    @Suppress("DEPRECATION")
+                    startActivityForResult(recognizerIntent(call.argument<String>("locale")), code)
+                } catch (e: ActivityNotFoundException) {
+                    speechRequests.remove(code)
+                    result.error("unavailable", "tidak ada aplikasi pengenal suara", null)
+                }
+            }
+            "voskDictate" -> voskStart(result)
+            "voskStop" -> { voskStop(); result.success(true) }
+            "wakeTest" -> { NvWakeService.startTest(this); result.success(NvWakeService.status(this)) }
             "wakeHoldMic" -> result.success(NvWakeService.holdMic(call.argument<Boolean>("hold") == true))
             "wakeBackground" -> result.success(openBackgroundSettings(call.argument<String>("kind") ?: "autostart"))
+            "wakeBackgroundStatus" -> result.success(backgroundStatus())
             "updateWidget" -> {
                 NvHomeWidget.save(this, (call.arguments as? Map<*, *>) ?: emptyMap<String, Any?>())
                 result.success(true)
@@ -400,6 +510,13 @@ class MainActivity : FlutterActivity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        val sp = speechRequests.remove(requestCode)
+        if (sp != null) {
+            val text = if (resultCode == Activity.RESULT_OK)
+                data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull() else null
+            sp.success(text)
+            return
+        }
         val up = uploadRequests.remove(requestCode)
         if (up != null) {
             val uri = data?.data
@@ -522,6 +639,43 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // ------------------------------------------------------- in-app update --
+    /** "Instal aplikasi tidak dikenal" for this app (Android 8+); always allowed before. */
+    private fun canInstallApks(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()
+
+    private fun openInstallSourcesSettings(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+        val i = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            startActivity(i); true
+        } catch (e: ActivityNotFoundException) {
+            startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); false
+        }
+    }
+
+    /**
+     * Hands a downloaded APK (cache/updates/ only, see res/xml/nv_update_paths.xml)
+     * to the system package installer through [NvUpdateProvider]. The user
+     * confirms the install in the system UI; Android verifies the signature.
+     */
+    private fun installApk(path: String): String {
+        val dir = java.io.File(cacheDir, "updates").canonicalFile
+        val f = java.io.File(path).canonicalFile
+        if (f.parentFile != dir || !f.isFile || !f.name.endsWith(".apk")) return "berkas pembaruan tidak ditemukan"
+        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.nvupdate", f)
+        val i = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return try {
+            startActivity(i); "dibuka"
+        } catch (e: ActivityNotFoundException) {
+            "penginstal paket Android tidak ditemukan"
+        }
+    }
+
     private fun notify(title: String, body: String, route: String?): String {
         if (!granted(Manifest.permission.POST_NOTIFICATIONS)) return "izin notifikasi belum diberikan"
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -625,23 +779,67 @@ class MainActivity : FlutterActivity() {
         private val ICON_IDS = listOf("merah", "biru", "ungu", "toska", "hijau", "oranye", "monokrom")
     }
 
-    /** MIUI autostart / battery / overlay pages so Hey Neo can run and open the app from the background. */
+    private fun isXiaomi(): Boolean =
+        Build.MANUFACTURER.lowercase(Locale.ROOT) in setOf("xiaomi", "redmi", "poco") ||
+            Build.BRAND.lowercase(Locale.ROOT) in setOf("xiaomi", "redmi", "poco")
+
+    private fun canOverlay(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
+
+    private fun ignoresBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        return pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    /** Profil → Hey Neo rows: what is already granted, and whether to show the MIUI hint. */
+    private fun backgroundStatus(): Map<String, Any> = mapOf(
+        "overlay" to canOverlay(),
+        "battery" to ignoresBatteryOptimizations(),
+        "xiaomi" to isXiaomi(),
+        "manufacturer" to Build.MANUFACTURER,
+    )
+
+    /**
+     * Settings pages so Hey Neo can run and open the app from the background.
+     * Generic Android pages first (they exist on every phone, MIUI included);
+     * vendor pages only as fallbacks / on Xiaomi. Each start is tried on its
+     * own, so a missing activity falls through instead of doing nothing.
+     * Returns the page that opened, or "none" (Dart then shows a message).
+     */
     private fun openBackgroundSettings(kind: String): String {
         val pkg = Uri.parse("package:$packageName")
-        val tries = mutableListOf<Pair<String, Intent>>()
+        val tries = mutableListOf<Pair<String, () -> Intent>>()
         if (kind == "overlay") {
-            tries += "overlay" to Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg)
-            tries += "miui-perms" to Intent("miui.intent.action.APP_PERM_EDITOR").setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity").putExtra("extra_pkgname", packageName)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                tries += "overlay" to { Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg) }
+            }
+            tries += "miui-perms" to {
+                Intent("miui.intent.action.APP_PERM_EDITOR")
+                    .setClassName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity")
+                    .putExtra("extra_pkgname", packageName)
+            }
+            tries += "miui-perms-action" to { Intent("miui.intent.action.APP_PERM_EDITOR").putExtra("extra_pkgname", packageName) }
         } else {
-            tries += "miui-autostart" to Intent().setComponent(ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"))
-            tries += "battery" to Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !ignoresBatteryOptimizations()) {
+                tries += "battery-request" to { Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg) }
+            }
+            if (isXiaomi()) {
+                tries += "miui-autostart" to {
+                    Intent().setComponent(ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"))
+                }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                tries += "battery" to { Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS) }
+            }
         }
-        tries += "app-details" to Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)
-        for ((name, i) in tries) {
+        tries += "app-details" to { Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg) }
+        for ((name, make) in tries) {
             try {
-                startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                startActivity(make().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 return name
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                android.util.Log.w("NeovarchWake", "settings page $name unavailable: ${e.message}")
+            }
         }
         return "none"
     }

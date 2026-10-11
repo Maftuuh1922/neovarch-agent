@@ -15,6 +15,9 @@ import '../../theme/neovarch_mobile_theme.dart';
 import '../appearance.dart';
 import '../remote_controller.dart';
 import '../saved_desktops.dart';
+import '../apk_update.dart' show notifyUpdateAvailable;
+import '../changelog.dart' show WhatsNew;
+import '../update_check.dart';
 import 'appearance/corner_radius.dart';
 import 'connect_screen.dart';
 import 'remote_intro_screen.dart';
@@ -44,8 +47,12 @@ void registerFontLicenses() {
 Future<void> runRemoteApp(
     {required SharedPreferences prefs, required SettingsController settings, bool skipSplash = false, String? openSession}) async {
   registerFontLicenses();
+  // before anything below writes preferences: is this the first run of a
+  // newer version (→ "Apa yang baru" once in the shell)?
+  WhatsNew.prepare(prefs, SettingsController.appVersion);
   final desktops = SavedDesktops(prefs)..load();
-  final remote = RemoteController(desktops);
+  final remote = RemoteController(desktops)..updateChecker = UpdateChecker(prefs: prefs);
+  remote.onNewUpdate = notifyUpdateAvailable;
   final look = AppearanceController(prefs);
   final corners = CornerRadiusController(prefs);
   remote.onAppearance = look.applyPc;
