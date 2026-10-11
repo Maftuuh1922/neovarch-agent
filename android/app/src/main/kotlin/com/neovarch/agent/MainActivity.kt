@@ -239,6 +239,7 @@ class MainActivity : FlutterActivity() {
                 result.success(NvWakeService.status(this))
             }
             "wakeStatus" -> result.success(NvWakeService.status(this))
+            "wakeTest" -> { NvWakeService.startTest(this); result.success(NvWakeService.status(this)) }
             "wakeBackground" -> result.success(openBackgroundSettings(call.argument<String>("kind") ?: "autostart"))
             "wakeBackgroundStatus" -> result.success(backgroundStatus())
             "updateWidget" -> {

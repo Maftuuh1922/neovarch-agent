@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../theme/neovarch_mobile_theme.dart';
+import '../wake_phrase.dart';
 import '../wake_word.dart';
 import 'nv_widgets.dart';
 
@@ -31,7 +32,7 @@ class _WakeWordPanelState extends ConsumerState<WakeWordPanel> with WidgetsBindi
     _poll = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       final w = ref.read(wakeWordProvider);
-      if (w.status.enabled && !w.busy && w.status.state != 'listening') w.refresh();
+      if (w.status.enabled && !w.busy && (w.status.state != 'listening' || w.status.testing(DateTime.now()))) w.refresh();
     });
   }
 
@@ -102,6 +103,10 @@ class _WakeWordPanelState extends ConsumerState<WakeWordPanel> with WidgetsBindi
         'Setelah HP dinyalakan ulang, ketuk notifikasinya untuk menyalakan lagi.',
         style: TextStyle(fontSize: 12.5, height: 1.35, color: NV.muted),
       ),
+      if (s.enabled && s.state == 'listening') ...[
+        const SizedBox(height: 8),
+        _TestBox(status: s, onTest: w.startTest),
+      ],
       if (w.error != null) ...[
         const SizedBox(height: 8),
         Text(w.error!, key: const ValueKey('wake-error'), style: TextStyle(fontSize: 12.5, color: NV.redInk)),
@@ -157,4 +162,33 @@ class _Row extends StatelessWidget {
           ]),
         ),
       );
+}
+
+/// "Tes Hey Neo": live readout of what the background recogniser hears.
+class _TestBox extends StatelessWidget {
+  const _TestBox({required this.status, required this.onTest});
+  final WakeWordStatus status;
+  final VoidCallback onTest;
+  @override
+  Widget build(BuildContext context) {
+    final testing = status.testing(DateTime.now());
+    final heard = status.heard;
+    final String line;
+    if (!testing) {
+      line = 'Ketuk Tes, lalu ucapkan "Hey Neo". Teks yang tertangkap mikrofon muncul di sini.';
+    } else if (heard == null || heard.isEmpty) {
+      line = 'Mendengarkan… belum ada suara yang tertangkap.';
+    } else if (matchesWakePhrase(heard)) {
+      line = 'Terdengar: "$heard" → cocok, Chat akan terbuka.';
+    } else if (normalizeWakeText(heard) == 'unk') {
+      line = 'Ada suara, tapi bukan "Hey Neo". Coba ucapkan lebih jelas: "Hey Ni-o".';
+    } else {
+      line = 'Terdengar: "$heard" (belum cocok).';
+    }
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Expanded(child: Text(line, key: const ValueKey('wake-test-text'), style: TextStyle(fontSize: 12.5, height: 1.35, color: NV.text))),
+      const SizedBox(width: 8),
+      OutlinedButton(key: const ValueKey('wake-test'), onPressed: onTest, child: Text(testing ? 'Ulangi tes' : 'Tes Hey Neo')),
+    ]);
+  }
 }

@@ -10,12 +10,20 @@ import 'package:flutter_riverpod/legacy.dart';
 import '../data/device_tools.dart';
 
 class WakeWordStatus {
-  const WakeWordStatus({this.enabled = false, this.state = 'off', this.modelReady = false});
+  const WakeWordStatus({this.enabled = false, this.state = 'off', this.modelReady = false, this.heard, this.heardAt = 0, this.testUntil = 0});
   factory WakeWordStatus.fromMap(Map<dynamic, dynamic>? m) => WakeWordStatus(
         enabled: m?['enabled'] == true,
         state: '${m?['state'] ?? 'off'}',
         modelReady: m?['modelReady'] == true,
+        heard: m?['heard'] is String ? m!['heard'] as String : null,
+        heardAt: m?['heardAt'] is int ? m!['heardAt'] as int : 0,
+        testUntil: m?['testUntil'] is int ? m!['testUntil'] as int : 0,
       );
+  /// "Tes Hey Neo": last text the recogniser heard (epoch ms), test window end.
+  final String? heard;
+  final int heardAt;
+  final int testUntil;
+  bool testing(DateTime now) => testUntil > now.millisecondsSinceEpoch;
   final bool enabled;
   /// `off`, `downloading[:done:total]`, `retrying:n:reason`, `listening`,
   /// `stopped` or `error:` + reason
@@ -94,6 +102,17 @@ class WakeWordController extends ChangeNotifier {
       await ensurePermissions(const ['android.permission.POST_NOTIFICATIONS']);
     } catch (_) {}
     return mic;
+  }
+
+  /// "Tes Hey Neo": the service shows what it hears for 60 s.
+  Future<void> startTest() async {
+    try {
+      status = WakeWordStatus.fromMap(await _call('wakeTest') as Map?);
+      error = null;
+    } catch (e) {
+      error = '$e';
+    }
+    notifyListeners();
   }
 
   /// Granted state of the two background rows (`overlay`, `battery`) and
