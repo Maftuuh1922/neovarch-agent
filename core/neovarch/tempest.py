@@ -33,6 +33,14 @@ Fase 1 additions (each behind its own ``agent.tempest_*`` switch, see :data:`FEA
    endpoints, at most 4 ``cache_control`` breakpoints are placed (system static part, end of
    system, the previous call's last message, the last message). :func:`prefix_violation`
    is the lint that tests and the agent use to catch a prefix that changed between calls.
+7. recoverable compaction (``tempest_compact``) - nothing is masked per turn; only when the
+   wire crosses ``compact_at`` x the model window (default 50%) old tool outputs are swapped
+   for a placeholder that keeps the path to the full text (offload file, or the file that was
+   read), so the cache breaks once per compaction. Small error outputs stay ("keep the wrong
+   stuff in"). Still over ``compact_target``: live file reads go too, then a deterministic
+   structured summary (requests, notes, files touched/read, verify status, last errors,
+   restorable paths) replaces the oldest turns. ``tempest_model_overrides`` turns it (or any
+   knob) off per model glob, e.g. ``{"gemini-2.5-flash*": {"compact": false}}``.
 """
 
 from __future__ import annotations
@@ -61,6 +69,11 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "cache_v2": False,
     "cache_breakpoints": "auto",   # auto | on | off  (auto = Anthropic-compatible endpoint)
     "cache_ttl": "",               # "" (5 minutes) | "1h"
+    "compact": False,
+    "compact_at": 0.5,             # fraction of the model window that triggers a compaction
+    "compact_target": 0.35,        # aim below this fraction after compacting
+    "compact_keep_turns": 4,       # newest assistant turns whose tool outputs always stay
+    "mask_mode": "",               # "" = derive (compact > turn masking > off) | turn | compact | off
 }
 
 HEAD_LINES = 30
@@ -112,12 +125,57 @@ def settings(cfg: dict) -> dict[str, Any] | None:
     if isinstance(mask, bool):
         out["mask"] = mask
     for key, default in FEATURE_DEFAULTS.items():
-        val = _get(cfg, f"agent.tempest_{key}")
-        if isinstance(default, bool):
-            out[key] = _as_bool(val, out.get(key, default))
-        else:
-            out[key] = str(val).strip().lower() if val not in (None, "") else out.get(key, default)
+        _apply(out, key, _get(cfg, f"agent.tempest_{key}"), default)
+    overrides = _get(cfg, "agent.tempest_model_overrides")
+    out["model_overrides"] = overrides if isinstance(overrides, dict) else {}
+    return _derive(out)
+
+
+def _apply(out: dict, key: str, val: Any, default: Any) -> None:
+    if isinstance(default, bool):
+        out[key] = _as_bool(val, out.get(key, default))
+    elif isinstance(default, float):
+        try:
+            out[key] = float(val) if val not in (None, "") else out.get(key, default)
+        except (TypeError, ValueError):
+            out[key] = out.get(key, default)
+    elif isinstance(default, int):
+        try:
+            out[key] = int(val) if val not in (None, "") else out.get(key, default)
+        except (TypeError, ValueError):
+            out[key] = out.get(key, default)
+    else:
+        out[key] = str(val).strip().lower() if val not in (None, "") else out.get(key, default)
+
+
+def _derive(out: dict) -> dict:
+    """mask_mode decides between per-turn masking (Phase 1), boundary compaction and nothing."""
+    mm = str(out.get("mask_mode") or "")
+    if mm not in ("turn", "compact", "off"):
+        mm = "compact" if out.get("compact") else ("turn" if out.get("mask") else "off")
+    out["mask_mode"] = mm
+    out["compact"] = mm == "compact"
+    out["mask"] = mm == "turn"  # mask_wire() only masks per turn in "turn" mode
     return out
+
+
+def for_model(st: dict | None, model: str) -> dict | None:
+    """Apply ``agent.tempest_model_overrides`` (glob on the model id -> knob values)."""
+    if not st or not st.get("model_overrides"):
+        return st
+    import fnmatch
+    out = dict(st)
+    for pat, knobs in st["model_overrides"].items():
+        if isinstance(knobs, dict) and fnmatch.fnmatch(str(model or "").lower(), str(pat).lower()):
+            for key, val in knobs.items():
+                key = str(key).removeprefix("tempest_")
+                if key in FEATURE_DEFAULTS:
+                    _apply(out, key, val, FEATURE_DEFAULTS[key])
+                elif key in ("mask",) and isinstance(val, bool):
+                    out[key] = val
+            if "compact" in knobs or "tempest_compact" in knobs:
+                out["mask_mode"] = ""
+    return _derive(out)
 
 
 def _as_bool(val, default: bool) -> bool:
@@ -483,3 +541,180 @@ def cached_tokens(usage: dict | None) -> int:
         except (TypeError, ValueError):
             continue
     return 0
+
+
+# ------------------------------------------------- recoverable compaction -----
+
+COMPACT_PLACEHOLDER = "[output alat lama dipindah ke {path} (~{n} token{desc}); baca ulang dengan read_file bila perlu]"
+SUMMARY_MARK = "[ringkasan terstruktur — konteks lama dipadatkan otomatis"
+
+
+def wire_tokens(wire: list[dict], tools: list[dict] | None = None) -> int:
+    """Cheap size of a request: chars/4 over message contents, tool calls and tool schemas."""
+    n = est_tokens(json.dumps(tools, ensure_ascii=False)) if tools else 0
+    for m in wire:
+        c = m.get("content")
+        if isinstance(c, list):
+            n += sum(est_tokens(str(p.get("text") or "")) for p in c if isinstance(p, dict)) + 4
+        else:
+            n += est_tokens(str(c or "")) + 4
+        for tc in m.get("tool_calls") or []:
+            n += est_tokens(json.dumps(tc, ensure_ascii=False))
+    return n
+
+
+def apply_compaction(wire: list[dict], state: dict | None) -> list[dict]:
+    """Rebuild the compacted wire from the stored compaction state (deterministic, so the
+    prefix is identical on every call between two compactions).
+
+    ``wire`` is [system] + one wire message per stored message, in order."""
+    if not state:
+        return wire
+    masked = state.get("masked") or {}
+    upto = int(state.get("summary_upto") or 0)
+    out = [wire[0]]
+    if upto and state.get("summary"):
+        out.append({"role": "user", "content": state["summary"]})
+    for i, m in enumerate(wire[1:]):
+        if i < upto:
+            continue
+        if m.get("role") == "tool" and m.get("tool_call_id") in masked:
+            m = {**m, "content": masked[m["tool_call_id"]]}
+        out.append(m)
+    return out
+
+
+def _is_error_output(text: str) -> bool:
+    head = text[:400]
+    return (head.startswith(("error", "rejected", "refused", "Traceback")) or "Traceback (most recent call last)" in text
+            or bool(re.search(r"\b\d+ failed\b|\bFAILED\b|Error:", text)))
+
+
+def _call_index(messages: list[dict]) -> dict[str, tuple[str, dict]]:
+    out = {}
+    for m in messages:
+        for c in m.get("tool_calls") or []:
+            fn = c.get("function") or {}
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            out[str(c.get("id") or "")] = (str(fn.get("name") or ""), args if isinstance(args, dict) else {})
+    return out
+
+
+def compact(messages: list[dict], state: dict | None, st: dict, window: int, obs_dir: Path,
+            measure) -> tuple[dict, dict]:
+    """One compaction pass. ``measure(state) -> tokens`` sizes the wire under a candidate state.
+
+    Returns (new_state, report). Stages: 1) mask old tool outputs except live reads and small
+    errors; 2) mask live reads, oldest first; 3) structured summary of the oldest turns."""
+    state = {"masked": dict((state or {}).get("masked") or {}), "summary": (state or {}).get("summary") or "",
+             "summary_upto": int((state or {}).get("summary_upto") or 0), "epoch": int((state or {}).get("epoch") or 0) + 1}
+    target = int(window * float(st.get("compact_target") or 0.35))
+    before = measure(state)
+    calls = _call_index(messages)
+    asst = [i for i, m in enumerate(messages) if m.get("role") == "assistant"]
+    keep = max(int(st.get("compact_keep_turns") or 4), 1)
+    cut = asst[-keep] if len(asst) >= keep else 0  # tool outputs before this index may go
+    wire_like = [{"role": "system", "content": ""}] + [dict(m) for m in messages]
+    live = _live_reads(wire_like)
+    stage = 0
+
+    def mask_one(m: dict) -> None:
+        cid = str(m.get("tool_call_id") or "")
+        name, args = calls.get(cid, (str(m.get("name") or "tool"), {}))
+        content = str(m.get("content") or "")
+        n = est_tokens(content)
+        hit = re.search(r"Lengkapnya di (\S+)", content)
+        if name == "read_file" and args.get("path"):
+            path, desc = str(args["path"]), "; isi file yang dibaca"
+        elif hit:
+            path, desc = hit.group(1), f"; {name}"
+        else:
+            obs_dir.mkdir(parents=True, exist_ok=True)
+            safe = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{name}-{cid}")[:80] or "obs"
+            dest = obs_dir / f"{safe}.txt"
+            if not dest.exists():
+                dest.write_text(content, encoding="utf-8")
+            path, desc = str(dest), f"; {name}"
+        preview = str(args.get("command") or args.get("path") or args.get("query") or "")[:80]
+        if preview and name != "read_file":
+            desc += f" `{preview}`"
+        state["masked"][cid] = COMPACT_PLACEHOLDER.format(path=path, n=n, desc=desc)
+
+    def candidates(include_live: bool) -> list[dict]:
+        out = []
+        for i, m in enumerate(messages[:cut]):
+            if i < state["summary_upto"] or m.get("role") != "tool":
+                continue
+            cid = str(m.get("tool_call_id") or "")
+            content = str(m.get("content") or "")
+            if cid in state["masked"] or est_tokens(content) <= 60:
+                continue
+            if _is_error_output(content) and est_tokens(content) <= 400:
+                continue  # keep the wrong stuff in: small failures stay visible
+            if cid in live and not include_live:
+                continue
+            out.append(m)
+        return out
+
+    for m in candidates(False):
+        mask_one(m)
+        stage = 1
+    if measure(state) > target:
+        for m in candidates(True):
+            mask_one(m)
+            stage = 2
+            if measure(state) <= target:
+                break
+    if measure(state) > target and cut > 0:
+        state["summary"] = structured_summary(messages[:cut], state, calls)
+        state["summary_upto"] = cut
+        stage = 3
+    return state, {"stage": stage, "before": before, "after": measure(state), "epoch": state["epoch"],
+                   "masked": len(state["masked"])}
+
+
+def structured_summary(old: list[dict], state: dict, calls: dict) -> str:
+    """Deterministic (no LLM) anchor summary of the turns being collapsed."""
+    users = [str(m.get("content") or "") for m in old if m.get("role") == "user" and m.get("kind") not in ("verify", "lint")]
+    notes = [str(m.get("content") or "").strip() for m in old if m.get("role") == "assistant" and m.get("content")]
+    touched, reads, errors, paths = [], [], [], []
+    for m in old:
+        for c in m.get("tool_calls") or []:
+            name, args = calls.get(str(c.get("id") or ""), ("", {}))
+            p = str(args.get("path") or "")
+            if name in ("write_file", "edit_file") and p and p not in touched:
+                touched.append(p)
+            if name == "read_file" and p:
+                if p in reads:
+                    reads.remove(p)
+                reads.append(p)
+        if m.get("role") == "tool":
+            text = str(state["masked"].get(m.get("tool_call_id")) or m.get("content") or "")
+            hit = re.search(r"dipindah ke (\S+)", text) or re.search(r"Lengkapnya di (\S+)", text)
+            if hit and hit.group(1) not in paths:
+                paths.append(hit.group(1))
+            raw = str(m.get("content") or "")
+            if _is_error_output(raw):
+                errors.append("\n".join(raw.strip().splitlines()[:3])[:300])
+    verify = [str(m.get("content") or "").splitlines()[0] for m in old if m.get("kind") in ("verify", "lint")]
+    lines = [SUMMARY_MARK + "; detail lengkap tetap bisa dibaca ulang dari path di bawah]"]
+    if users:
+        lines.append("## Permintaan pengguna")
+        lines += [f"- {u[:500]}" for u in users[:-1][-5:]]
+        lines.append(f"- (terbaru) {users[-1][:2000]}")
+    if notes:
+        lines.append("## Catatan & keputusan asisten")
+        lines += [f"- {n[:300]}" for n in notes[-15:]]
+    if touched:
+        lines.append("## File yang diubah\n" + "\n".join(f"- {p}" for p in touched[-20:]))
+    if reads:
+        lines.append("## File terakhir dibaca\n" + "\n".join(f"- {p}" for p in reads[-8:]))
+    lines.append("## Status verifikasi\n- " + (verify[-1] if verify else "belum ada umpan balik verifikasi"))
+    if errors:
+        lines.append("## Error terakhir\n" + "\n".join(f"- {e}" for e in errors[-3:]))
+    if paths:
+        lines.append("## Output yang dipindah (bisa dibaca ulang)\n" + "\n".join(f"- {p}" for p in paths[-20:]))
+    return "\n".join(lines)

@@ -278,3 +278,116 @@ async def test_cache_v2_anthropic_breakpoints(home, tmp_path, monkeypatch):
     for (prev, _), (cur, _) in zip(seen, seen[1:]):
         assert tempest.prefix_violation(prev, cur) is None
 
+
+# ------------------------------------------------------ recoverable compaction -----
+
+def test_compact_settings_and_model_override():
+    st = tempest.settings({"agent": {"harness_mode": "tempest", "tempest_compact": True}})
+    assert st["mask_mode"] == "compact" and st["compact"] and st["mask"] is False
+    st = tempest.settings({"agent": {"harness_mode": "tempest", "tempest_compact": True,
+                                     "tempest_model_overrides": {"gemini-2.5-flash*": {"compact": False}}}})
+    assert tempest.for_model(st, "gemini-2.5-flash-thinking")["compact"] is False
+    assert tempest.for_model(st, "deepseek-chat")["compact"] is True
+    # Phase-1 behaviour is unchanged when compaction is off
+    assert tempest.settings({"agent": {"harness_mode": "tempest"}})["mask_mode"] == "turn"
+    assert tempest.settings({"agent": {"harness_mode": "tempest", "tempest_mask": False}})["mask_mode"] == "off"
+
+
+def _transcript(tmp_path):
+    """user, then 8 assistant turns: shell (big), read_file (big), a small failing test run, ..."""
+    (tmp_path / "big.py").write_text("x = 1\n" * 400)
+    msgs = [{"role": "user", "content": "audit repo"}]
+    for i in range(8):
+        name, args = [("shell", {"command": f"cat log{i}"}), ("read_file", {"path": str(tmp_path / f"big{i}.py")}),
+                      ("shell", {"command": "pytest"})][i % 3]
+        content = {"shell": "line\n" * 600, "read_file": "     1\tx = 1\n" * 300}[name]
+        if args.get("command") == "pytest":
+            content = "FAILED tests/test_a.py::test_x - assert 1 == 2\n1 failed in 0.01s"
+        msgs.append({"role": "assistant", "content": f"catatan {i}",
+                     "tool_calls": [{"id": f"c{i}", "type": "function",
+                                     "function": {"name": name, "arguments": json.dumps(args)}}]})
+        msgs.append({"role": "tool", "tool_call_id": f"c{i}", "name": name, "content": content})
+    return msgs
+
+
+def _measure(msgs):
+    base = [{"role": "system", "content": "sys"}] + [dict(m) for m in msgs]
+    return base, (lambda state: tempest.wire_tokens(tempest.apply_compaction(base, state)))
+
+
+def test_compact_stage1_masks_old_outputs_keeps_live_reads_and_errors(tmp_path):
+    msgs = _transcript(tmp_path)
+    base, measure = _measure(msgs)
+    st = {"compact_target": 0.9, "compact_keep_turns": 2}
+    state, rep = tempest.compact(msgs, None, st, measure(None), tmp_path / "obs", measure)
+    assert rep["stage"] == 1 and rep["after"] < rep["before"]
+    out = tempest.apply_compaction(base, state)
+    by_id = {m.get("tool_call_id"): m["content"] for m in out if m["role"] == "tool"}
+    assert by_id["c0"].startswith("[output alat lama dipindah ke ")
+    saved = by_id["c0"].split("dipindah ke ")[1].split(" ")[0]
+    assert open(saved).read() == "line\n" * 600  # recoverable: the full text is on disk
+    assert by_id["c2"].startswith("FAILED")  # small failure kept in
+    assert by_id["c7"] == msgs[-1]["content"]  # newest turns untouched
+    assert not by_id["c4"].startswith("[output")  # read of big4.py is live (never edited/re-read)
+    assert tempest.apply_compaction(base, state) == out  # deterministic: same prefix every call
+
+
+def test_compact_stage2_and_stage3(tmp_path):
+    msgs = _transcript(tmp_path)
+    base, measure = _measure(msgs)
+    full = measure(None)
+    state, rep = tempest.compact(msgs, None, {"compact_target": 0.25, "compact_keep_turns": 2}, full,
+                                 tmp_path / "obs", measure)
+    assert rep["stage"] >= 2
+    assert "isi file yang dibaca" in state["masked"]["c1"] and "big1.py" in state["masked"]["c1"]
+    state, rep = tempest.compact(msgs, None, {"compact_target": 0.01, "compact_keep_turns": 2}, full,
+                                 tmp_path / "obs", measure)
+    assert rep["stage"] == 3
+    out = tempest.apply_compaction(base, state)
+    assert out[1]["content"].startswith(tempest.SUMMARY_MARK)
+    summ = out[1]["content"]
+    assert "audit repo" in summ and "catatan 0" in summ and "big4.py" in summ and "1 failed" in summ
+    # the summary replaced whole turns: no orphan tool result right after it
+    assert out[2]["role"] == "assistant"
+
+
+async def test_agent_compacts_at_threshold_only(home, tmp_path, monkeypatch):
+    """Small window: compaction fires when the wire crosses 50%, not on every call, and the
+    prefix stays byte-identical between compactions."""
+    import neovarch.agent as agentmod
+    from neovarch import config as cfgmod
+    from neovarch.agent import Agent
+    from neovarch.llm import Completion, ToolCall
+    from neovarch.store import SessionStore
+    from neovarch.tools import ToolContext
+
+    cfg = cfgmod.load_config()
+    cfg["model"] = {"provider": "custom", "default": "m", "base_url": "http://127.0.0.1:9/v1",
+                    "context_length": 16000}
+    cfg["approvals"] = {"mode": "off"}
+    cfg.setdefault("agent", {}).update({"harness_mode": "tempest", "tempest_compact": True, "tempest_cache_v2": True,
+                                        "tempest_offload_tokens": 100000})
+    cfgmod.save_config(cfg)
+    monkeypatch.setenv("NEOVARCH_API_KEY", "x")
+    for i in range(14):
+        (tmp_path / f"f{i}.txt").write_text(f"file {i}\n" + "data " * 500)
+    seen, events = [], []
+
+    async def fake(*, messages, tools=None, **_kw):
+        seen.append(messages)
+        n = len(seen)
+        if n <= 14:
+            return Completion(text=f"catatan {n}", tool_calls=[ToolCall(
+                id=f"s{n}", name="shell", arguments=json.dumps({"command": f"cat f{n - 1}.txt"}))])
+        return Completion(text="selesai")
+    monkeypatch.setattr(agentmod, "stream_chat", fake)
+    store = SessionStore()
+    rec = store.create(cwd=str(tmp_path))
+    agent = Agent(rec, store, ToolContext(cwd=tmp_path, approve=None), lambda k, p: events.append((k, p)))
+    assert await agent.run_turn("baca semua file") == "selesai"
+    compactions = [p for k, p in events if k == "status.update" and p.get("kind") == "compact"]
+    assert 1 <= len(compactions) <= 4
+    assert all(tempest.wire_tokens(w) < 16000 for w in seen)
+    breaks = [i for i, (a, b) in enumerate(zip(seen, seen[1:])) if tempest.prefix_violation(a, b) is not None]
+    assert len(breaks) == len(compactions)  # the cache breaks once per compaction, never in between
+    assert rec["tempest_compact"]["masked"]

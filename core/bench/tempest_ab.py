@@ -63,6 +63,8 @@ ARMS: dict[str, tuple[dict, str]] = {
     "tempest-tinggi": ({"harness_mode": "tempest", "tempest_profile": "tinggi", **_OFF}, "bench-model"),
     "+cache2": ({**_NOMASK, "tempest_cache_v2": True}, "bench-model"),
     "+compact": ({**_NOMASK, "tempest_compact": True, "tempest_mask_mode": "compact"}, "bench-model"),
+    "+cache2+compact": ({**_NOMASK, "tempest_cache_v2": True, "tempest_compact": True,
+                         "tempest_mask_mode": "compact"}, "bench-model"),
     "+lint": ({**_NOMASK, "tempest_lint_gate": True}, "bench-model"),
     "+ckpt": ({**_NOMASK, "tempest_checkpoints": True}, "bench-model"),
     "+progress": ({**_NOMASK, "tempest_progress": True}, "bench-model"),

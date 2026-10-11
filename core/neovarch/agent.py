@@ -182,7 +182,7 @@ class Agent:
         self.ctx.approvals_mode = str(cfgmod.get_path(cfg, "approvals.mode", "ask") or "ask")
         max_turns = int(cfgmod.get_path(cfg, "agent.max_turns", 30) or 30)
         self.interrupted = False
-        st = tempest.settings(cfg)  # None = legacy harness, unchanged
+        st = tempest.for_model(tempest.settings(cfg), endpoint.get("model") or "")  # None = legacy, unchanged
         self._tempest = st
         self._changed: list[str] = []
         verify_attempts = 0
@@ -260,6 +260,7 @@ class Agent:
             if kantor:
                 persona += "\n\n" + kantor
             sys_prompt = system_prompt(cfg, self.ctx.cwd, user_text, persona, stable=bool(st))
+        window = int(cfgmod.get_path(cfg, "model.context_length", 128000) or 128000)
         breakpoints = tempest.wants_breakpoints(st, endpoint)
         lint_prefix = bool(st and st.get("cache_v2") and not st.get("mask"))
         self._turn_prompt = 0
@@ -286,6 +287,9 @@ class Agent:
                     error = "interrupted"
                     break
                 wire = [{"role": "system", "content": sys_prompt}] + wire_messages(messages, vision, self.ctx.cwd)
+                if st and st.get("compact"):
+                    wire, sys_prompt, system_split = self._compact(wire, messages, st, window, obs_dir,
+                                                                   sys_prompt, system_split)
                 if st:
                     wire = tempest.mask_wire(wire, st)
                 if breakpoints:
@@ -378,6 +382,38 @@ class Agent:
         })
         return final_text
 
+
+    def _compact(self, wire: list[dict], messages: list[dict], st: dict, window: int, obs_dir: Path,
+                 sys_prompt: str, system_split: int | None) -> tuple[list[dict], str, int | None]:
+        """Tempest: apply the stored compaction; compact again only past ``compact_at`` x window."""
+        state = self.rec.get("tempest_compact")
+        out = tempest.apply_compaction(wire, state)
+        tools = self._tools()
+        if tempest.wire_tokens(out, tools) <= float(st.get("compact_at") or 0.5) * window:
+            return out, sys_prompt, system_split
+        new_state, rep = tempest.compact(messages, state, st, window, obs_dir,
+                                         lambda cand: tempest.wire_tokens(tempest.apply_compaction(wire, cand), tools))
+        old_masked = len((state or {}).get("masked") or {})
+        if rep["masked"] == old_masked and new_state["summary_upto"] == int((state or {}).get("summary_upto") or 0):
+            return out, sys_prompt, system_split  # nothing left to compact; do not break the cache for nothing
+        self.rec["tempest_compact"] = new_state
+        prefix = self.rec.get("tempest_prefix")
+        if st.get("cache_v2") and prefix and prefix.get("current"):
+            # the cache breaks here anyway: fold appended config changes into a fresh frozen prompt
+            prefix["frozen"] = prefix["current"]
+            sys_prompt = join_sections(prefix["frozen"])
+            static = [x for x in prefix["frozen"] if x[0] in STATIC_SECTIONS]
+            system_split = (len(join_sections(static)) + 2
+                            if static and len(static) < len(prefix["frozen"]) and prefix["frozen"][:len(static)] == static
+                            else None)
+            wire = [{"role": "system", "content": sys_prompt}] + wire[1:]
+        self.store.save(self.rec)
+        self._prev_wire = None  # a new cache epoch: the prefix lint and breakpoints restart
+        self._prev_last = None
+        _log.info("tempest compaction session=%s %s", self.rec.get("id"), rep)
+        self.emit("status.update", {"kind": "compact", "text": f"Konteks dipadatkan (tahap {rep['stage']}): "
+                                                               f"~{rep['before']} → ~{rep['after']} token"})
+        return tempest.apply_compaction(wire, new_state), sys_prompt, system_split
 
     async def _checked_write(self, name: str, args: dict) -> str:
         """Tempest: write/edit, then syntax-check .py/.json/.js/.ts; a broken file is restored."""
