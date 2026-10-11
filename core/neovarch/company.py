@@ -105,6 +105,10 @@ CREATE TABLE IF NOT EXISTS activity (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, actor_type TEXT NOT NULL, actor_id INTEGER,
   actor_name TEXT NOT NULL DEFAULT '', action TEXT NOT NULL, entity TEXT NOT NULL, entity_id INTEGER,
   summary TEXT NOT NULL, data TEXT NOT NULL DEFAULT '{}');
+CREATE TABLE IF NOT EXISTS units (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'agency',
+  parent_id INTEGER REFERENCES units(id) ON DELETE SET NULL, description TEXT NOT NULL DEFAULT '',
+  created_at REAL NOT NULL, updated_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_tickets_assignee ON tickets(assignee_id, status);
 CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity(ts);
 CREATE INDEX IF NOT EXISTS idx_cost_month ON cost_events(month);
@@ -152,6 +156,11 @@ class CompanyStore:
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(agents)").fetchall()}
         if "provider" not in cols:
             self.db.execute("ALTER TABLE agents ADD COLUMN provider TEXT NOT NULL DEFAULT ''")
+        # Organisasi → Agency → Orang: an employee sits in a unit; persona/skills/tools are theirs.
+        for col, ddl in (("unit_id", "INTEGER"), ("persona", "TEXT NOT NULL DEFAULT ''"),
+                         ("skills", "TEXT NOT NULL DEFAULT '[]'"), ("tools", "TEXT NOT NULL DEFAULT '[]'")):
+            if col not in cols:
+                self.db.execute(f"ALTER TABLE agents ADD COLUMN {col} {ddl}")
 
     # ------------------------------------------------------------ plumbing --
     def close(self) -> None:
@@ -217,6 +226,15 @@ class CompanyStore:
         if not c:
             raise CompanyError("invalid", "Perusahaan belum dibuat")
         return c
+
+    def ensure_company(self, name: str = "Kantor Neovarch") -> dict:
+        """The Kantor itself: created on the first command that needs it (no demo staff)."""
+        c = self.company()
+        if c:
+            return c
+        c = self.setup(name)
+        # The user commands every hire through the main agent, so no extra approval step.
+        return self.update_company({"require_hire_approval": False}, actor="system")
 
     def setup(self, name: str, mission: str = "", **settings) -> dict:
         name = (name or "").strip()
@@ -352,6 +370,87 @@ class CompanyStore:
         self.log("project.deleted", "project", pid, f"menghapus proyek “{p['name']}”")
         self.changed("project", pid, "deleted")
 
+    # --------------------------------------------------------------- units --
+    UNIT_KINDS = ("organisasi", "agency")
+
+    def unit(self, uid) -> dict | None:
+        try:
+            return self.q1("SELECT * FROM units WHERE id=?", (int(uid),)) if uid not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            return None
+
+    def require_unit(self, uid) -> dict:
+        u = self.unit(uid)
+        if not u:
+            raise CompanyError("not_found", "Organisasi/agency tidak ditemukan")
+        return u
+
+    def unit_by_name(self, name: str) -> dict | None:
+        return self.q1("SELECT * FROM units WHERE lower(name)=lower(?) ORDER BY id LIMIT 1", ((name or "").strip(),))
+
+    def units(self) -> list[dict]:
+        return self.q("SELECT * FROM units ORDER BY COALESCE(parent_id,0), id")
+
+    def unit_subtree(self, uid: int) -> set[int]:
+        out: set[int] = set()
+        stack = [uid]
+        while stack:
+            cur = stack.pop()
+            for r in self.q("SELECT id FROM units WHERE parent_id=?", (cur,)):
+                if r["id"] not in out:
+                    out.add(r["id"])
+                    stack.append(r["id"])
+        return out
+
+    def save_unit(self, body: dict, actor: str = "user") -> dict:
+        self.require_company()
+        now = self.clock()
+        uid = body.get("id")
+        kind = str(body.get("kind") or "").strip().lower() or None
+        if kind is not None and kind not in self.UNIT_KINDS:
+            raise CompanyError("invalid", "jenis harus organisasi atau agency")
+        parent = body.get("parent_id")
+        parent = int(parent) if parent not in (None, "", 0, "0") else None
+        if parent is not None:
+            self.require_unit(parent)
+            if uid and (parent == int(uid) or parent in self.unit_subtree(int(uid))):
+                raise CompanyError("invalid", "Struktur organisasi tidak boleh melingkar")
+        if uid:
+            u = self.require_unit(uid)
+            sets, args = self._fields(body, {"name": str, "description": str})
+            if kind:
+                sets.append("kind=?")
+                args.append(kind)
+            if "parent_id" in body:
+                sets.append("parent_id=?")
+                args.append(parent)
+            if "name" in body and not str(body.get("name") or "").strip():
+                raise CompanyError("invalid", "Nama wajib diisi")
+            if sets:
+                self.x(f"UPDATE units SET {', '.join(sets)}, updated_at=? WHERE id=?", [*args, now, u["id"]])
+            self.log("unit.updated", "unit", u["id"], f"memperbarui {u['kind']} {u['name']}", actor=actor)
+            self.changed("unit", u["id"], "updated")
+            return self.require_unit(u["id"])
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise CompanyError("invalid", "Nama wajib diisi")
+        kind = kind or ("agency" if parent else "organisasi")
+        uid = self.x("INSERT INTO units (name, kind, parent_id, description, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+                     (name, kind, parent, str(body.get("description") or ""), now, now)).lastrowid
+        self.log("unit.created", "unit", uid, f"membuat {kind} {name}", actor=actor)
+        self.changed("unit", uid, "created")
+        return self.require_unit(uid)
+
+    def delete_unit(self, uid, actor: str = "user") -> None:
+        """Child units and the people inside move up to the parent (nobody is lost)."""
+        u = self.require_unit(uid)
+        with self.tx():
+            self.db.execute("UPDATE units SET parent_id=? WHERE parent_id=?", (u["parent_id"], u["id"]))
+            self.db.execute("UPDATE agents SET unit_id=? WHERE unit_id=?", (u["parent_id"], u["id"]))
+            self.db.execute("DELETE FROM units WHERE id=?", (u["id"],))
+        self.log("unit.deleted", "unit", u["id"], f"menghapus {u['kind']} {u['name']}", actor=actor)
+        self.changed("unit", u["id"], "deleted")
+
     # -------------------------------------------------------------- agents --
     def agent(self, aid: int | None) -> dict | None:
         return self.q1("SELECT * FROM agents WHERE id=?", (aid,)) if aid else None
@@ -383,7 +482,29 @@ class CompanyStore:
         return out
 
     AGENT_FIELDS = {"name": str, "title": str, "role": str, "job_description": str, "model": str, "provider": str,
-                    "heartbeat_s": int, "budget_monthly_cents": int, "budget_monthly_tokens": int}
+                    "heartbeat_s": int, "budget_monthly_cents": int, "budget_monthly_tokens": int, "persona": str}
+
+    @staticmethod
+    def _name_list(v) -> str:
+        """skills/tools arrive as a list or a comma string; stored as a JSON list of names."""
+        if isinstance(v, str):
+            v = [x for x in (p.strip() for p in v.split(",")) if x]
+        if not isinstance(v, (list, tuple)):
+            v = []
+        out: list[str] = []
+        for x in v:
+            x = str(x).strip()
+            if x and x not in out:
+                out.append(x[:80])
+        return json.dumps(out[:50], ensure_ascii=False)
+
+    @staticmethod
+    def parse_names(raw) -> list[str]:
+        try:
+            v = json.loads(raw or "[]")
+        except (TypeError, ValueError):
+            return []
+        return [str(x) for x in v] if isinstance(v, list) else []
 
     @staticmethod
     def _non_negative(body: dict, keys: tuple[str, ...]) -> None:
@@ -418,6 +539,15 @@ class CompanyStore:
             if "reports_to" in body:
                 sets.append("reports_to=?")
                 args.append(reports_to)
+            if "unit_id" in body:
+                unit = body.get("unit_id")
+                unit = self.require_unit(unit)["id"] if unit not in (None, "", 0, "0") else None
+                sets.append("unit_id=?")
+                args.append(unit)
+            for k in ("skills", "tools"):
+                if k in body:
+                    sets.append(f"{k}=?")
+                    args.append(self._name_list(body[k]))
             if sets:
                 self.x(f"UPDATE agents SET {', '.join(sets)}, updated_at=? WHERE id=?", [*args, now, a["id"]])
             self.log("agent.updated", "agent", a["id"], f"memperbarui profil {a['name']}", actor=actor, actor_id=actor_id)
@@ -430,13 +560,19 @@ class CompanyStore:
             raise CompanyError("conflict", f"Sudah ada pegawai bernama {name}")
         needs_ok = bool(c["require_hire_approval"]) and not body.get("skip_approval")
         status = "pending_approval" if needs_ok else "idle"
+        unit = body.get("unit_id")
+        unit = self.require_unit(unit)["id"] if unit not in (None, "", 0, "0") else None
+        # Empty model = the PC's default model (MiMo V2.6 via 9Router on a fresh install,
+        # router9.DEFAULT_MODEL), so a new employee follows whatever the main agent uses.
+        model, provider = str(body.get("model") or ""), str(body.get("provider") or "")
         aid = self.x("INSERT INTO agents (name, title, role, reports_to, job_description, model, provider, status, heartbeat_s, "
-                     "budget_monthly_cents, budget_monthly_tokens, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     "budget_monthly_cents, budget_monthly_tokens, unit_id, persona, skills, tools, created_at, updated_at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                      (name, str(body.get("title") or ""), str(body.get("role") or "pegawai"), reports_to,
-                      str(body.get("job_description") or ""), str(body.get("model") or ""),
-                      str(body.get("provider") or ""), status,
+                      str(body.get("job_description") or ""), model, provider, status,
                       int(body.get("heartbeat_s") or 0), int(body.get("budget_monthly_cents") or 0),
-                      int(body.get("budget_monthly_tokens") or 0), now, now)).lastrowid
+                      int(body.get("budget_monthly_tokens") or 0), unit, str(body.get("persona") or ""),
+                      self._name_list(body.get("skills")), self._name_list(body.get("tools")), now, now)).lastrowid
         if needs_ok:
             self.create_approval("hire", agent_id=aid, title=f"Rekrut {name} sebagai {body.get('title') or 'pegawai'}",
                                  payload={"name": name, "title": body.get("title") or ""},
@@ -464,6 +600,19 @@ class CompanyStore:
                          + (f" ({reason})" if reason and status == "paused" else ""), actor=actor)
         self.changed("agent", a["id"], status)
         return self.require_agent(a["id"])
+
+    def delete_agent(self, aid, actor: str = "user") -> dict:
+        """Remove an employee for good: open tickets lose their assignee, reports move up."""
+        a = self.require_agent(aid)
+        with self.tx():
+            self.db.execute("UPDATE tickets SET assignee_id=NULL, checkout_agent_id=NULL, checkout_run_id=NULL, "
+                            "checkout_at=NULL WHERE assignee_id=? OR checkout_agent_id=?", (a["id"], a["id"]))
+            self.db.execute("UPDATE agents SET reports_to=? WHERE reports_to=?", (a["reports_to"], a["id"]))
+            self.db.execute("UPDATE routines SET agent_id=NULL WHERE agent_id=?", (a["id"],))
+            self.db.execute("DELETE FROM agents WHERE id=?", (a["id"],))
+        self.log("agent.deleted", "agent", a["id"], f"menghapus {a['name']} dari Kantor", actor=actor)
+        self.changed("agent", a["id"], "deleted")
+        return a
 
     # ------------------------------------------------------------- tickets --
     def ticket(self, tid) -> dict | None:
@@ -1060,6 +1209,9 @@ class CompanyStore:
             counts = {r["status"]: r["n"] for r in self.q(
                 "SELECT status, COUNT(*) AS n FROM tickets WHERE assignee_id=? GROUP BY status", (a["id"],))}
             mgr = self.agent(a["reports_to"])
+            unit = self.unit(a.get("unit_id"))
+            a = {**a, "skills": self.parse_names(a.get("skills")), "tools": self.parse_names(a.get("tools")),
+                 "persona": a.get("persona") or "", "unit_name": unit["name"] if unit else None}
             out.append({**a, "reports_to_name": mgr["name"] if mgr else None, "current_ticket": cur,
                         "ticket_counts": counts, "budget": self.budget_state(agent=a),
                         "pending_approvals": self.q1("SELECT COUNT(*) AS n FROM approvals WHERE agent_id=? AND "
@@ -1076,6 +1228,7 @@ class CompanyStore:
         return {
             "exists": True, "company": c,
             "goals": self.q("SELECT * FROM goals ORDER BY COALESCE(parent_id,0), id"),
+            "units": self.units(),
             "projects": self.q("SELECT * FROM projects ORDER BY id"),
             "agents": self.agents_public(),
             "ticket_counts": counts,

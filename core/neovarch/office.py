@@ -2,8 +2,10 @@
 
 Nothing here is simulated. Every pegawai is derived from something real:
 
-* a conversation the gateway has open (``LiveSession``) or ran recently;
+* an employee the user hired through the main agent (``company.py``);
 * an assignee of an open Kanban task.
+
+Normal chats are answered by the main Neovarch Agent and are not desks.
 
 The status of a pegawai is ``working`` while its turn runs, ``waiting-approval``
 while a command waits for the user, otherwise ``idle``. An activity feed records
@@ -32,7 +34,7 @@ NAMES = ["Ayu", "Bima", "Citra", "Dimas", "Eka", "Fajar", "Gita", "Hana", "Indra
 ROLES = {"desktop": "Agen utama · desktop", "cli": "Agen terminal", "tui": "Agen terminal",
          "phone": "Agen remote · HP", "remote": "Agen remote · HP", "mobile": "Agen remote · HP"}
 RECENT_S = 24 * 3600
-MAX_DESKS = 12
+MAX_DESKS = 100  # company employees are unlimited; the room shows the first 100
 FEED_MAX = 200
 SIGNIFICANT = {"tool.start", "tool.complete", "message.complete", "approval.request", "approval.cancelled",
                "approval.responded", "session.status", "session.title", "sessions.changed",
@@ -235,26 +237,9 @@ class Office:
         gw = self.gw
         now = time.time()
         desks: list[dict] = []
-        seen: set[str] = set()
-        try:
-            from neovarch import config as cfgmod
-            cfg = cfgmod.load_config()
-        except Exception:
-            cfg = None
-        for sid, live in list(gw.live.items()):
-            desks.append(self._desk_for_session(live.rec, live, cfg))
-            seen.add(sid)
-        try:
-            recent = gw.store.list(limit=MAX_DESKS)
-        except Exception:
-            recent = []
-        for summary in recent:
-            if summary["id"] in seen or now - float(summary.get("last_active") or 0) > RECENT_S:
-                continue
-            rec = gw.store.load(summary["id"])
-            if rec:
-                desks.append(self._desk_for_session(rec, None, cfg))
-                seen.add(rec["id"])
+        # Chats are not employees: the Kantor starts empty and only lists the people
+        # the user hired (company agents) plus Kanban assignees. `_desk_for_session`
+        # stays for callers that describe one chat.
         try:
             tasks = gw.kanban.board().get("tasks", [])
         except Exception:

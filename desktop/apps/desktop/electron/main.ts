@@ -1307,6 +1307,10 @@ if (process.env.HERMES_DESKTOP_TMPDIR) {
   delete process.env.HERMES_DESKTOP_TMPDIR
 }
 
+declare const __NEOVARCH_GITHUB_CLIENT_ID__: string | undefined
+const BAKED_GITHUB_CLIENT_ID: string =
+  typeof __NEOVARCH_GITHUB_CLIENT_ID__ === 'string' ? __NEOVARCH_GITHUB_CLIENT_ID__ : ''
+
 const HERMES_HOME: string = resolveDesktopHermesHome({
   home: app.getPath('home'),
   directoryExists,
@@ -1316,6 +1320,11 @@ const HERMES_HOME: string = resolveDesktopHermesHome({
 // pinned it already; repeat so a user-data override resolves identically).
 process.env.HERMES_HOME = HERMES_HOME
 process.env.NEOVARCH_HOME = HERMES_HOME
+// Build-time default GitHub OAuth client ID (scripts/bundle-electron-main.mjs)
+// handed to the core; the manual field in Profil & Teman still overrides it.
+if (!process.env.NEOVARCH_GITHUB_CLIENT_ID_DEFAULT && BAKED_GITHUB_CLIENT_ID) {
+  process.env.NEOVARCH_GITHUB_CLIENT_ID_DEFAULT = BAKED_GITHUB_CLIENT_ID
+}
 
 // #77311: `desktop.electron_flags` and the renderer heap ceiling
 // (`desktop.renderer_max_old_space_mb`) used to reach Chromium only through

@@ -8,7 +8,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createRemoteController, isOwnRemoteGatewayCommand, readRemotePid } from './neovarch-remote'
+import { createRemoteController, isOwnRemoteGatewayCommand, ownGatewayPids, readRemotePid } from './neovarch-remote'
 
 const dirs: string[] = []
 
@@ -87,6 +87,58 @@ describe('stale LAN gateway recovery', () => {
     expect(await remote.reapStaleGateway()).toBe(4711)
     expect(signals).toEqual(['4711:SIGTERM'])
     expect(readRemotePid(pidFilePath)).toBeNull()
+  })
+
+  it('stops an orphan gateway an older desktop left on the port without a PID file', async () => {
+    const dir = tempDir()
+    const settingsPath = writeSettings(dir, 9319)
+    let busy = true
+    const signals: string[] = []
+
+    const remote = createRemoteController({
+      settingsPath,
+      pidFilePath: path.join(dir, 'neovarch-remote.pid'),
+      currentProfile: () => null,
+      log: () => {},
+      resolveSpawn: async () => {
+        throw new Error('not spawned')
+      },
+      portInUse: async () => busy,
+      listProcesses: async () => [
+        { command: '/usr/bin/firefox', pid: 10 },
+        { command: '/home/u/.neovarch/neovarch-agent/venv/bin/neovarch serve --host 0.0.0.0 --port 9319 --isolated', pid: 4242 },
+        { command: 'python -m neovarch serve --port 9319', pid: 11 }
+      ],
+      killProcessGroup: (pid, signal) => {
+        signals.push(`${pid}:${signal}`)
+        busy = false
+      }
+    })
+
+    expect(await remote.reapStaleGateway()).toBe(4242)
+    expect(signals).toEqual(['4242:SIGTERM'])
+  })
+
+  it('leaves a port alone when what holds it is not our gateway', async () => {
+    const dir = tempDir()
+    const signals: string[] = []
+
+    const remote = createRemoteController({
+      settingsPath: writeSettings(dir, 9319),
+      pidFilePath: path.join(dir, 'neovarch-remote.pid'),
+      currentProfile: () => null,
+      log: () => {},
+      resolveSpawn: async () => {
+        throw new Error('not spawned')
+      },
+      portInUse: async () => true,
+      listProcesses: async () => [{ command: 'node server.js --port 9319', pid: 77 }],
+      killProcessGroup: (pid, signal) => signals.push(`${pid}:${signal}`)
+    })
+
+    expect(await remote.reapStaleGateway()).toBeNull()
+    expect(signals).toEqual([])
+    expect(ownGatewayPids([{ command: 'x serve --host 0.0.0.0 --port 9319 --isolated', pid: 5 }], 9319, [5])).toEqual([])
   })
 
   it('never signals a reused PID that is not our gateway', async () => {

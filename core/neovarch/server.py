@@ -55,6 +55,9 @@ from neovarch import router9
 from neovarch.tools import ToolContext, list_skills, tool_schemas
 
 APPROVAL_TIMEOUT_S = 300
+STT_UNAVAILABLE = ("Dikte suara di PC belum tersedia di Neovarch core. Ketik pesan, atau pakai mik di aplikasi HP. "
+                   "/ Voice typing on the PC is not available in the Neovarch core yet. Type your message, "
+                   "or use the mic in the phone app.")
 COMPANY_RPC_CODES = {"invalid": -32602, "not_found": -32004, "conflict": -32009}
 COMPANY_HTTP = {"invalid": 400, "not_found": 404, "conflict": 409}
 
@@ -154,8 +157,10 @@ class LiveSession:
         self.task: asyncio.Task | None = None
         self.status = "idle"
         self.approvals: dict[str, dict] = {}
+        company = getattr(gw, "company", None)
         self.ctx = ToolContext(cwd=Path(rec.get("cwd") or default_cwd()), approve=self.approve,
-                               office=getattr(gw, "office_status", None))
+                               office=getattr(gw, "office_status", None),
+                               kantor=getattr(company, "main_tool", None))
         self.agent = Agent(rec, gw.store, self.ctx, self.emit)
         self.last_text = ""
         # Desktop composers stage images with image.attach* before prompt.submit;
@@ -201,6 +206,9 @@ class LiveSession:
             self.gw.broadcast_event("session.status", self.id, {"status": "running"})
             from neovarch.logs import log
             log.info("turn start session=%s model=%s", self.id, self.info().get("model"))
+            from neovarch import sync as syncmod
+            syncmod.mark_turn(self.id, title=str(self.rec.get("title") or ""), model=str(self.rec.get("model") or ""),
+                              preview=str(text or ""))
             try:
                 await self.gw.ensure_router(self.id)
                 await self.agent.run_turn(text, attachments or None)
@@ -212,8 +220,12 @@ class LiveSession:
                 self.emit("message.complete", {"text": "", "error": str(exc)})
             finally:
                 self.status = "idle"
+                syncmod.clear_turn(self.id)
                 self.gw.broadcast_event("session.status", self.id, {"status": "idle"})
                 self.gw.broadcast_event("sessions.changed", None, {})
+                watch = getattr(self.gw, "session_watch", None)
+                if watch is not None:
+                    watch.note_own_write()
                 queued = self.rec.get("queued") or []
                 if queued:  # a message steered in while the turn ran
                     self.submit(queued.pop(0))
@@ -284,6 +296,11 @@ class Gateway:
         self.router = router9.Router9(on_status=lambda st: self.broadcast_event("router.status", None, st),
                                       on_models=lambda _ids: self._models_stale())
         self.company = CompanyRuntime(self)
+        from neovarch import sync as syncmod
+        # The phone's LAN core and this one share ~/.neovarch/sessions: announce the other's writes too.
+        self.session_watch = syncmod.SessionWatcher(
+            self.store.root, lambda: self.broadcast_event("sessions.changed", None, {"external": True}),
+            interval=float(os.environ.get("NEOVARCH_SESSION_WATCH_S") or 2))
         self.cron = cronmod.CronStore()
         self.scheduler = cronmod.Scheduler(
             self.cron, self._cron_run, lambda: self.broadcast_event("cron.changed", None, {}),
@@ -361,6 +378,22 @@ class Gateway:
             self.live[rec["id"]] = live
             self.company.bind_session(live)
         return live
+
+    def active_sessions(self) -> list[dict]:
+        """Chats with a running turn, in this core and in the other core on this PC (phone LAN core)."""
+        from neovarch import sync as syncmod
+        out = [{**summarize(l.rec), **l.info(), "id": l.id} for l in self.live.values() if l.status == "running"]
+        seen = {row["id"] for row in out}
+        for t in syncmod.foreign_turns():
+            sid = str(t.get("session_id") or "")
+            if not sid or sid in seen:
+                continue
+            rec = self.store.load(sid)
+            row = summarize(rec) if rec else {"id": sid, "title": t.get("title") or None, "preview": t.get("preview") or ""}
+            out.append({**row, "id": sid, "status": "running", "model": t.get("model") or row.get("model") or "",
+                        "elsewhere": True})
+            seen.add(sid)
+        return out
 
     def office_status(self) -> dict:
         """Kantor snapshot plus the active model (the agent's office_status tool)."""
@@ -569,8 +602,7 @@ class Gateway:
         if method == "session.list":
             return {"sessions": self.store.list(limit=int(p.get("limit") or 50), offset=int(p.get("offset") or 0))}
         if method == "session.active_list":
-            return {"sessions": [{**summarize(l.rec), **l.info(), "id": l.id} for l in self.live.values()
-                                 if l.status == "running"]}
+            return {"sessions": self.active_sessions()}
         if method == "session.create":
             cwd = p.get("cwd") or str(default_cwd())
             rec = self.store.create(source=str(p.get("source") or "desktop"), cwd=cwd,
@@ -1001,12 +1033,14 @@ def build_app(gw: Gateway) -> web.Application:
         gw.scheduler.start()
         gw.social.start()
         gw.company.start()
+        gw.session_watch.start()
         if os.environ.get("NEOVARCH_9ROUTER_SUPERVISE", "1") not in ("0", "false", "off"):
             gw.router.start_supervisor()
 
     async def _stop_cron(_app):
         await gw.scheduler.stop()
         await gw.company.stop()
+        await gw.session_watch.stop()
         await gw.social.stop()
         await gw.router.close()
     app.on_startup.append(_start_cron)
@@ -1121,8 +1155,7 @@ def build_app(gw: Gateway) -> web.Application:
             "ok": True, "product": PRODUCT, "name": "neovarch", "version": __version__,
             "release_date": "", "hermes_home": str(neovarch_home()), "home": str(neovarch_home()),
             "config_path": str(cfgmod.config_path()), "env_path": str(cfgmod.env_path()),
-            "gateway_running": True, "gateway_state": "running", "active_sessions": sum(
-                1 for l in gw.live.values() if l.status == "running"),
+            "gateway_running": True, "gateway_state": "running", "active_sessions": len(gw.active_sessions()),
             "hostname": socket.gethostname(), "platform": platform.system().lower(),
             "uptime_s": round(time.time() - gw.started), "model": info["model"], "provider": info["provider"],
             "configured": info["configured"], "auth_mode": "token", "port": gw.port,
@@ -1136,7 +1169,10 @@ def build_app(gw: Gateway) -> web.Application:
         await conn.send({"jsonrpc": "2.0", "method": "event", "params": {
             "type": "gateway.ready", "session_id": None,
             "payload": {"product": "neovarch", "version": __version__, "skin": None,
-                        "boot_id": gw.bus.boot_id, "seq": gw.bus.seq}}})
+                        "boot_id": gw.bus.boot_id, "seq": gw.bus.seq,
+                        # The desktop refreshes its chat list on sessions.changed only when this
+                        # is set; without it chats made on the phone never appeared (1.4.5).
+                        "change_events": True}}})
         # ?since=<seq>&boot_id=<id>: replay global events missed while offline
         # (session events come back through events.replay / session.resume).
         if "since" in request.query:
@@ -1643,6 +1679,15 @@ def build_app(gw: Gateway) -> web.Application:
         from neovarch import obsidian
         return web.json_response(obsidian.status())
 
+    async def obsidian_configure(request):
+        from neovarch import obsidian
+        body = await _json(request)
+        try:
+            res = obsidian.configure(str(body.get("path") or ""), body.get("enabled", True) is not False)
+        except obsidian.VaultError as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        return web.json_response({"ok": True, **res})
+
     async def appearance_get(_):
         return web.json_response(appearance_of(cfgmod.load_config()))
 
@@ -1865,6 +1910,8 @@ def build_app(gw: Gateway) -> web.Application:
     r.add_get("/api/events/replay", events_replay)
     r.add_get("/api/network/addresses", network_addresses)
     r.add_get("/api/memory/obsidian", obsidian_status)
+    r.add_post("/api/memory/obsidian", obsidian_configure)
+    r.add_put("/api/memory/obsidian", obsidian_configure)
 
     # ---- Obsidian vault viewer (desktop page, phone read-only) ---------------
     def _vault_or_error():
@@ -2075,6 +2122,18 @@ def build_app(gw: Gateway) -> web.Application:
     async def voice_live_status(_):
         return web.json_response({"ok": False, "available": False, "reason": "Not available in the Neovarch core."})
 
+    async def audio_transcribe(_request):
+        # No speech engine in the core yet. Answer with a clear, typed refusal
+        # (the desktop turns `code` into its localized "not available" notice)
+        # instead of the quiet fallback, whose missing `transcript` made the
+        # desktop composer crash on `undefined.trim()` (1.4.5).
+        return web.json_response({"ok": False, "available": False, "transcript": "", "code": "stt_unavailable",
+                                  "error": STT_UNAVAILABLE})
+
+    async def audio_stt_lease(request):
+        body = await _json(request)
+        return web.json_response({"ok": True, "active": bool(body.get("active")), "available": False})
+
     async def terminal_backends(_):
         return web.json_response({"active": "local", "backends": [{
             "name": "local", "label": "Local", "description": "Commands run on this computer.",
@@ -2088,6 +2147,8 @@ def build_app(gw: Gateway) -> web.Application:
     r.add_get("/api/local-models/status", local_models_status)
     r.add_get("/api/local-models/jobs", local_models_jobs)
     r.add_get("/api/audio/voice-live/status", voice_live_status)
+    r.add_post("/api/audio/transcribe", audio_transcribe)
+    r.add_post("/api/audio/stt-lease", audio_stt_lease)
     r.add_get("/api/tools/terminal/backends", terminal_backends)
     r.add_post("/api/sessions/owner-backfill", owner_backfill)
     r.add_get("/api/fs/list", fs_list)
@@ -2142,7 +2203,7 @@ def config_schema_payload() -> dict:
         prov_opts += [f"custom:{e['id']}" for e in providers.endpoints_response(cfgmod.load_config())["endpoints"]]
     except Exception:
         pass
-    return {"category_order": ["model", "chat", "safety", "advanced"], "fields": {
+    return {"category_order": ["model", "chat", "workspace", "safety", "advanced"], "fields": {
         "model.default": {"category": "model", "type": "string", "description": "ID model yang dipakai obrolan baru."},
         "model.provider": {"category": "model", "type": "select", "options": prov_opts,
                            "description": "Penyedia model (preset, custom, atau custom:<endpoint>)."},
@@ -2154,6 +2215,18 @@ def config_schema_payload() -> dict:
                            "description": "ask = tanya sebelum perintah berbahaya; off = jalankan tanpa bertanya."},
         "agent.max_turns": {"category": "advanced", "type": "number", "description": "Batas panggilan model per giliran."},
         "agent.system_prompt": {"category": "chat", "type": "text", "description": "Instruksi tambahan setelah SOUL.md."},
+        # Settings › Obrolan › Perilaku
+        "timezone": {"category": "chat", "type": "string", "clearable": True,
+                     "description": "Zona waktu agen (mis. Asia/Jakarta). Kosong = jam PC."},
+        "display.show_reasoning": {"category": "chat", "type": "boolean",
+                                   "description": "Tampilkan proses berpikir model di obrolan."},
+        # Settings › Ruang kerja › Proyek / Shell / File
+        "terminal.cwd": {"category": "workspace", "type": "string", "clearable": True,
+                         "description": "Folder kerja obrolan baru. Kosong = folder home."},
+        "terminal.timeout": {"category": "workspace", "type": "number",
+                             "description": "Batas waktu bawaan perintah shell (detik, maks 600)."},
+        "file_read_max_chars": {"category": "workspace", "type": "number",
+                                "description": "Batas karakter saat agen membaca satu file."},
     }}
 
 

@@ -25,7 +25,7 @@ const CONFIG_SUBPAGE_DEFINITIONS: Record<string, ConfigSubpageDefinition[]> = {
     {
       id: 'behavior',
       labelKey: 'chatBehavior',
-      fields: ['display.personality', 'timezone', 'display.show_reasoning']
+      fields: ['display.personality', 'timezone', 'display.show_reasoning', 'agent.system_prompt']
     },
     { id: 'attachments', labelKey: 'chatAttachments', fields: ['agent.image_input_mode'] }
   ],
@@ -39,7 +39,7 @@ const CONFIG_SUBPAGE_DEFINITIONS: Record<string, ConfigSubpageDefinition[]> = {
     {
       id: 'shell',
       labelKey: 'workspaceShell',
-      fields: ['terminal.persistent_shell', 'terminal.env_passthrough']
+      fields: ['terminal.timeout', 'terminal.persistent_shell', 'terminal.env_passthrough']
     },
     {
       id: 'files',

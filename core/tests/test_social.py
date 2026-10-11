@@ -14,6 +14,7 @@ from neovarch import social as socmod
 from neovarch.server import Gateway, build_app
 
 H = {"Authorization": "Bearer tok"}
+BUILTIN_CLIENT_ID = socmod.DEFAULT_GITHUB_CLIENT_ID  # captured before the gh fixture clears it
 
 
 class FakeGitHub:
@@ -180,6 +181,10 @@ async def gh(home, monkeypatch):
     monkeypatch.setenv("NEOVARCH_SOCIAL_FAST_POLL", "1")
     monkeypatch.setenv("NEOVARCH_SESSION_TOKEN", "tok")
     monkeypatch.delenv("NEOVARCH_GITHUB_CLIENT_ID", raising=False)
+    monkeypatch.delenv("NEOVARCH_GITHUB_CLIENT_ID_DEFAULT", raising=False)
+    # Most tests exercise the "no client ID yet" path; the built-in default is
+    # covered by test_client_id_build_default_and_override.
+    monkeypatch.setattr(socmod, "DEFAULT_GITHUB_CLIENT_ID", "")
     yield fake
     await server.close()
 
@@ -416,3 +421,67 @@ def test_heatmap_shape():
     assert hm["start"] == "2025-10-10" and hm["end"] == "2026-10-09"
     assert hm["counts"][0] == 7 and hm["counts"][-1] == 2 and hm["streak"] == 2 and hm["github"] is None
     assert hm["total"] == 10 and hm["max"] == 7
+
+
+async def test_client_id_build_default_and_override(gh, monkeypatch):
+    """The built-in Neovarch Agent client ID works with no setup; a build-time
+    default (passed by the desktop) beats it; the manual "Pakai Client ID sendiri
+    (lanjutan)" field overrides both and clearing it falls back."""
+    assert BUILTIN_CLIENT_ID == "Ov23li1lB513P2W10ZM7"
+    monkeypatch.setattr(socmod, "DEFAULT_GITHUB_CLIENT_ID", BUILTIN_CLIENT_ID)  # the gh fixture clears it
+    assert socmod.resolve_client_id() == ("Ov23li1lB513P2W10ZM7", "default")
+    monkeypatch.setenv("NEOVARCH_GITHUB_CLIENT_ID_DEFAULT", "Iv1.testclientid")
+    assert socmod.resolve_client_id() == ("Iv1.testclientid", "default")
+    gw, c = await _client()
+    try:
+        st = await (await c.get("/api/social/status", headers=H)).json()
+        assert st["client_id_configured"] is True and st["client_id_source"] == "default"
+        assert st["settings"]["github_client_id"] == ""  # the default is not echoed into the override field
+        r = await (await c.post("/api/social/login", headers=H)).json()
+        assert r["user_code"] == "ABCD-1234"
+        saved = await (await c.put("/api/social/settings", json={"github_client_id": "Iv1.myownclient"}, headers=H)).json()
+        assert saved["github_client_id"] == "Iv1.myownclient" and saved["github_client_id_source"] == "config"
+        assert gw.social.client_id() == "Iv1.myownclient"
+        cleared = await (await c.put("/api/social/settings", json={"github_client_id": ""}, headers=H)).json()
+        assert cleared["github_client_id"] == "" and cleared["github_client_id_source"] == "default"
+        assert gw.social.client_id() == "Iv1.testclientid"
+    finally:
+        await c.close()
+
+
+def _device_codes(gh) -> int:
+    return sum(1 for m, p in gh.calls if p == "/login/device/code")
+
+
+async def test_phone_login_reuses_pending_flow(gh, monkeypatch):
+    """The phone's "Masuk GitHub di PC" while the desktop already shows a code:
+    same pending flow, no second device code (the first stays valid)."""
+    monkeypatch.delenv("NEOVARCH_SOCIAL_FAST_POLL", raising=False)  # keep it pending
+    gw, c = await _client()
+    try:
+        await c.put("/api/social/settings", json={"github_client_id": "Iv1.testclientid"}, headers=H)
+        a = await (await c.post("/api/social/login", headers=H)).json()
+        b = await (await c.post("/api/social/login", headers=H)).json()
+        assert a["state"] == b["state"] == "pending" and a["user_code"] == b["user_code"] == "ABCD-1234"
+        assert _device_codes(gh) == 1
+        st = await (await c.get("/api/social/status", headers=H)).json()
+        assert st["login_flow"]["state"] == "pending" and st["login_flow"]["user_code"] == "ABCD-1234"
+        assert "device_code" not in json.dumps(st)
+        await (await c.post("/api/social/login", json={"force": True}, headers=H)).json()
+        assert _device_codes(gh) == 2
+    finally:
+        await c.close()
+
+
+async def test_login_start_when_signed_in_is_done_and_rpc_state(gh, home):
+    gw, c = await _client()
+    try:
+        await _login(gw, c, gh)
+        n = _device_codes(gh)
+        r = await (await c.post("/api/social/login", headers=H)).json()
+        assert r == {"state": "done", "login": "aku"}
+        assert _device_codes(gh) == n
+        assert await gw.social.rpc("social.login.start", {}) == {"state": "done", "login": "aku"}
+        assert (await gw.social.rpc("social.login.state", {}))["state"] == "done"
+    finally:
+        await c.close()

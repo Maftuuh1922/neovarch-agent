@@ -57,6 +57,12 @@ class CompanyBinding:
     def persona(self) -> str:
         return self.runtime.persona(self.agent_id, self.ticket_id)
 
+    def allowed_tools(self) -> set[str] | None:
+        """The built-in tools this employee may use; None = all of them."""
+        a = self.runtime.store.agent(self.agent_id)
+        names = self.runtime.store.parse_names((a or {}).get("tools"))
+        return set(names) if names else None
+
 
 AGENT_TOOLS: dict[str, dict] = {
     "company_my_work": {
@@ -292,6 +298,19 @@ class CompanyRuntime:
                                                           for q in queue))
         if acts:
             lines.append("Aktivitas terakhirmu: " + "; ".join(x["summary"] for x in acts))
+        unit = s.unit(a.get("unit_id"))
+        if unit:
+            path = []
+            u = unit
+            while u is not None and len(path) < 20:
+                path.append(u["name"])
+                u = s.unit(u["parent_id"])
+            lines.append("Unit: " + " → ".join(reversed(path)))
+        skills = s.parse_names(a.get("skills"))
+        if skills:
+            lines.append("Skill yang kamu kuasai (baca dengan alat `skill` bila perlu): " + ", ".join(skills))
+        if (a.get("persona") or "").strip():
+            lines.append("Persona / gaya kerjamu:\n" + a["persona"].strip()[:2000])
         lines.append(f"Aturan: jawab sebagai {a['name']} dalam bahasa Indonesia yang santai dan sopan. Kalau ditanya "
                      "“lagi apa”, jawab dari data di atas apa adanya; jangan mengarang pekerjaan yang tidak tercatat. "
                      "Gunakan alat company_* untuk melaporkan kemajuan tiket.")
@@ -600,6 +619,159 @@ class CompanyRuntime:
             return f"hasil kerja #{w['id']} dilampirkan ke {t['key']}"
         return f"error: unknown tool {name}"
 
+    # ------------------------------------------------- main agent (kantor) --
+    def _unit_ref(self, ref) -> dict | None:
+        if ref in (None, ""):
+            return None
+        s = self.store
+        u = s.unit(ref) if str(ref).isdigit() else None
+        u = u or s.unit_by_name(str(ref))
+        if not u:
+            raise CompanyError("not_found", f"tidak ada organisasi/agency bernama {ref}")
+        return u
+
+    def _agent_ref(self, ref) -> dict:
+        s = self.store
+        if str(ref or "").isdigit():
+            a = s.agent(int(ref))
+            if a and a["status"] != "terminated":
+                return a
+        return self._find_agent(str(ref or ""))
+
+    def org_text(self) -> str:
+        s = self.store
+        if not s.company():
+            return "Kantor masih kosong: belum ada organisasi, agency, atau pegawai."
+        units = s.units()
+        agents = s.agents_public()
+        by_unit: dict[int | None, list[dict]] = {}
+        for a in agents:
+            by_unit.setdefault(a.get("unit_id"), []).append(a)
+        lines = [f"Kantor: {s.company()['name']}"]
+
+        def person(a: dict, depth: int) -> str:
+            cur = (a.get("current_ticket") or {}).get("key")
+            extra = []
+            if a.get("model"):
+                extra.append(f"model {a['model']}")
+            if a.get("skills"):
+                extra.append("skill " + ", ".join(a["skills"]))
+            if a.get("tools"):
+                extra.append("alat " + ", ".join(a["tools"]))
+            return ("  " * depth + f"- {a['name']} ({a['title'] or a['role']}) · {a['status']}"
+                    + (f" · tiket {cur}" if cur else "") + (f" · {'; '.join(extra)}" if extra else ""))
+
+        def walk(parent: int | None, depth: int) -> None:
+            for u in [u for u in units if u["parent_id"] == parent]:
+                lines.append("  " * depth + f"[{u['kind']}] {u['name']} (id {u['id']})")
+                for a in by_unit.get(u["id"], []):
+                    lines.append(person(a, depth + 1))
+                walk(u["id"], depth + 1)
+
+        walk(None, 0)
+        loose = by_unit.get(None, [])
+        if loose:
+            lines.append("Tanpa unit:")
+            lines += [person(a, 1) for a in loose]
+        if not units and not agents:
+            lines.append("(belum ada organisasi, agency, atau pegawai)")
+        open_t = s.q("SELECT t.key, t.title, t.status, a.name AS who FROM tickets t LEFT JOIN agents a ON a.id=t.assignee_id "
+                     "WHERE t.status NOT IN ('done','cancelled') ORDER BY t.id DESC LIMIT 10")
+        if open_t:
+            lines.append("Tugas terbuka: " + "; ".join(f"{t['key']} {t['title']} ({t['status']}, {t['who'] or 'belum ada'})"
+                                                      for t in open_t))
+        return "\n".join(lines)
+
+    def main_tool(self, args: dict) -> str:
+        """The main Neovarch Agent runs the Kantor on the user's command (tool `kantor`)."""
+        s = self.store
+        action = str(args.get("action") or "overview").strip().lower()
+        try:
+            if action in ("overview", "lihat", "status"):
+                return self.org_text()
+            if action in ("create_org", "create_agency", "create_unit"):
+                s.ensure_company()
+                kind = {"create_org": "organisasi", "create_agency": "agency"}.get(action) or args.get("kind")
+                parent = self._unit_ref(args.get("parent") or args.get("unit"))
+                u = s.save_unit({"name": args.get("name"), "kind": kind, "parent_id": parent["id"] if parent else None,
+                                 "description": args.get("description") or ""}, actor="system")
+                return f"{u['kind']} “{u['name']}” dibuat (id {u['id']})" + (f" di bawah {parent['name']}" if parent else "")
+            if action == "rename_unit":
+                u = self._unit_ref(args.get("unit") or args.get("name"))
+                u = s.save_unit({"id": u["id"], "name": args.get("new_name") or args.get("title")}, actor="system")
+                return f"unit diganti nama menjadi {u['name']}"
+            if action == "delete_unit":
+                u = self._unit_ref(args.get("unit") or args.get("name"))
+                s.delete_unit(u["id"], actor="system")
+                return f"{u['kind']} {u['name']} dihapus; isinya pindah ke unit di atasnya"
+            if action == "hire":
+                s.ensure_company()
+                unit = self._unit_ref(args.get("unit"))
+                mgr = self._agent_ref(args["manager"]) if args.get("manager") else None
+                body = {"name": args.get("name"), "title": args.get("title") or "", "role": args.get("role") or "pegawai",
+                        "job_description": args.get("job_description") or args.get("description") or "",
+                        "unit_id": unit["id"] if unit else None, "reports_to": mgr["id"] if mgr else None,
+                        "persona": args.get("persona") or "", "skills": args.get("skills") or [],
+                        "tools": args.get("tools") or [], "skip_approval": True}
+                if args.get("model"):
+                    body["model"] = args["model"]
+                    body["provider"] = args.get("provider") or ""
+                a = s.save_agent(body, actor="system")
+                return (f"{a['name']} direkrut sebagai {a['title'] or a['role']}" + (f" di {unit['name']}" if unit else "")
+                        + f" (model {a['model'] or 'bawaan PC'})")
+            if action in ("fire", "delete_employee", "delete"):
+                a = self._agent_ref(args.get("name") or args.get("employee"))
+                if a["id"] in self.active:
+                    self.stop_agent(a["id"])
+                s.delete_agent(a["id"], actor="system")
+                return f"{a['name']} diberhentikan dan dihapus dari Kantor; tiketnya kini tanpa penanggung jawab"
+            if action == "move":
+                a = self._agent_ref(args.get("name") or args.get("employee"))
+                body = {"id": a["id"]}
+                if "unit" in args:
+                    unit = self._unit_ref(args.get("unit"))
+                    body["unit_id"] = unit["id"] if unit else None
+                if "manager" in args:
+                    mgr = self._agent_ref(args["manager"]) if args.get("manager") else None
+                    body["reports_to"] = mgr["id"] if mgr else None
+                a = s.save_agent(body, actor="system")
+                u = s.unit(a.get("unit_id"))
+                return f"{a['name']} dipindah ke {u['name'] if u else 'tanpa unit'}"
+            if action in ("set_employee", "update_employee"):
+                a = self._agent_ref(args.get("name") or args.get("employee"))
+                body = {"id": a["id"]}
+                for k in ("title", "role", "job_description", "persona", "model", "provider", "skills", "tools"):
+                    if k in args:
+                        body[k] = args[k]
+                if "new_name" in args:
+                    body["name"] = args["new_name"]
+                a = s.save_agent(body, actor="system")
+                if "model" in body or "provider" in body:
+                    self.sync_session_model(a)
+                return f"profil {a['name']} diperbarui"
+            if action in ("assign_task", "task"):
+                s.ensure_company()
+                a = self._agent_ref(args.get("employee") or args.get("name"))
+                t = s.create_ticket({"title": args.get("title") or args.get("task"),
+                                     "description": args.get("description") or "", "assignee_id": a["id"],
+                                     "priority": args.get("priority") if args.get("priority") is not None else 1,
+                                     "status": "todo"}, actor="system")
+                if args.get("start_now"):
+                    try:
+                        self.wake_now(a["id"])
+                    except (CompanyError, RuntimeError):
+                        s.wake(a["id"], "assignment", t["id"])
+                elif s.company()["autorun"]:
+                    s.wake(a["id"], "assignment", t["id"])
+                return f"tugas {t['key']} “{t['title']}” diberikan ke {a['name']}" + (
+                    "" if s.company()["autorun"] or args.get("start_now")
+                    else " (mulai saat “Jalan otomatis” aktif atau pegawai dibangunkan)")
+            return f"error: aksi tidak dikenal: {action}"
+        except CompanyError as exc:
+            return f"error: {exc}"
+        except KeyError as exc:
+            return f"error: argumen {exc} wajib diisi"
+
     # --------------------------------------------------------------- office --
     def merge_office(self, desks: list[dict]) -> list[dict]:
         """Company agents become desks; their own chat sessions are not listed twice."""
@@ -682,7 +854,30 @@ class CompanyRuntime:
         if m == "project.delete":
             s.delete_project(int(p.get("id") or 0))
             return {"ok": True}
+        if m == "unit.list":
+            return {"units": s.units()}
+        if m == "unit.save":
+            s.ensure_company()
+            return s.save_unit(p)
+        if m == "unit.delete":
+            s.delete_unit(p.get("id"))
+            return {"ok": True}
+        if m == "agent.move":
+            a = s.require_agent(p.get("id"))
+            body: dict = {"id": a["id"]}
+            if "unit_id" in p:
+                body["unit_id"] = p.get("unit_id")
+            if "reports_to" in p:
+                body["reports_to"] = p.get("reports_to")
+            return s.save_agent(body)
+        if m == "agent.delete":
+            a = s.require_agent(p.get("id"))
+            if a["id"] in self.active:
+                self.stop_agent(a["id"])
+            return {"ok": True, "deleted": s.delete_agent(a["id"])["id"]}
         if m == "agent.save":
+            if not p.get("id"):
+                s.ensure_company()
             a = s.save_agent(p)
             if p.get("id") and ("model" in p or "provider" in p):
                 self.sync_session_model(a)

@@ -18,7 +18,7 @@ const GROUPS: { icon: IconComponent; id: string; label: string; members: string[
   },
   { icon: QrCode, id: 'nv:remote', label: 'Remote / HP', members: ['remote', 'gateway'] },
   { icon: ShieldLock, id: 'nv:security', label: 'Keamanan', members: ['config:safety', 'vault', 'keys'] },
-  { icon: Brain, id: 'nv:memory', label: 'Memori & Skill', members: ['config:memory', 'sessions', 'plugins'] },
+  { icon: Brain, id: 'nv:memory', label: 'Memori & Skill', members: ['obsidian', 'config:memory', 'sessions', 'plugins'] },
   { icon: Wrench, id: 'nv:advanced', label: 'Lanjutan', members: ['config:advanced', 'config:browser', 'billing'] },
   { icon: Info, id: 'nv:about', label: 'Tentang', members: ['about'] }
 ]
@@ -38,6 +38,7 @@ export const NV_SETTINGS_LABELS: Record<string, string> = {
   'config:safety': 'Keamanan',
   vault: 'Brankas kredensial',
   keys: 'Kunci & tool',
+  obsidian: 'Vault Obsidian',
   'config:memory': 'Memori',
   sessions: 'Arsip sesi',
   plugins: 'Plugin',

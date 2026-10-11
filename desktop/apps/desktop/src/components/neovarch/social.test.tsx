@@ -202,10 +202,47 @@ describe('Profil & Teman', () => {
     await act(async () => {
       fireEvent.click(screen.getByText('Simpan'))
     })
-    await act(async () => {
-      fireEvent.click(await screen.findByText('Masuk dengan GitHub'))
-    })
+    // Saving the client id goes straight on to the GitHub device flow.
     expect(await screen.findByText('ABCD-1234')).toBeTruthy()
     expect(window.hermesDesktop.openExternal).toHaveBeenCalledWith('https://github.com/login/device')
+  })
+
+  it('signed out: Simpan is never silently disabled — a bad client id gets a message', async () => {
+    routes({
+      'GET /api/social/status': () => ({ ...status, client_id_configured: false, signed_in: false })
+    })
+    await renderPage()
+    await screen.findByText('Client ID OAuth App GitHub belum diatur.')
+    const save = screen.getByText('Simpan').closest('button') as HTMLButtonElement
+    expect(save.disabled).toBe(false)
+    await act(async () => {
+      fireEvent.click(save)
+    })
+    expect(await screen.findByText('Tempel Client ID dulu.')).toBeTruthy()
+    fireEvent.change(screen.getByPlaceholderText('Ov23li…'), { target: { value: 'abc def ghi' } })
+    await act(async () => {
+      fireEvent.click(save)
+    })
+    expect(await screen.findByText('Client ID tidak boleh berisi spasi.')).toBeTruthy()
+    expect(api.mock.calls.some(([r]) => r.method === 'PUT')).toBe(false)
+  })
+
+  it('signed out with a built-in client id: one-click sign in, manual id is an advanced override', async () => {
+    routes({
+      'GET /api/social/status': () => ({
+        ...status,
+        client_id_configured: true,
+        client_id_source: 'default',
+        settings: { ...status.settings, github_client_id: '', github_client_id_source: 'default' },
+        signed_in: false
+      }),
+      'POST /api/social/login': { state: 'pending', user_code: 'WXYZ-0000', verification_uri: 'https://github.com/login/device' }
+    })
+    await renderPage()
+    expect(await screen.findByText('Masuk dengan GitHub')).toBeTruthy()
+    expect(screen.queryByText('Client ID OAuth App GitHub belum diatur.')).toBeNull()
+    expect(screen.queryByPlaceholderText('Ov23li…')).toBeNull()
+    fireEvent.click(screen.getByText('Pakai Client ID sendiri (lanjutan)'))
+    expect(screen.getByPlaceholderText('Ov23li…')).toBeTruthy()
   })
 })

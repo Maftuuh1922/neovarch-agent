@@ -177,14 +177,12 @@ void main() {
   bool called(FakeCompany f, String method, [Map<String, dynamic>? params]) =>
       f.calls.any((c) => c.$1 == method && (params == null || params.entries.every((e) => c.$2[e.key] == e.value)));
 
-  testWidgets('no company yet: offers the sample company and creates it on the PC', (tester) async {
+  testWidgets('no company yet: the Kantor is empty, with no sample staff to create', (tester) async {
     final fake = FakeCompany(exists: false);
     await pump(tester, controller(fake));
-    expect(find.text('Belum ada perusahaan'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('company-seed')));
-    await tester.pumpAndSettle();
-    expect(called(fake, 'seed_demo'), isTrue);
-    expect(find.text('Neovarch Studio'), findsOneWidget);
+    expect(find.text('Kantor masih kosong'), findsOneWidget);
+    expect(find.byKey(const ValueKey('company-seed')), findsNothing);
+    expect(called(fake, 'seed_demo'), isFalse);
   });
 
   testWidgets('org chart: managers first, indented reports, live status and controls', (tester) async {

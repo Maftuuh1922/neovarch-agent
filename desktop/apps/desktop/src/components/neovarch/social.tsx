@@ -14,6 +14,7 @@ import {
   type CodingStatus,
   type FriendCard,
   type FriendDetail,
+  clientIdProblem,
   followUser,
   friendDetail,
   type Heatmap,
@@ -121,6 +122,8 @@ function LoginCard() {
   const status = useStore($socialStatus)
   const [clientId, setClientId] = useState('')
   const [error, setError] = useState<null | string>(null)
+  const [saving, setSaving] = useState(false)
+  const [advanced, setAdvanced] = useState(false)
   const flow = status?.login_flow
   const pending = flow?.state === 'pending'
 
@@ -150,31 +153,61 @@ function LoginCard() {
 
   async function saveClientId(event: FormEvent) {
     event.preventDefault()
+    const problem = clientIdProblem(clientId)
+
+    if (problem) {
+      setError(problem)
+
+      return
+    }
+
     setError(null)
+    setSaving(true)
 
     try {
       await saveSocialSettings({ github_client_id: clientId.trim() })
+      setClientId('')
+      setAdvanced(false)
+      // Saving the ID is only half of it — go straight on to "Masuk dengan GitHub".
+      await begin()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
     }
   }
+
+  const clientIdForm = (
+    <form className="nv-social-clientid" data-slot="nv-social-clientid" onSubmit={saveClientId}>
+      <label className="nv-social-field">
+        <span>{t('clientIdLabel')}</span>
+        <input
+          autoComplete="off"
+          onChange={e => {
+            setClientId(e.target.value)
+            setError(null)
+          }}
+          placeholder="Ov23li…"
+          spellCheck={false}
+          value={clientId}
+        />
+      </label>
+      <button className="nv-social-btn nv-social-btn-primary" disabled={saving} type="submit">
+        {saving ? 'Menyimpan…' : t('clientIdSave')}
+      </button>
+    </form>
+  )
 
   return (
     <section className="nv-social-card nv-social-login" data-slot="nv-social-login">
       <h2 className="nv-social-h2">{t('signedOutTitle')}</h2>
       <p className="nv-social-muted">{t('signedOutBody')}</p>
       {status && !status.client_id_configured ? (
-        <form className="nv-social-clientid" onSubmit={saveClientId}>
+        <>
           <p className="nv-social-warn">{t('noClientId')}</p>
           <p className="nv-social-muted">{t('noClientIdHelp')}</p>
-          <label className="nv-social-field">
-            <span>{t('clientIdLabel')}</span>
-            <input onChange={e => setClientId(e.target.value)} placeholder="Ov23li…" value={clientId} />
-          </label>
-          <button className="nv-social-btn nv-social-btn-primary" disabled={!clientId.trim()} type="submit">
-            {t('clientIdSave')}
-          </button>
-        </form>
+          {clientIdForm}
+        </>
       ) : pending ? (
         <div className="nv-social-device">
           <p>{t('deviceStep1', { url: flow?.verification_uri || 'github.com/login/device' })}</p>
@@ -200,11 +233,26 @@ function LoginCard() {
           <p className="nv-social-muted">{t('signingIn')}</p>
         </div>
       ) : (
-        <button className="nv-social-btn nv-social-btn-primary" onClick={() => void begin()} type="button">
-          {t('signIn')}
-        </button>
+        <>
+          <button className="nv-social-btn nv-social-btn-primary" onClick={() => void begin()} type="button">
+            {t('signIn')}
+          </button>
+          <button
+            className="nv-social-btn nv-social-btn-ghost nv-social-btn-sm"
+            data-slot="nv-social-clientid-toggle"
+            onClick={() => setAdvanced(v => !v)}
+            type="button"
+          >
+            {advanced ? 'Tutup' : status?.client_id_source === 'config' ? 'Ganti Client ID (lanjutan)' : 'Pakai Client ID sendiri (lanjutan)'}
+          </button>
+          {advanced && clientIdForm}
+        </>
       )}
-      {(error || flow?.error) && <p className="nv-social-warn">{error || flow?.error}</p>}
+      {(error || flow?.error) && (
+        <p className="nv-social-warn" role="alert">
+          {error || flow?.error}
+        </p>
+      )}
     </section>
   )
 }

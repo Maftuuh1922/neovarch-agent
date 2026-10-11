@@ -4,7 +4,6 @@ import json
 from aiohttp.test_utils import TestClient, TestServer
 
 from neovarch import config as cfgmod
-from neovarch.office import staff_name
 from neovarch.server import Gateway, build_app, normalize_appearance
 
 from test_server import WS
@@ -24,12 +23,14 @@ async def test_office_snapshot_requires_auth_and_is_empty(home, monkeypatch):
         assert (await c.get("/api/office")).status == 401
         snap = await (await c.get("/api/office?token=tok")).json()
         assert snap["agents"] == [] and snap["counts"]["total"] == 0
-        assert snap["vault"] == {"configured": False, "connected": False, "path": "", "note_count": 0}
+        assert {k: snap["vault"][k] for k in ("configured", "connected", "path", "note_count")} == \
+            {"configured": False, "connected": False, "path": "", "note_count": 0}
     finally:
         await c.close()
 
 
-async def test_office_shows_agent_working_during_tool_and_feed(mock_provider, monkeypatch, tmp_path):
+async def test_chat_is_not_a_kantor_desk_but_feeds_activity(mock_provider, monkeypatch, tmp_path):
+    """A normal chat is answered by the main agent: no desk, no hashed staff name; the feed still logs it."""
     monkeypatch.setenv("NEOVARCH_CWD", str(tmp_path))
     gw, c = await _client(monkeypatch)
     try:
@@ -39,25 +40,12 @@ async def test_office_shows_agent_working_during_tool_and_feed(mock_provider, mo
         monitor = WS(await c.ws_connect("/api/ws?token=tok"))   # a phone that never attached
         await monitor.pump()
         await ws.call("prompt.submit", {"session_id": sid, "text": "kerjakan dengan lambat"})
-        working = None
-        for _ in range(60):
-            snap = await (await c.get("/api/office?token=tok")).json()
-            desk = next((a for a in snap["agents"] if a["session_id"] == sid), None)
-            if desk and desk["status"] == "working" and desk["current_tool"]:
-                working = desk
-                break
-            await asyncio.sleep(0.1)
-        assert working, "agent never showed as working"
-        assert working["name"] == staff_name(sid) and working["role"] == "Agen utama · desktop"
-        assert working["current_task"] == "kerjakan dengan lambat"
-        assert working["current_tool"].startswith("shell: sleep")
         await ws.until("message.complete", timeout=20)
         upd = await monitor.until("office.update", timeout=5)
         assert upd["session_id"] is None and "agents" in upd["payload"]
         await asyncio.sleep(0.4)
         snap = await (await c.get("/api/office?token=tok")).json()
-        desk = next(a for a in snap["agents"] if a["session_id"] == sid)
-        assert desk["status"] == "idle" and desk["current_tool"] is None
+        assert snap["agents"] == [] and snap["counts"]["total"] == 0
         kinds = [f["kind"] for f in snap["feed"]]
         assert {"message.user", "tool", "tool.done", "message"} <= set(kinds)
         assert snap["feed"][0]["kind"] == "message"  # newest first
@@ -65,7 +53,7 @@ async def test_office_shows_agent_working_during_tool_and_feed(mock_provider, mo
         await c.close()
 
 
-async def test_office_waiting_approval(mock_provider, monkeypatch, tmp_path):
+async def test_office_waiting_approval_feed(mock_provider, monkeypatch, tmp_path):
     monkeypatch.setenv("NEOVARCH_CWD", str(tmp_path))
     gw, c = await _client(monkeypatch)
     try:
@@ -74,10 +62,7 @@ async def test_office_waiting_approval(mock_provider, monkeypatch, tmp_path):
         sid = (await ws.call("session.create", {}))["result"]["session_id"]
         await ws.call("prompt.submit", {"session_id": sid, "text": "danger please"})
         await ws.until("approval.request")
-        snap = gw.office.snapshot()
-        desk = next(a for a in snap["agents"] if a["session_id"] == sid)
-        assert desk["status"] == "waiting-approval" and "rm -rf" in desk["pending_approval"]["command"]
-        assert snap["counts"]["waiting-approval"] == 1
+        assert gw.office.snapshot()["agents"] == []
         await ws.call("approval.respond", {"session_id": sid, "choice": "deny"})
         await ws.until("message.complete")
         kinds = [f["kind"] for f in gw.office.snapshot()["feed"]]
@@ -157,23 +142,11 @@ async def test_appearance_api_and_event(home, monkeypatch):
         await c.close()
 
 
-def test_persona_prompt_uses_the_desk_of_this_session():
+def test_persona_prompt_is_always_the_main_agent():
     from neovarch.agent import persona_prompt, system_prompt
-    from neovarch import config as cfgmod
-    snap = {"agents": [
-        {"id": "session:s1", "session_id": "s1", "name": "Dimas", "role": "Agen utama · desktop",
-         "status": "working", "current_task": "rapikan README", "current_tool": "shell", "model": "m-1",
-         "title": "README"},
-        {"id": "kanban:Hana", "session_id": None, "name": "Hana", "status": "idle", "current_task": "deploy"},
-    ], "counts": {"working": 1, "waiting-approval": 0, "idle": 1}}
+    snap = {"agents": [{"id": "session:s1", "session_id": "s1", "name": "Raka", "status": "working"}]}
     text = persona_prompt("s1", snap)
-    assert "**Dimas**" in text and "rapikan README" in text and "shell" in text
-    assert "rekan Hana" in text and "1 bekerja" in text
-    assert "Dimas" in system_prompt(cfgmod.load_config(), __import__("pathlib").Path("."), "lagi apa", text)
-
-
-def test_persona_prompt_without_office_falls_back_to_staff_name():
-    from neovarch.agent import persona_prompt
-    from neovarch.office import staff_name
-    assert f"**{staff_name('abc')}**" in persona_prompt("abc", None)
+    assert "**Neovarch Agent**" in text and "Raka" not in text and "`kantor`" in text
+    assert "**Neovarch Agent**" in persona_prompt("abc", None)
     assert persona_prompt(None, None) == ""
+    assert "**Neovarch Agent**" in system_prompt({}, __import__("pathlib").Path("."), "", text)

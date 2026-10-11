@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react
 import { useNavigate } from 'react-router'
 
 import { hermesApi } from '@/api/client'
+import { OBSIDIAN_VAULT_CHANGED_EVENT } from '@/app/settings/obsidian-vault-settings'
 import { cn } from '@/lib/utils'
 
 /** Neovarch's Obsidian vault viewer: file tree, rendered note with clickable
@@ -41,6 +42,9 @@ interface GraphResponse {
 }
 
 const api = <T,>(path: string) => hermesApi<T>({ path })
+
+/** Deep link to Settings ▸ Memori & Skill ▸ Vault Obsidian (the folder picker). */
+export const VAULT_SETTINGS_ROUTE = '/settings?tab=obsidian'
 
 function openExternal(uri: string) {
   void window.hermesDesktop?.openExternal?.(uri)
@@ -327,6 +331,16 @@ export function NeovarchVaultPage() {
 
   useEffect(() => {
     void load()
+    // Reload as soon as Settings ▸ Vault Obsidian saves (the page may stay
+    // mounted behind the Settings overlay) and whenever the window regains focus.
+    const reload = () => void load()
+    window.addEventListener(OBSIDIAN_VAULT_CHANGED_EVENT, reload)
+    window.addEventListener('focus', reload)
+
+    return () => {
+      window.removeEventListener(OBSIDIAN_VAULT_CHANGED_EVENT, reload)
+      window.removeEventListener('focus', reload)
+    }
   }, [load])
 
   const open = useCallback(async (path: string) => {
@@ -353,8 +367,8 @@ export function NeovarchVaultPage() {
     return (
       <div className="nv-vault nv-vault-unset">
         <h1 className="nv-vault-title">Vault Obsidian</h1>
-        <p className="nv-vault-empty">Belum ada vault. Pilih folder vault di Pengaturan ▸ Memori & Skill.</p>
-        <button className="nv-vault-btn" onClick={() => navigate('/settings?tab=vault')} type="button">
+        <p className="nv-vault-empty">Belum ada vault. Pilih folder vault di Pengaturan ▸ Memori & Skill ▸ Vault Obsidian.</p>
+        <button className="nv-vault-btn" onClick={() => navigate(VAULT_SETTINGS_ROUTE)} type="button">
           Buka Pengaturan
         </button>
       </div>

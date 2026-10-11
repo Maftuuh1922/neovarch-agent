@@ -47,8 +47,17 @@ export interface CompanyAgent {
   name: string
   pause_reason: null | string
   pending_approvals: number
+  /** Persona / working style the main agent set for this employee. */
+  persona?: string
   /** Provider of the agent's own model pick ('' = the PC default). */
   provider?: string
+  /** Skill names this employee knows. */
+  skills?: string[]
+  /** Built-in tools this employee may use (empty = all). */
+  tools?: string[]
+  /** Organisasi/agency this employee sits in. */
+  unit_id?: null | number
+  unit_name?: null | string
   reports_to: null | number
   reports_to_name: null | string
   role: string
@@ -56,6 +65,15 @@ export interface CompanyAgent {
   status: CompanyAgentStatus
   ticket_counts: Partial<Record<TicketStatus, number>>
   title: string
+}
+
+/** Organisasi → Agency → Orang: units nest without limit. */
+export interface CompanyUnit {
+  description?: string
+  id: number
+  kind: 'agency' | 'organisasi'
+  name: string
+  parent_id: null | number
 }
 
 export interface CompanyGoal {
@@ -99,6 +117,7 @@ export interface CompanySnapshot {
   projects: CompanyProject[]
   routines: CompanyRoutine[]
   ticket_counts: Record<TicketStatus, number>
+  units?: CompanyUnit[]
 }
 
 export interface CompanyTicket {
@@ -310,6 +329,37 @@ export function formatTokens(tokens: number): string {
 }
 
 /** Agents arranged as a tree (roots = report to the board). Cycles are impossible in the core. */
+/** Units in tree order (parents before children), with their depth. */
+export function unitTree(units: CompanyUnit[] | undefined): { depth: number; unit: CompanyUnit }[] {
+  const list = Array.isArray(units) ? units : []
+  const ids = new Set(list.map(u => u.id))
+  const byParent = new Map<null | number, CompanyUnit[]>()
+
+  for (const u of list) {
+    const key = u.parent_id !== null && ids.has(u.parent_id) ? u.parent_id : null
+    byParent.set(key, [...(byParent.get(key) ?? []), u])
+  }
+
+  const out: { depth: number; unit: CompanyUnit }[] = []
+  const seen = new Set<number>()
+
+  const walk = (parent: null | number, depth: number) => {
+    for (const u of byParent.get(parent) ?? []) {
+      if (seen.has(u.id)) {
+        continue
+      }
+
+      seen.add(u.id)
+      out.push({ depth, unit: u })
+      walk(u.id, depth + 1)
+    }
+  }
+
+  walk(null, 0)
+
+  return out
+}
+
 export function orgTree(agents: CompanyAgent[]): { agent: CompanyAgent; depth: number }[] {
   const byManager = new Map<null | number, CompanyAgent[]>()
   const ids = new Set(agents.map(a => a.id))

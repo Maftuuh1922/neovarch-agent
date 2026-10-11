@@ -19,6 +19,7 @@ Shape (all keys optional)::
       system_prompt: ""             # extra instructions appended to SOUL.md
     memory:
       obsidian_vault: ""            # folder of an Obsidian vault used as long-term memory
+      obsidian_enabled: true        # false = keep the path but stop using the vault
     appearance:
       accent: "#EE1C1C"             # accent colour chosen at first run (desktop + phone)
       base: dark                    # dark | light
@@ -58,7 +59,12 @@ DEFAULTS: dict[str, Any] = {
     "custom_providers": [],
     "approvals": {"mode": "ask"},
     "agent": {"max_turns": 30, "system_prompt": ""},
-    "memory": {"obsidian_vault": ""},
+    # Settings › Obrolan › Perilaku and Ruang kerja › Proyek / Shell / File
+    "timezone": "",
+    "display": {"show_reasoning": True},
+    "terminal": {"cwd": "", "timeout": 60},
+    "file_read_max_chars": 20000,
+    "memory": {"obsidian_vault": "", "obsidian_enabled": True},
     "appearance": {"accent": "#EE1C1C", "base": "dark"},
 }
 

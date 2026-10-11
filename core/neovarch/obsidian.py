@@ -34,12 +34,50 @@ class VaultError(ValueError):
     pass
 
 
-def vault_path(cfg: dict | None = None) -> Path | None:
+def configured_path(cfg: dict | None = None) -> Path | None:
+    """The saved vault folder, whether or not the vault is switched on."""
     cfg = cfg if cfg is not None else cfgmod.load_config()
     raw = str(cfgmod.get_path(cfg, "memory.obsidian_vault", "") or "").strip()
     if not raw:
         return None
     return Path(os.path.expanduser(raw)).resolve()
+
+
+def is_enabled(cfg: dict | None = None) -> bool:
+    cfg = cfg if cfg is not None else cfgmod.load_config()
+    val = cfgmod.get_path(cfg, "memory.obsidian_enabled", True)
+    if isinstance(val, str):
+        return val.strip().lower() not in ("0", "false", "no", "off")
+    return val is not False
+
+
+def vault_path(cfg: dict | None = None) -> Path | None:
+    """The vault the agent and the viewer use: None when unset or switched off."""
+    cfg = cfg if cfg is not None else cfgmod.load_config()
+    if not is_enabled(cfg):
+        return None
+    return configured_path(cfg)
+
+
+def configure(path: str, enabled: bool = True) -> dict[str, Any]:
+    """Save ``memory.obsidian_vault`` / ``memory.obsidian_enabled`` (Settings ▸ Vault Obsidian).
+
+    An enabled vault must be an existing folder outside any Hermes install;
+    an empty path clears it. Returns the new :func:`status`.
+    """
+    raw = str(path or "").strip()
+    if raw:
+        target = Path(os.path.expanduser(raw)).resolve()
+        if is_foreign_path(target):
+            raise VaultError("the folder is inside a Hermes Agent install; Neovarch does not touch it")
+        if enabled and not target.is_dir():
+            raise VaultError(f"the folder does not exist: {target}")
+        raw = str(target)
+    cfg = cfgmod.load_config()
+    cfgmod.set_path(cfg, "memory.obsidian_vault", raw)
+    cfgmod.set_path(cfg, "memory.obsidian_enabled", bool(enabled))
+    cfgmod.save_config(cfg)
+    return status(cfg)
 
 
 def require_vault(cfg: dict | None = None) -> Path:
@@ -297,11 +335,16 @@ def relevant_notes(vault: Path, text: str, limit: int = 3, max_chars: int = 1500
 
 
 def status(cfg: dict | None = None) -> dict[str, Any]:
-    vault = vault_path(cfg)
+    cfg = cfg if cfg is not None else cfgmod.load_config()
+    enabled = is_enabled(cfg)
+    saved = configured_path(cfg)
+    vault = saved if enabled else None
     if vault is None:
-        return {"configured": False, "connected": False, "path": "", "note_count": 0}
+        return {"configured": False, "connected": False, "enabled": enabled,
+                "path": str(saved) if saved else "", "note_count": 0}
     ok = vault.is_dir() and not is_foreign_path(vault)
-    return {"configured": True, "connected": ok, "path": str(vault), "note_count": note_count(vault) if ok else 0,
+    return {"configured": True, "connected": ok, "enabled": enabled, "path": str(vault),
+            "note_count": note_count(vault) if ok else 0,
             **({} if ok else {"error": "folder not found" if not vault.is_dir() else "refused"})}
 
 

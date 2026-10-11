@@ -8,6 +8,8 @@ export const SOCIAL_ROUTE = '/teman'
 
 export interface SocialSettings {
   github_client_id: string
+  /** Where the active client ID comes from: the user's override, env, or the built-in default. */
+  github_client_id_source?: 'config' | 'default' | 'env' | 'none'
   include_github_contributions: boolean
   paused: boolean
   publish_heatmap: boolean
@@ -27,6 +29,7 @@ export interface LoginFlow {
 
 export interface SocialStatus {
   client_id_configured: boolean
+  client_id_source?: 'config' | 'default' | 'env' | 'none'
   gist_id: null | string
   gist_url: null | string
   last_error: null | string
@@ -230,8 +233,36 @@ export async function saveSocialSettings(patch: Partial<SocialSettings>): Promis
   const status = $socialStatus.get()
 
   if (status) {
-    $socialStatus.set({ ...status, client_id_configured: Boolean(settings.github_client_id), settings })
+    const source = settings.github_client_id_source
+
+    $socialStatus.set({
+      ...status,
+      client_id_configured: source ? source !== 'none' : Boolean(settings.github_client_id),
+      client_id_source: source ?? status.client_id_source,
+      settings
+    })
   }
+}
+
+/** GitHub OAuth App client IDs: "Ov23li…" (new), "Iv1.…" (legacy) or 20 hex chars. */
+export const GITHUB_CLIENT_ID_RE = /^[A-Za-z0-9._-]{8,64}$/
+
+export function clientIdProblem(raw: string): null | string {
+  const value = raw.trim()
+
+  if (!value) {
+    return 'Tempel Client ID dulu.'
+  }
+
+  if (/\s/.test(value)) {
+    return 'Client ID tidak boleh berisi spasi.'
+  }
+
+  if (!GITHUB_CLIENT_ID_RE.test(value)) {
+    return 'Format Client ID tidak valid (contoh: Ov23li…). Jangan tempel client secret.'
+  }
+
+  return null
 }
 
 export async function publishNow(): Promise<void> {

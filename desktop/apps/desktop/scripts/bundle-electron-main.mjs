@@ -35,7 +35,13 @@ export async function bundleElectronMain({ source, out, stamp, dev = false }) {
   // Defaults must run before bundled modules resolve paths or onboarding flags.
   // Dev bundles leave the environment alone so source-tree resolution keeps working.
   const envBanner = dev ? '' : environmentDefaultsBanner(process.env.HERMES_BUNDLE_ENV_JSON || '{}')
-  const define = {}
+  const define = {
+    // Default GitHub OAuth App client ID for Profil & Teman (device flow). A
+    // client ID is public (no secret); CI passes it from the
+    // NEOVARCH_GITHUB_CLIENT_ID repo variable/secret so users never paste one,
+    // falling back to the built-in Neovarch Agent app when it is empty.
+    __NEOVARCH_GITHUB_CLIENT_ID__: JSON.stringify(String(process.env.NEOVARCH_GITHUB_CLIENT_ID || '').trim() || 'Ov23li1lB513P2W10ZM7')
+  }
   let bakedStamp = null
   if (!dev) {
     if (!stamp) throw new Error('A prepared install stamp is required')

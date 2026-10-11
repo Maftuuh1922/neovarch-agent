@@ -25,6 +25,10 @@ concurrency:
 env:
   NODE_VERSION: '22.22.0'
   NPM_VERSION: '11.21.0'
+  # Default GitHub OAuth App client ID baked into the desktop build (Profil &
+  # Teman sign-in works without pasting one). Public value: set it as a repo
+  # variable or secret named NEOVARCH_GITHUB_CLIENT_ID. Empty = users paste their own.
+  NEOVARCH_GITHUB_CLIENT_ID: ${{ vars.NEOVARCH_GITHUB_CLIENT_ID || secrets.NEOVARCH_GITHUB_CLIENT_ID }}
 
 jobs:
   verify:

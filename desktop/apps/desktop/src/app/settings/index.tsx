@@ -10,6 +10,7 @@ import {
   Archive,
   BarChart3,
   Bell,
+  Brain,
   Cpu,
   Download,
   Globe,
@@ -61,6 +62,7 @@ import {
 } from './plugin-settings'
 import { SettingsBreadcrumbContext } from './primitives'
 import { PROVIDER_VIEWS, ProvidersSettings, type ProviderView } from './providers-settings'
+import { ObsidianVaultSettings } from './obsidian-vault-settings'
 import { RemoteSettings } from './remote-settings'
 import { SessionsSettings } from './sessions-settings'
 import { SettingsSubpageHeader } from './subpage-navigation'
@@ -73,6 +75,10 @@ import { vaultOwnerKey, VaultSettings } from './vault-settings'
 // out: a deep link to one falls back to Settings → Model instead of a page
 // that only errors or spins.
 export const NEOVARCH_HIDDEN_SETTINGS: ReadonlySet<string> = new Set([
+  // The Neovarch core exposes no memory.*/context.* schema fields, so the
+  // generic "Memori" page only ever said "Tidak ada yang perlu diatur". The
+  // vault folder lives on its own page instead (Settings ▸ Vault Obsidian).
+  'config:memory',
   'config:voice',
   'gateway',
   'connections',
@@ -92,6 +98,7 @@ const SETTINGS_VIEWS: readonly SettingsViewId[] = (
     'vault',
     'notifications',
     'remote',
+    'obsidian',
     'billing',
     'sessions',
     'plugins',
@@ -109,6 +116,7 @@ const SUBPAGE_VIEWS: Partial<Record<SettingsViewId, ComponentType<{ subpage?: st
   gateway: GatewaySettings,
   keybinds: KeybindSettings,
   notifications: NotificationsSettings,
+  obsidian: ObsidianVaultSettings,
   remote: RemoteSettings
 }
 
@@ -300,6 +308,13 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             id: 'remote',
             label: 'Remote / Perangkat',
             onSelect: () => setActiveView('remote')
+          },
+          {
+            active: activeView === 'obsidian',
+            icon: Brain,
+            id: 'obsidian',
+            label: 'Vault Obsidian',
+            onSelect: () => setActiveView('obsidian')
           },
           {
             active: activeView === 'billing',

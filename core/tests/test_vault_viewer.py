@@ -61,3 +61,30 @@ async def test_viewer_routes(home, tmp_path, monkeypatch):
         assert any(r["path"] == "Metode.md" for r in found["results"])
     finally:
         await c.close()
+
+
+async def test_configure_vault_from_settings(home, tmp_path, monkeypatch):
+    """Settings ▸ Vault Obsidian saves the folder through POST /api/memory/obsidian
+    and the viewer loads it straight away; switching it off hides it again."""
+    monkeypatch.setenv("NEOVARCH_SESSION_TOKEN", "tok")
+    c = TestClient(TestServer(build_app(Gateway(isolated=False))))
+    await c.start_server()
+    try:
+        st = await (await c.get("/api/memory/obsidian?token=tok")).json()
+        assert st["configured"] is False and st["enabled"] is True and st["path"] == ""
+        missing = await c.post("/api/memory/obsidian?token=tok", json={"path": str(tmp_path / "nope"), "enabled": True})
+        assert missing.status == 400 and "does not exist" in (await missing.json())["error"]
+        v = _vault(tmp_path)
+        saved = await (await c.post("/api/memory/obsidian?token=tok", json={"path": str(v), "enabled": True})).json()
+        assert saved["ok"] and saved["configured"] and saved["connected"] and saved["note_count"] == 3
+        assert cfgmod.get_path(cfgmod.load_config(), "memory.obsidian_vault") == str(v.resolve())
+        tree = await (await c.get("/api/obsidian/tree?token=tok")).json()
+        assert tree["configured"] and tree["vault"] == "Kuliah"
+        off = await (await c.post("/api/memory/obsidian?token=tok", json={"path": str(v), "enabled": False})).json()
+        assert off["configured"] is False and off["enabled"] is False and off["path"] == str(v.resolve())
+        assert (await (await c.get("/api/obsidian/tree?token=tok")).json())["configured"] is False
+        assert obsidian.vault_path() is None
+        cleared = await (await c.post("/api/memory/obsidian?token=tok", json={"path": "", "enabled": True})).json()
+        assert cleared["configured"] is False and cleared["path"] == ""
+    finally:
+        await c.close()

@@ -23,7 +23,9 @@
   while backing off.
 
 The phone needs no GitHub login: it reads ``/api/social/*`` through the paired PC,
-and every change is pushed as the realtime event ``social.changed``.
+and every change is pushed as the realtime event ``social.changed``. When the PC
+is signed out the phone can only ask the PC to start its own device flow
+(``POST /api/social/login`` / ``social.login.start``) and shows the code.
 """
 
 from __future__ import annotations
@@ -70,6 +72,28 @@ EXT_LANG = {
     ".hs": "Haskell", ".ml": "OCaml", ".clj": "Clojure", ".erl": "Erlang", ".nim": "Nim", ".jl": "Julia",
 }
 PATH_KEYS = ("path", "file", "file_path", "filename", "target", "notebook_path")
+
+
+# Built-in GitHub OAuth App client ID (Neovarch Agent, device flow). A client ID
+# is public (no secret), so it lives in the repo and GitHub login works in one
+# click. A build-time NEOVARCH_GITHUB_CLIENT_ID_DEFAULT (CI variable) or the
+# user's own Client ID in Profil & Teman still takes precedence.
+DEFAULT_GITHUB_CLIENT_ID = "Ov23li1lB513P2W10ZM7"
+
+
+def resolve_client_id() -> tuple[str, str]:
+    """(client_id, source): the user's override in config.yaml wins, then the
+    NEOVARCH_GITHUB_CLIENT_ID env, then the build-time / built-in default."""
+    raw = str(cfgmod.get_path(cfgmod.load_config(), "social.github_client_id", "") or "").strip()
+    if raw:
+        return raw, "config"
+    env = str(os.environ.get("NEOVARCH_GITHUB_CLIENT_ID") or "").strip()
+    if env:
+        return env, "env"
+    baked = str(os.environ.get("NEOVARCH_GITHUB_CLIENT_ID_DEFAULT") or DEFAULT_GITHUB_CLIENT_ID or "").strip()
+    if baked:
+        return baked, "default"
+    return "", "none"
 
 
 class SocialError(Exception):
@@ -452,12 +476,18 @@ class Social:
     def settings(self) -> dict:
         raw = cfgmod.get_path(cfgmod.load_config(), "social", {}) or {}
         out = {**DEFAULTS, **{k: bool(raw[k]) for k in DEFAULTS if k in raw}}
-        out["github_client_id"] = self.client_id()
+        cid, source = resolve_client_id()
+        # Only the user's own override is echoed back into the editable field;
+        # a built-in default stays out of it (the field is an advanced override).
+        out["github_client_id"] = cid if source == "config" else ""
+        out["github_client_id_source"] = source
         return out
 
     def client_id(self) -> str:
-        raw = cfgmod.get_path(cfgmod.load_config(), "social.github_client_id", "") or ""
-        return str(os.environ.get("NEOVARCH_GITHUB_CLIENT_ID") or raw or "").strip()
+        return resolve_client_id()[0]
+
+    def client_id_source(self) -> str:
+        return resolve_client_id()[1]
 
     def save_settings(self, body: dict) -> dict:
         cfg = cfgmod.load_config()
@@ -828,7 +858,18 @@ class Social:
                 "mutual": login in following and login in followers}
 
     # ---- device flow ----------------------------------------------------------
-    async def login_start(self) -> dict:
+    async def login_start(self, force: bool = False) -> dict:
+        """Start the GitHub device flow on this PC (desktop button or the paired
+        phone's "Masuk GitHub di PC"). Idempotent unless ``force``: signed in →
+        ``{state: done}``; a flow already pending → the same code, so a tap on
+        the phone never invalidates the code the desktop is showing."""
+        if not force:
+            if self.token():
+                return {"state": "done", "login": self.state().get("login")}
+            cur = self.login_state
+            if (cur.get("state") == "pending" and float(cur.get("expires_at") or 0) > time.time() + 30
+                    and self._login_task is not None and not self._login_task.done()):
+                return self.public_login()
         cid = self.client_id()
         if not cid:
             raise SocialError("Client ID OAuth App GitHub belum diatur (Pengaturan → Profil & Teman, "
@@ -902,7 +943,7 @@ class Social:
     def overview(self) -> dict:
         st = self.state()
         return {"signed_in": bool(self.token()), "login": st.get("login") if self.token() else None,
-                "client_id_configured": bool(self.client_id()), "login_flow": self.public_login(),
+                "client_id_configured": bool(self.client_id()), "client_id_source": self.client_id_source(), "login_flow": self.public_login(),
                 "token_storage": self.tokens.backend, "settings": self.settings(),
                 "rate": self.gh.rate, "backoff_until": self.gh.backoff_until or None,
                 "gist_id": st.get("gist_id"), "gist_url": st.get("gist_url"),
@@ -931,7 +972,9 @@ class Social:
             if method == "social.publish":
                 return await self.maybe_publish(force=True)
             if method == "social.login.start":
-                return await self.login_start()
+                return await self.login_start(force=bool(p.get("force")))
+            if method == "social.login.state":
+                return self.public_login()
             if method == "social.logout":
                 return self.logout()
             if method == "social.activity":
@@ -987,8 +1030,8 @@ class Social:
         async def publish(_):
             return await self.maybe_publish(force=True)
 
-        async def login_start(_):
-            return await self.login_start()
+        async def login_start(request):
+            return await self.login_start(force=bool((await body(request)).get("force")))
 
         async def login_get(_):
             return self.public_login()

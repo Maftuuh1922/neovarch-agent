@@ -134,4 +134,4 @@ def test_system_prompt_without_vault(home, tmp_path):
 
 def test_status(vault):
     st = obsidian.status()
-    assert st == {"configured": True, "connected": True, "path": str(vault), "note_count": 3}
+    assert st == {"configured": True, "connected": True, "enabled": True, "path": str(vault), "note_count": 3}
