@@ -22,6 +22,36 @@ def version_line() -> str:
     return f"{PRODUCT} v{__version__} (Neovarch core)"
 
 
+def _color() -> bool:
+    from neovarch.tui import brand
+    return brand.color_enabled()
+
+
+def _splash(width: int | None = None) -> str:
+    from neovarch.tui import brand
+    return brand.splash_text(width=width, color=_color(), version=__version__)
+
+
+def _use_tui(args) -> bool:
+    """The interactive TUI only on a real terminal; --plain, pipes and TERM=dumb stay plain."""
+    if getattr(args, "plain", False) or os.environ.get("NEOVARCH_PLAIN") not in (None, "", "0"):
+        return False
+    if os.environ.get("TERM") == "dumb":
+        return False
+    try:
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return False
+    except (AttributeError, ValueError):
+        return False
+    from neovarch import tui
+    if not tui.available():
+        print("neovarch: tampilan interaktif butuh paket `rich` dan `prompt_toolkit`; "
+              "jalankan ulang installer atau `pip install rich prompt_toolkit`. Memakai mode polos.",
+              file=sys.stderr)
+        return False
+    return True
+
+
 # ------------------------------------------------------------------ chat -----
 
 def _print_event(kind: str, payload: dict) -> None:
@@ -49,14 +79,16 @@ async def _terminal_approve(command: str, description: str, tool: str) -> str:
     return {"o": "once", "once": "once", "s": "session", "session": "session", "y": "once"}.get(answer.strip().lower(), "deny")
 
 
-async def _ensure_9router() -> None:
-    """The terminal chat has no gateway: start/provision the local 9Router itself."""
+async def _ensure_9router(timeout: float = 20.0) -> None:
+    """The plain terminal chat has no gateway: start/provision the local 9Router itself.
+
+    Bounded, so a slow or missing 9Router can never leave the terminal blank."""
     from neovarch import router9
     cfg = cfgmod.load_config()
     if cfgmod.resolve_endpoint(cfg)["provider"] != router9.PROVIDER:
         return
     try:
-        st = await router9.ensure_ready(router9.Router9(), cfg)
+        st = await asyncio.wait_for(router9.ensure_ready(router9.Router9(), cfg), timeout)
     except Exception:  # noqa: BLE001 - the turn reports the real error
         return
     if not st["setup"]["ready"] and st["setup"]["message"]:
@@ -76,22 +108,29 @@ async def _chat(prompt: str | None, resume: str | None) -> int:
     rec = rec or store.create(source="cli", cwd=str(default_cwd()))
     ctx = ToolContext(cwd=Path(rec.get("cwd") or default_cwd()), approve=_terminal_approve)
     agent = Agent(rec, store, ctx, _print_event)
+    tty = sys.stdin.isatty() and sys.stdout.isatty()
+    if prompt is None:
+        # Say something before any network wait: the old CLI printed nothing until
+        # 9Router answered, which looked like a dead terminal.
+        print(f"{version_line()}\nsesi {rec['id']} — /keluar untuk keluar, /baru untuk obrolan baru\n",
+              file=sys.stdout if tty else sys.stderr, flush=True)
     await _ensure_9router()
     if prompt is not None:
         await agent.run_turn(prompt)
         return 0
-    print(f"{version_line()}\nsession {rec['id']} — /exit to quit, /new for a new chat\n")
+    marker = "\x1b[31m›\x1b[0m " if tty and _color() else ("› " if tty else "")
     while True:
         try:
-            line = await asyncio.to_thread(input, "\x1b[31m›\x1b[0m ")
+            line = await asyncio.to_thread(input, marker)
         except (EOFError, KeyboardInterrupt):
-            print()
+            if tty:
+                print()
             return 0
         if not line.strip():
             continue
-        if line.strip() in ("/exit", "/quit"):
+        if line.strip() in ("/exit", "/quit", "/keluar"):
             return 0
-        if line.strip() == "/new":
+        if line.strip() in ("/new", "/baru"):
             rec = store.create(source="cli", cwd=str(default_cwd()))
             agent = Agent(rec, store, ctx, _print_event)
             print(f"new session {rec['id']}")
@@ -239,7 +278,7 @@ def cmd_sessions(args) -> int:
 def cmd_uninstall(args) -> int:
     home = neovarch_home()
     print(f"This removes Neovarch Agent and all of its data in {home}.")
-    print("A Hermes Agent install (~/.hermes, the `hermes` command) is never touched.")
+    print("Only this folder is removed; nothing outside it is touched.")
     if not args.yes:
         if not sys.stdin.isatty() or input("Type 'yes' to continue: ").strip().lower() != "yes":
             print("Cancelled (use --yes).")
@@ -276,17 +315,51 @@ def cmd_desktop(_args) -> int:
 
 # ------------------------------------------------------------------ main -----
 
+HELP_EPILOG = """\
+Perintah di dalam obrolan:
+  /baru                    obrolan baru
+  /model [nama]            lihat atau ganti model
+  /reasoning [tingkat]     Rendah, Sedang, Tinggi, Ultra (atau Mati)
+  /skill [nama] [pesan]    daftar skill / pakai satu skill
+  /stop                    hentikan giliran (atau Ctrl+C)
+  /status                  model, penalaran, koneksi, sesi
+  /bukti [n]               buka bagian Bukti (hasil alat)
+  /bantuan  /keluar        bantuan, keluar
+
+Contoh:
+  neovarch                          buka obrolan interaktif
+  neovarch -q "ringkas README.md"   satu pertanyaan lalu keluar
+  echo "halo" | neovarch --plain    keluaran polos untuk skrip
+  neovarch serve                    gateway untuk aplikasi desktop & HP (port 9319)
+"""
+
+
+class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
+    def __init__(self, prog: str) -> None:
+        super().__init__(prog, max_help_position=30, width=min(100, shutil.get_terminal_size((90, 24)).columns))
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="neovarch", description=f"{PRODUCT} — AI agent on your computer")
+    try:
+        banner = _splash()
+    except Exception:  # noqa: BLE001 - branding must never break --help
+        banner = "NEOVARCH"
+    p = argparse.ArgumentParser(prog="neovarch", formatter_class=_HelpFormatter,
+                                description=f"{banner}\n\n{PRODUCT} — AI agent on your computer",
+                                epilog=HELP_EPILOG)
     p.add_argument("-V", "--version", action="store_true", help="show version")
     p.add_argument("-q", "--query", help="run one prompt and exit")
     p.add_argument("--resume", help="continue a session (id or title)")
     p.add_argument("-p", "--profile", help="use a named profile (data under <home>/profiles/<name>)")
-    sub = p.add_subparsers(dest="cmd")
+    p.add_argument("--plain", action="store_true", help="plain text output (no TUI, colours or splash)")
+    p.add_argument("--connect", metavar="URL", help="chat through a running gateway, e.g. http://127.0.0.1:9319")
+    p.add_argument("--token", help="session token for --connect (or NEOVARCH_SESSION_TOKEN)")
+    sub = p.add_subparsers(dest="cmd", title="subcommands", metavar="<command>")
 
-    c = sub.add_parser("chat", help="interactive chat (default)")
+    c = sub.add_parser("chat", help="interactive chat (default)", formatter_class=_HelpFormatter)
     c.add_argument("-q", "--query", dest="chat_query")
     c.add_argument("--resume", dest="chat_resume")
+    c.add_argument("--plain", dest="chat_plain", action="store_true", help="plain text output")
 
     s = sub.add_parser("serve", help="run the gateway for the desktop and phone apps")
     s.add_argument("--host", default="127.0.0.1")
@@ -333,6 +406,8 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(2)
         os.environ["NEOVARCH_HOME"] = str(neovarch_home() / "profiles" / profile)
     if args.version or args.cmd == "version":
+        if not args.plain and sys.stdout.isatty():
+            print(_splash() + "\n")
         print(version_line())
         print(f"Home: {neovarch_home()}")
         print(f"Install directory: {Path(__file__).resolve().parent.parent}")
@@ -359,4 +434,10 @@ def main(argv: list[str] | None = None) -> None:
         return
     query = getattr(args, "chat_query", None) or args.query
     resume = getattr(args, "chat_resume", None) or args.resume
+    args.plain = bool(args.plain or getattr(args, "chat_plain", False))
+    if _use_tui(args):
+        from neovarch.tui.app import run_tui
+        raise SystemExit(asyncio.run(run_tui(resume=resume, initial=query, once=query is not None,
+                                             connect=args.connect,
+                                             token=args.token or os.environ.get("NEOVARCH_SESSION_TOKEN"))))
     raise SystemExit(asyncio.run(_chat(query, resume)))
