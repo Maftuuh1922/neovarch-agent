@@ -64,7 +64,17 @@ declare global {
     /** Remote dari mana saja: outbound relay connection of the remote gateway. */
     relay?: { enabled: boolean; url: string; defaultUrl: string; state: string; error: string | null; phones: number }
     bluetooth?: { enabled: boolean; state: string; error: string | null; address: string | null; phones: number }
-    devices?: { id: string; name: string | null; added: number | null; last_seen: number | null; via: string | null }[]
+    devices?: {
+      id: string
+      name: string | null
+      added: number | null
+      last_seen: number | null
+      via: string | null
+      /** = added (core >= 1.4.6) */
+      created_at?: number | null
+      /** unix seconds when an idle device is unpaired automatically; null = never (core >= 1.4.6) */
+      expires_at?: number | null
+    }[]
   }
 
   interface NeovarchWallpaperImport {

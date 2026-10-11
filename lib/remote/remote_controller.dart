@@ -480,6 +480,15 @@ class RemoteController extends ChangeNotifier {
         }
       case 'agent.model.changed':
         notifyListeners(); // office.update follows with the new effective model
+      case 'session.info':
+        // The open chat's reasoning level changed (here or on the desktop): follow it.
+        if (f.sessionId != null && f.sessionId == runtimeId && f.payload.containsKey('reasoning_effort')) {
+          final next = sessionEffort(f.payload['reasoning_effort'], composer);
+          if (next != reasoningEffort) {
+            reasoningEffort = next;
+            notifyListeners();
+          }
+        }
       case 'resync.required':
         unawaited(refreshAll());
         if (storedId != null) unawaited(openSession(storedId!, quiet: true));
@@ -529,7 +538,7 @@ class RemoteController extends ChangeNotifier {
   Future<void> refreshComposer() async {
     final g = gateway;
     if (g == null) return;
-    final c = await g.composerCatalog();
+    final c = await g.composerCatalog(sessionId: runtimeId);
     if (gateway != g) return;
     composer = c;
     if (c != null) {
@@ -554,9 +563,17 @@ class RemoteController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Reasoning level for the open chat. It is saved on that chat on the PC
+  /// (`config.set reasoning` with the session id, same as the desktop's
+  /// "Penalaran"), so the desktop shows the same level and it survives a
+  /// reconnect. Without an open chat it applies to the next one.
   void setReasoningEffort(String? level) {
     reasoningEffort = (level == null || level == 'default') ? null : level;
     notifyListeners();
+    final g = gateway, sid = runtimeId;
+    if (g != null && sid != null && sid.isNotEmpty) {
+      unawaited(g.setSessionReasoning(sid, reasoningEffort ?? 'default').catchError((_) {}));
+    }
   }
 
   /// Switch the PC's model (global, like the desktop model pill). Returns an
@@ -700,6 +717,8 @@ class RemoteController extends ChangeNotifier {
       runtimeId = s.runtimeId;
       title = s.title.isNotEmpty ? s.title : (sessions.where((x) => x.id == stored).firstOrNull?.title ?? '');
       transcript = RemoteTranscript(history: s.messages)..running = s.running;
+      // Each chat keeps its own reasoning level (shared with the desktop).
+      reasoningEffort = sessionEffort(s.reasoningEffort, composer);
     } catch (e) {
       error = _friendly('$e');
     }

@@ -22,6 +22,7 @@ Design and wire protocol are inspired by [Hermes Agent](https://github.com/NousR
 | `neovarch/agent.py` | the loop: stream, run tools, repeat; emits events |
 | `neovarch/server.py` | `neovarch serve`: HTTP + WebSocket gateway for the desktop and phone |
 | `neovarch/cli.py` | `neovarch` command line |
+| `neovarch/tui/` | the interactive terminal chat (rich + prompt_toolkit): splash, header, slash commands, tool chips, Bukti, approvals |
 
 ## Commands
 
@@ -37,6 +38,38 @@ neovarch --version
 ```
 
 `python -m neovarch …` is the same as `neovarch …` (the desktop uses this form).
+
+## Terminal chat (TUI)
+
+`neovarch` with no arguments on a terminal opens the interactive chat: the star
+mark and NEOVARCH wordmark, a header (model, reasoning level, connection), streamed
+Markdown with syntax highlighting, tool-call chips with a spinner, a collapsible
+**Bukti** section (`/bukti`, Ctrl+O) and clickable file paths (OSC 8; `/buka <n>`
+opens one). Risky commands ask for approval (once / this session / deny).
+
+| Command | |
+|---|---|
+| `/baru` | new chat |
+| `/model [name] [--global]` | list or switch the model (this chat by default) |
+| `/reasoning [rendah\|sedang\|tinggi\|ultra\|mati]` | reasoning level |
+| `/skill [name] [message]` | list skills or ask the agent to use one |
+| `/stop` | stop the running turn (Ctrl+C does the same) |
+| `/status` | model, reasoning, connection, session |
+| `/bantuan`, `/keluar` | help, quit |
+
+Keys: Enter sends, Alt+Enter / Ctrl+J (or a trailing `\`) adds a line, ↑/↓ history
+(`~/.neovarch/cli_history`), Tab completes commands.
+
+The TUI is a client of the gateway's JSON-RPC session API (`session.create`,
+`prompt.submit`, `config.set model|reasoning`, `approval.respond`, …), the same calls
+the desktop and phone make. By default the gateway runs in-process; `--connect
+http://127.0.0.1:9319 --token <token>` uses a running `neovarch serve` instead.
+
+`--plain`, `NEOVARCH_PLAIN=1`, `TERM=dumb`, or a pipe on stdin/stdout keep plain text
+output (no splash, colours or prompt markers). `NO_COLOR` or a terminal narrower than
+80 columns shows the monochrome wordmark only. The star mark is a static text asset
+(`neovarch/tui/assets/`), regenerated with `scripts/make_logo_ascii.py` (needs Pillow,
+developer-only).
 
 ## Gateway (`neovarch serve`)
 

@@ -66,7 +66,21 @@ describe('exactly one core backend', () => {
   })
 
   it('the LAN gateway (the only other core process) starts only from autostart/explicit enable', () => {
-    expect(MAIN.match(/neovarchRemote\.autostart\(\)/g)?.length).toBe(1)
+    // Two call sites, no more: the boot autostart after `ready` (so only the lock holder
+    // reaches it), and the restart when "Jalankan di latar belakang" is switched on (#6),
+    // which stops the running gateway first, so it replaces it instead of adding a second.
+    const calls = [...MAIN.matchAll(/neovarchRemote\.autostart\(\)/g)].map(m => m.index ?? -1)
+    expect(calls.length).toBe(2)
+
+    const boot = at('setTimeout(() => neovarchRemote.autostart(),')
+    expect(calls).toContain(boot + 'setTimeout(() => '.length)
+    expect(boot).toBeGreaterThan(at('app.whenReady().then(() => {'))
+
+    const restart = calls.find(index => index !== boot + 'setTimeout(() => '.length) ?? -1
+    const before = MAIN.slice(Math.max(0, restart - 400), restart)
+    expect(before).toMatch(
+      /if \(next\.runInBackground && neovarchRemote\.status\(\)\.enabled && neovarchRemote\.hasProcess\(\)\) \{[\s\S]*await neovarchRemote\.stop\(\)\s*$/
+    )
   })
 })
 
