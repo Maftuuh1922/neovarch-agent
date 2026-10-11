@@ -38,8 +38,9 @@ export async function bundleElectronMain({ source, out, stamp, dev = false }) {
   const define = {
     // Default GitHub OAuth App client ID for Profil & Teman (device flow). A
     // client ID is public (no secret); CI passes it from the
-    // NEOVARCH_GITHUB_CLIENT_ID repo variable/secret so users never paste one.
-    __NEOVARCH_GITHUB_CLIENT_ID__: JSON.stringify(String(process.env.NEOVARCH_GITHUB_CLIENT_ID || '').trim())
+    // NEOVARCH_GITHUB_CLIENT_ID repo variable/secret so users never paste one,
+    // falling back to the built-in Neovarch Agent app when it is empty.
+    __NEOVARCH_GITHUB_CLIENT_ID__: JSON.stringify(String(process.env.NEOVARCH_GITHUB_CLIENT_ID || '').trim() || 'Ov23li1lB513P2W10ZM7')
   }
   let bakedStamp = null
   if (!dev) {

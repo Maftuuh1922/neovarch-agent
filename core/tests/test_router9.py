@@ -92,20 +92,57 @@ def test_urls_and_token(tmp_path, monkeypatch):
     assert router9.cli_token(_data_dir(tmp_path)) == _token()
 
 
-def test_choose_default_prefers_big_pickle_then_fallbacks():
-    assert router9.choose_default([]) == "oc/big-pickle"
-    assert router9.choose_default(["exo-free", "big-pickle"]) == "oc/big-pickle"
+def test_choose_default_prefers_mimo_then_fallbacks():
+    assert router9.choose_default([]) == "oc/mimo-v2.6-flash-free"
+    assert router9.choose_default(["exo-free", "mimo-v2.6-flash-free"]) == "oc/mimo-v2.6-flash-free"
     assert router9.choose_default(["exo-free", "ling-3.1-flash-free"]) == "oc/ling-3.1-flash-free"
     assert router9.choose_default(["exo-free"]) == "oc/exo-free"
+
+
+def test_mimo_pro_is_default_when_9router_lists_it(home, monkeypatch):
+    assert router9.DEFAULT_MODEL == "oc/mimo-v2.6-flash-free"
+    assert router9.choose_default(["mimo-v2.6-flash-free"], ["mimo/mimo-v2.6-pro", "oc/mimo-v2.6-flash-free"]) \
+        == "mimo/mimo-v2.6-pro"
+    assert router9.choose_default(["mimo-v2.6-flash-free"], ["kr/glm-5"]) == "oc/mimo-v2.6-flash-free"
+    assert router9.default_model_id({}, []) == "oc/mimo-v2.6-flash-free"
+    assert router9.default_model_id({}, ["mimo/mimo-v2.6-pro"]) == "mimo/mimo-v2.6-pro"
+    assert router9.is_free_model("oc/big-pickle") and not router9.is_free_model("mimo/mimo-v2.6-pro")
+    assert router9.ALIAS_GROUPS["mimo"] == "MiMo"
+    monkeypatch.setenv("NEOVARCH_9ROUTER_URL", "http://localhost:20128/v1")
+    monkeypatch.setattr(router9, "LAST_MODEL_IDS", ["oc/mimo-v2.6-flash-free", "mimo/mimo-v2.6-pro"])
+    cfg = cfgmod.load_config()
+    assert modelsmod.default_ref(cfg) == {"model": "mimo/mimo-v2.6-pro", "provider": "9router", "source": "builtin"}
+    assert cfgmod.resolve_endpoint(cfg)["model"] == "mimo/mimo-v2.6-pro"
+
+
+def test_new_kantor_employee_follows_pc_default(home, monkeypatch):
+    from neovarch import session_settings
+    from neovarch.company import CompanyStore
+    from neovarch.company_runtime import CompanyRuntime
+    monkeypatch.setenv("NEOVARCH_9ROUTER_URL", "http://localhost:20128/v1")
+    s = CompanyStore()
+    try:
+        s.setup("Neovarch Studio", "uji")
+        a = s.save_agent({"name": "Sari", "title": "Engineer", "skip_approval": True})
+        assert a["model"] == "" and a["provider"] == ""
+        rec = {"model_override": {"model": "kr/glm-5", "provider": "9router"}}
+        CompanyRuntime._apply_model(rec, a)
+        assert "model_override" not in rec
+        cfg = cfgmod.load_config()
+        assert session_settings.effective_endpoint(cfg, rec)["model"] == "oc/mimo-v2.6-flash-free"
+        modelsmod.set_default(cfg, "kr/glm-5", "9router")
+        assert session_settings.effective_endpoint(cfg, rec)["model"] == "kr/glm-5"
+    finally:
+        s.close()
 
 
 def test_fresh_install_defaults_to_9router(home, monkeypatch):
     monkeypatch.setenv("NEOVARCH_9ROUTER_URL", "http://localhost:20128/v1")
     cfg = cfgmod.load_config()
     ep = cfgmod.resolve_endpoint(cfg)
-    assert ep["provider"] == "9router" and ep["model"] == "oc/big-pickle"
+    assert ep["provider"] == "9router" and ep["model"] == "oc/mimo-v2.6-flash-free"
     assert ep["base_url"] == "http://localhost:20128/v1"
-    assert modelsmod.default_ref(cfg) == {"model": "oc/big-pickle", "provider": "9router", "source": "builtin"}
+    assert modelsmod.default_ref(cfg) == {"model": "oc/mimo-v2.6-flash-free", "provider": "9router", "source": "builtin"}
     # an explicitly configured provider still wins
     cfg["model"] = {"provider": "groq", "default": ""}
     assert cfgmod.resolve_endpoint(cfg)["provider"] == "groq"
@@ -120,14 +157,14 @@ def test_per_agent_override_routing(home, monkeypatch):
     assert a == {"agent_id": "session:abc", "model": "kr/glm-5", "provider": "9router",
                  "override": {"model": "kr/glm-5", "provider": "9router"}, "source": "agent"}
     assert modelsmod.endpoint_for(cfg, "session:abc")["model"] == "kr/glm-5"
-    assert modelsmod.endpoint_for(cfg, "session:other")["model"] == "oc/big-pickle"
+    assert modelsmod.endpoint_for(cfg, "session:other")["model"] == "oc/mimo-v2.6-flash-free"
     # an override on another provider goes to that provider's URL and key
     modelsmod.set_agent_model(cfg, "kanban:Ayu", "llama-3.1-8b-instant", "groq")
     ep = modelsmod.endpoint_for(cfg, "kanban:Ayu")
     assert ep["base_url"].startswith("https://api.groq.com") and ep["api_key"] == "gk"
     # clearing falls back to the global default
     b = modelsmod.set_agent_model(cfg, "session:abc", None)
-    assert b["source"] == "global" and b["override"] is None and b["model"] == "oc/big-pickle"
+    assert b["source"] == "global" and b["override"] is None and b["model"] == "oc/mimo-v2.6-flash-free"
     with pytest.raises(modelsmod.ModelError):
         modelsmod.normalize_agent_id("  ")
 
@@ -151,12 +188,12 @@ async def test_status_provisions_key_and_registers_free_models(router, monkeypat
 
         data = await (await c.get("/api/models?refresh=1", headers=H())).json()
         ids = [m["id"] for m in data["models"]]
-        assert ids[0] == "oc/big-pickle" and data["models"][0]["recommended"] and data["models"][0]["free"]
+        assert ids[0] == "oc/mimo-v2.6-flash-free" and data["models"][0]["recommended"] and data["models"][0]["free"]
         assert data["models"][0]["group"] == "OpenCode Free" and data["models"][0]["provider"] == "9router"
         assert "kr/glm-5" in ids and next(m for m in data["models"] if m["id"] == "kr/glm-5")["group"] == "Kiro"
-        assert data["default"] == {"model": "oc/big-pickle", "provider": "9router"}
+        assert data["default"] == {"model": "oc/mimo-v2.6-flash-free", "provider": "9router"}
         assert data["router"]["running"] and data["error"] is None
-        assert {"id": "oc/big-pickle", "object": "model", "owned_by": "9router"} in data["data"]
+        assert {"id": "oc/mimo-v2.6-flash-free", "object": "model", "owned_by": "9router"} in data["data"]
 
         opts = await (await c.get("/api/model/options", headers=H())).json()
         assert opts["providers"][0]["slug"] == "9router" and "kr/glm-5" in opts["providers"][0]["models"]
@@ -170,8 +207,8 @@ async def test_chat_uses_default_then_agent_override_live_events(router, monkeyp
         ws = await _ws(c)
         sid = (await ws.call("session.create", {}))["result"]["session_id"]
         out = await _chat(ws, sid)
-        assert "(oc/big-pickle)" in out["text"] and "error" not in out
-        assert router["chats"][-1]["model"] == "oc/big-pickle"
+        assert "(oc/mimo-v2.6-flash-free)" in out["text"] and "error" not in out
+        assert router["chats"][-1]["model"] == "oc/mimo-v2.6-flash-free"
 
         aid = f"session:{sid}"
         ws.events.clear()
@@ -183,13 +220,13 @@ async def test_chat_uses_default_then_agent_override_live_events(router, monkeyp
         office = (await ws.until("office.update"))["payload"]
         # chats are not Kantor desks any more (the Kantor starts empty)
         assert not any(d["id"] == aid for d in office["agents"])
-        assert office["default_model"] == {"model": "oc/big-pickle", "provider": "9router"}
+        assert office["default_model"] == {"model": "oc/mimo-v2.6-flash-free", "provider": "9router"}
 
         out = await _chat(ws, sid, "lagi")
         assert "(kr/glm-5)" in out["text"]
         # another agent still follows the global default
         sid2 = (await ws.call("session.create", {}))["result"]["session_id"]
-        assert "(oc/big-pickle)" in (await _chat(ws, sid2))["text"]
+        assert "(oc/mimo-v2.6-flash-free)" in (await _chat(ws, sid2))["text"]
         assert (await ws.call("session.status", {"session_id": sid}))["result"]["model"] == "kr/glm-5"
 
         listing = await (await c.get("/api/agents/models", headers=H())).json()
@@ -230,7 +267,7 @@ async def test_not_installed_and_unreachable_chat(home, monkeypatch):
         assert r.status == 409 and "9Router belum terpasang" in (await r.json())["error"]
         assert (await c.post("/api/router/stop", headers=H())).status == 409
         data = await (await c.get("/api/models", headers=H())).json()
-        assert data["models"][0]["id"] == "oc/big-pickle" and data["error"]
+        assert data["models"][0]["id"] == "oc/mimo-v2.6-flash-free" and data["error"]
         ws = await _ws(c)
         sid = (await ws.call("session.create", {}))["result"]["session_id"]
         out = await _chat(ws, sid)
@@ -258,7 +295,7 @@ async def test_running_without_token_asks_for_key_then_accepts_pasted_key(home, 
         st = await (await c.put("/api/router/config", json={"api_key": "sk-manual"}, headers=H())).json()
         assert st["has_api_key"] and st["setup"]["ready"]
         assert (await ws.until("router.status"))["payload"]["setup"]["ready"]
-        assert "(oc/big-pickle)" in (await _chat(ws, sid))["text"]
+        assert "(oc/mimo-v2.6-flash-free)" in (await _chat(ws, sid))["text"]
     finally:
         await c.close()
         await server.close()
@@ -311,14 +348,14 @@ def test_cli_router_status_and_setup_9router(tmp_path):
                                     text=True, timeout=60)
     r = run("router", "status")
     assert r.returncode == 0 and "9Router: not_installed" in r.stdout and "npm install -g 9router" in r.stdout
-    assert "Model default: oc/big-pickle via 9router" in r.stdout
+    assert "Model default: oc/mimo-v2.6-flash-free via 9router" in r.stdout
     r = run("router", "setup", "--wait", "1")
     assert r.returncode == 1
     r = run("setup", "--provider", "9router", "--non-interactive")
     assert r.returncode == 0, r.stderr
     import yaml
     cfg = yaml.safe_load((tmp_path / ".nv" / "config.yaml").read_text())
-    assert cfg["model"]["provider"] == "9router" and cfg["model"]["default"] == "oc/big-pickle"
+    assert cfg["model"]["provider"] == "9router" and cfg["model"]["default"] == "oc/mimo-v2.6-flash-free"
 
 
 async def test_composer_picker_paths(router, monkeypatch):
@@ -330,9 +367,9 @@ async def test_composer_picker_paths(router, monkeypatch):
         ws = await _ws(c)
         opts = (await ws.call("model.options", {"refresh": True}))["result"]
         r9 = opts["providers"][0]
-        assert r9["slug"] == "9router" and r9["is_current"] and "oc/big-pickle" in r9["models"]
-        assert "oc/big-pickle" in r9["free_models"] and "kr/glm-5" not in r9["free_models"]
-        assert r9["status"]["running"] and opts["model"] == "oc/big-pickle"
+        assert r9["slug"] == "9router" and r9["is_current"] and "oc/mimo-v2.6-flash-free" in r9["models"]
+        assert "oc/mimo-v2.6-flash-free" in r9["free_models"] and "kr/glm-5" not in r9["free_models"]
+        assert r9["status"]["running"] and opts["model"] == "oc/mimo-v2.6-flash-free"
 
         sid = (await ws.call("session.create", {"model": "kr/glm-5", "provider": "9router"}))["result"]["session_id"]
         assert "(kr/glm-5)" in (await _chat(ws, sid))["text"]
@@ -347,9 +384,9 @@ async def test_composer_picker_paths(router, monkeypatch):
         o2 = (await ws.call("model.options", {"session_id": sid}))["result"]
         assert o2["model"] == "kr/claude-sonnet-4.5"
         # the global default is untouched by a session pick
-        assert (await ws.call("models.default.get", {}))["result"]["model"] == "oc/big-pickle"
+        assert (await ws.call("models.default.get", {}))["result"]["model"] == "oc/mimo-v2.6-flash-free"
         cfg = cfgmod.load_config()
-        assert cfg["model"].get("default", "") in ("", None) or cfg["model"]["default"] == "oc/big-pickle"
+        assert cfg["model"].get("default", "") in ("", None) or cfg["model"]["default"] == "oc/mimo-v2.6-flash-free"
         res = (await ws.call("config.set", {"key": "model", "value": "kr/glm-5 --provider 9router --global"}))["result"]
         assert res["scope"] == "global"
         assert (await ws.call("models.default.get", {}))["result"] == {"model": "kr/glm-5", "provider": "9router",
@@ -378,7 +415,7 @@ async def test_router_rpcs_for_the_phone_and_picker_order(router, monkeypatch):
         assert "running" in st
         opts = (await ws.call("model.options", {"refresh": True}))["result"]
         models = opts["providers"][0]["models"]
-        assert models[0] == "oc/big-pickle"
+        assert models[0] == "oc/mimo-v2.6-flash-free"
         free = [m.startswith("oc/") for m in models]
         assert free == sorted(free, reverse=True), models
     finally:
@@ -408,8 +445,8 @@ async def test_fresh_9router_token_files_are_primed(home, tmp_path, monkeypatch)
 def test_rate_limit_is_explained_in_indonesian():
     from neovarch.agent import _explain
     err = 'provider returned HTTP 429: {"error":{"message":"FreeUsageLimitError Rate limit exceeded"}}'
-    out = _explain(err, {"provider": "9router", "model": "oc/big-pickle"})
-    assert "OpenCode Free" in out and "oc/big-pickle" in out and "pilih model lain" in out
+    out = _explain(err, {"provider": "9router", "model": "oc/mimo-v2.6-flash-free"})
+    assert "OpenCode Free" in out and "oc/mimo-v2.6-flash-free" in out and "pilih model lain" in out
     assert "HTTP 429" in _explain("provider returned HTTP 429: slow down", {"provider": "9router", "model": "kr/glm-5"})
     assert _explain(err, {"provider": "openai", "model": "gpt"}) == err
 
@@ -424,18 +461,18 @@ def _no_cooldowns():
 
 
 def test_free_fallback_order_cooldown_and_retryable_errors():
-    live = ["oc/zeta-free", "oc/big-pickle", "kr/glm-5", "oc/alpha-free", "oc/gpt-paid", "ocg/x-free"]
+    live = ["oc/zeta-free", "oc/mimo-v2.6-flash-free", "kr/glm-5", "oc/alpha-free", "oc/gpt-paid", "ocg/x-free"]
     order = router9.free_order(live)
-    assert order[:4] == ["oc/big-pickle", "oc/nemotron-3-ultra-free", "oc/ling-3.1-flash-free",
-                         "oc/mimo-v2.6-flash-free"]
+    assert order[:4] == ["oc/mimo-v2.6-flash-free", "oc/nemotron-3-ultra-free", "oc/ling-3.1-flash-free",
+                         "oc/big-pickle"]
     assert order[4:] == ["oc/alpha-free", "oc/zeta-free"]          # other oc/*-free, sorted
-    assert router9.is_free_model("oc/big-pickle") and not router9.is_free_model("kr/glm-5")
+    assert router9.is_free_model("oc/mimo-v2.6-flash-free") and not router9.is_free_model("kr/glm-5")
     assert not router9.is_free_model("oc/gpt-paid") and not router9.is_free_model("ocg/x-free")
-    cands = router9.fallback_candidates("oc/big-pickle", live)
-    assert cands[0] == "oc/nemotron-3-ultra-free" and "oc/big-pickle" not in cands
+    cands = router9.fallback_candidates("oc/mimo-v2.6-flash-free", live)
+    assert cands[0] == "oc/nemotron-3-ultra-free" and "oc/mimo-v2.6-flash-free" not in cands
     router9.mark_limited("oc/nemotron-3-ultra-free")
     assert router9.cooldown_left("oc/nemotron-3-ultra-free") > 590
-    cands = router9.fallback_candidates("oc/big-pickle", live)
+    cands = router9.fallback_candidates("oc/mimo-v2.6-flash-free", live)
     assert cands[0] == "oc/ling-3.1-flash-free" and cands[-1] == "oc/nemotron-3-ultra-free"  # resting last
     router9.mark_limited("oc/ling-3.1-flash-free", seconds=-1)          # expired
     assert router9.cooldown_left("oc/ling-3.1-flash-free") == 0
@@ -443,34 +480,34 @@ def test_free_fallback_order_cooldown_and_retryable_errors():
     assert r('provider returned HTTP 429: {"error":"FreeUsageLimitError"}') == 429
     assert r("provider returned HTTP 503: down") == 503 and r("provider returned HTTP 401: key") is None
     assert r("FreeUsageLimitError: Rate limit exceeded") == 429 and r("could not reach the model provider") is None
-    assert router9.fallback_notice("oc/big-pickle", "oc/nemotron-3-ultra-free") == \
-        "Model oc/big-pickle sedang dibatasi, pakai oc/nemotron-3-ultra-free sementara."
+    assert router9.fallback_notice("oc/mimo-v2.6-flash-free", "oc/nemotron-3-ultra-free") == \
+        "Model oc/mimo-v2.6-flash-free sedang dibatasi, pakai oc/nemotron-3-ultra-free sementara."
 
 
 async def test_rate_limited_default_falls_back_with_notice_and_cooldown(router, monkeypatch):
-    router["limited"].add("oc/big-pickle")
+    router["limited"].add("oc/mimo-v2.6-flash-free")
     gw, c = await _client(monkeypatch)
     try:
         ws = await _ws(c)
         sid = (await ws.call("session.create", {}))["result"]["session_id"]
         out = await _chat(ws, sid)
         assert "(oc/nemotron-3-ultra-free)" in out["text"] and "error" not in out, out
-        assert router["attempts"] == ["oc/big-pickle", "oc/nemotron-3-ultra-free"]
+        assert router["attempts"] == ["oc/mimo-v2.6-flash-free", "oc/nemotron-3-ultra-free"]
         assert out["model"] == "oc/nemotron-3-ultra-free" and out["model_fallback"][0]["status"] == 429
         fb = next(e for e in ws.events if e["type"] == "model.fallback")["payload"]
-        assert fb["from"] == "oc/big-pickle" and fb["to"] == "oc/nemotron-3-ultra-free"
+        assert fb["from"] == "oc/mimo-v2.6-flash-free" and fb["to"] == "oc/nemotron-3-ultra-free"
         assert fb["reason"] == "rate_limited" and fb["cooldown_s"] > 590
         st = next(e for e in ws.events if e["type"] == "status.update")
         assert st["session_id"] == sid and st["payload"]["kind"] == "fallback"
-        assert "Model oc/big-pickle sedang dibatasi, pakai oc/nemotron-3-ultra-free sementara" in st["payload"]["text"]
+        assert "Model oc/mimo-v2.6-flash-free sedang dibatasi, pakai oc/nemotron-3-ultra-free sementara" in st["payload"]["text"]
         # the notice comes before the answer's text
         kinds = [e["type"] for e in ws.events]
         assert kinds.index("status.update") < kinds.index("message.delta")
         # the user's saved default is untouched
         d = await (await c.get("/api/models/default", headers=H())).json()
-        assert d["model"] == "oc/big-pickle"
+        assert d["model"] == "oc/mimo-v2.6-flash-free"
         assert "model" not in (cfgmod.load_config().get("model") or {}) or \
-            cfgmod.load_config()["model"].get("default") in (None, "", "oc/big-pickle")
+            cfgmod.load_config()["model"].get("default") in (None, "", "oc/mimo-v2.6-flash-free")
 
         # within the cooldown the next turn goes straight to the fallback (one request)
         router["attempts"].clear()
@@ -484,28 +521,28 @@ async def test_rate_limited_default_falls_back_with_notice_and_cooldown(router, 
         router9.clear_limited()
         router["attempts"].clear()
         out = await _chat(ws, sid, "sekali lagi")
-        assert "(oc/big-pickle)" in out["text"] and router["attempts"] == ["oc/big-pickle"]
+        assert "(oc/mimo-v2.6-flash-free)" in out["text"] and router["attempts"] == ["oc/mimo-v2.6-flash-free"]
         assert not any(e["type"] == "model.fallback" for e in ws.events) and "model_fallback" not in out
     finally:
         await c.close()
 
 
 async def test_fallback_skips_limited_and_unavailable_then_gives_up_in_indonesian(router, monkeypatch):
-    router["limited"].update({"oc/big-pickle", "oc/nemotron-3-ultra-free"})
+    router["limited"].update({"oc/mimo-v2.6-flash-free", "oc/nemotron-3-ultra-free"})
     router["down"].add("oc/ling-3.1-flash-free")
     gw, c = await _client(monkeypatch)
     try:
         ws = await _ws(c)
         sid = (await ws.call("session.create", {}))["result"]["session_id"]
         out = await _chat(ws, sid)
-        assert "(oc/mimo-v2.6-flash-free)" in out["text"], out
-        assert router["attempts"] == ["oc/big-pickle", "oc/nemotron-3-ultra-free", "oc/ling-3.1-flash-free",
-                                      "oc/mimo-v2.6-flash-free"]
+        assert "(oc/big-pickle)" in out["text"], out
+        assert router["attempts"] == ["oc/mimo-v2.6-flash-free", "oc/nemotron-3-ultra-free", "oc/ling-3.1-flash-free",
+                                      "oc/big-pickle"]
         fb = [e["payload"] for e in ws.events if e["type"] == "model.fallback"]
-        assert len(fb) == 1 and fb[0]["from"] == "oc/big-pickle" and fb[0]["to"] == "oc/mimo-v2.6-flash-free"
-        for m in ("oc/big-pickle", "oc/nemotron-3-ultra-free", "oc/ling-3.1-flash-free"):
+        assert len(fb) == 1 and fb[0]["from"] == "oc/mimo-v2.6-flash-free" and fb[0]["to"] == "oc/big-pickle"
+        for m in ("oc/mimo-v2.6-flash-free", "oc/nemotron-3-ultra-free", "oc/ling-3.1-flash-free"):
             assert router9.cooldown_left(m) > 0
-        assert not router9.cooldown_left("oc/mimo-v2.6-flash-free")
+        assert not router9.cooldown_left("oc/big-pickle")
 
         # every free model limited: each tried once, then one Indonesian error
         router9.clear_limited()
@@ -513,7 +550,7 @@ async def test_fallback_skips_limited_and_unavailable_then_gives_up_in_indonesia
         router["attempts"].clear()
         out = await _chat(ws, sid, "lagi")
         assert out["error"].startswith("Semua model gratis yang dicoba sedang dibatasi"), out
-        assert "oc/big-pickle" in out["error"]
+        assert "oc/mimo-v2.6-flash-free" in out["error"]
         assert len(router["attempts"]) == len(set(router["attempts"])) <= 1 + router9.MAX_FALLBACKS
         assert not any(e["type"] == "model.fallback" for e in ws.events)
     finally:
@@ -538,8 +575,8 @@ async def test_pinned_agent_model_is_tried_first_and_paid_pins_never_switch(rout
         router["limited"].add("oc/ling-3.1-flash-free")
         router["attempts"].clear()
         out = await _chat(ws, sid, "lagi")
-        assert "(oc/big-pickle)" in out["text"]
-        assert router["attempts"] == ["oc/ling-3.1-flash-free", "oc/big-pickle"]
+        assert "(oc/mimo-v2.6-flash-free)" in out["text"]
+        assert router["attempts"] == ["oc/ling-3.1-flash-free", "oc/mimo-v2.6-flash-free"]
         assert (await ws.call("agent.model.get", {"agent_id": sid}))["result"]["model"] == "oc/ling-3.1-flash-free"
 
         # a pinned paid/non-free model is never swapped for a free one

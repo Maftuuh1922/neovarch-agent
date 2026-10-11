@@ -25,6 +25,10 @@ const en: Translations = import.meta.env.MODE === 'test' ? enUpstream : NEOVARCH
  *  `resolveTranslations()` in `./registry`, which layers them over these. */
 export const TRANSLATIONS: Record<BundledLocale, Translations> = {
   en,
+  // The ID/EN switch: plain English, the upstream catalog without the
+  // Indonesian layer. `en` stays the Indonesian base (older desktops saved
+  // `display.language: en` for it).
+  'en-us': enUpstream,
   zh,
   'zh-hant': zhHant,
   ja,

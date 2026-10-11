@@ -184,6 +184,72 @@ class ModelChip extends ConsumerWidget {
   }
 }
 
+/// "9router" → "9Router"; other provider slugs keep their own spelling, capitalised.
+String providerLabel(String slug) {
+  final s = slug.trim();
+  if (s.isEmpty) return '';
+  if (s.toLowerCase() == '9router') return '9Router';
+  if (s.startsWith('custom')) return 'Kustom';
+  return s[0].toUpperCase() + s.substring(1);
+}
+
+/// The text of [ModelSwitcherPill]: "MiMo 2.6 · 9Router", or "—" with no PC.
+String modelPillText(RemoteController r) {
+  final m = r.models;
+  if (!r.connected || r.modelsUnsupported || m == null || m.defaultModel.model.isEmpty) return '—';
+  final cur = m.defaultModel.model;
+  final label = m.entry(cur)?.label ?? modelShort(cur);
+  final prov = providerLabel(m.defaultModel.provider);
+  return prov.isEmpty ? label : '$label · $prov';
+}
+
+/// Chat top bar, left: the PC's current model as a pill. Tapping opens the
+/// model picker and switches the PC default (the model new chats and new
+/// Kantor employees use). Greyed with "—" while no PC is connected.
+class ModelSwitcherPill extends ConsumerWidget {
+  const ModelSwitcherPill({super.key});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final r = ref.watch(remoteProvider);
+    if (r.connected && r.models == null && !r.modelsUnsupported && r.modelsError == null) {
+      // first visit after connecting: fetch the list once (no-op while one is in flight)
+      WidgetsBinding.instance.addPostFrameCallback((_) => r.models == null ? r.refreshModels() : null);
+    }
+    final text = modelPillText(r);
+    final enabled = r.connected && !r.modelsUnsupported;
+    final fg = enabled ? NV.text : NV.faint;
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: enabled ? 'Model PC: $text. Ketuk untuk ganti' : 'Model PC: belum terhubung',
+      child: Opacity(
+        opacity: enabled ? 1 : 0.55,
+        child: GestureDetector(
+          key: const ValueKey('model-switcher-pill'),
+          behavior: HitTestBehavior.opaque,
+          onTap: enabled ? () => showModelPicker(context) : null,
+          child: Container(
+            height: 34,
+            padding: const EdgeInsets.fromLTRB(11, 0, 9, 0),
+            decoration: BoxDecoration(color: NV.glass, borderRadius: BorderRadius.circular(999), border: Border.all(color: NV.glassBorder)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(CupertinoIcons.sparkles, size: 14, color: enabled ? NV.red : NV.faint),
+              const SizedBox(width: 6),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 190),
+                child: Text(text, key: const ValueKey('model-switcher-text'), maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: fg)),
+              ),
+              const SizedBox(width: 4),
+              Icon(CupertinoIcons.chevron_down, size: 12, color: enabled ? NV.muted : NV.faint),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Profil → "Model AI": the PC default and a button to change it.
 class ModelSettingsPanel extends ConsumerWidget {
   const ModelSettingsPanel({super.key});

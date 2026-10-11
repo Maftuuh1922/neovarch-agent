@@ -6,7 +6,10 @@ import { DEFAULT_LOCALE, isLocale, isSupportedLocaleValue, LOCALE_OPTIONS, norma
 describe('desktop i18n languages', () => {
   it('normalizes supported locale aliases', () => {
     expect(normalizeLocale('en')).toBe('en')
-    expect(normalizeLocale('EN-US')).toBe('en')
+    // `en` is the Indonesian base; a regional English tag is the English catalog
+    expect(normalizeLocale('EN-US')).toBe('en-us')
+    expect(normalizeLocale('english')).toBe('en-us')
+    expect(normalizeLocale('id-ID')).toBe('en')
     expect(normalizeLocale('zh')).toBe('zh')
     expect(normalizeLocale('zh-CN')).toBe('zh')
     expect(normalizeLocale('zh-Hans')).toBe('zh')

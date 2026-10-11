@@ -354,31 +354,35 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
     setState(() => _dictating = true);
     var sent = false;
     var errShown = false;
-    await v.startDictation(
-      locale: ref.read(settingsProvider).sttLocale,
-      onText: (t, done) {
-        if (!mounted) return;
-        _input.text = t;
-        _input.selection = TextSelection.collapsed(offset: t.length);
-        if (done) {
-          setState(() => _dictating = false);
-          if (!sent && t.trim().isNotEmpty) {
-            sent = true;
-            _send();
+    try {
+      await v.startDictation(
+        locale: ref.read(settingsProvider).sttLocale,
+        onText: (t, done) {
+          if (!mounted) return;
+          _input.text = t;
+          _input.selection = TextSelection.collapsed(offset: t.length);
+          if (done) {
+            setState(() => _dictating = false);
+            if (!sent && t.trim().isNotEmpty) {
+              sent = true;
+              _send();
+            }
           }
-        }
-      },
-      onError: (e) {
-        errShown = true;
-        if (!mounted) return;
-        setState(() => _dictating = false);
-        toast(context, e);
-      },
-    );
-    if (v.error != null && !errShown && mounted) {
-      setState(() => _dictating = false);
-      toast(context, v.error!);
+        },
+        onError: (e) {
+          errShown = true;
+          if (!mounted) return;
+          setState(() => _dictating = false);
+          toast(context, e);
+        },
+      );
+    } catch (e) {
+      // startDictation reports through v.error; this only guards the screen.
+      v.error ??= 'Dikte gagal: $e';
     }
+    if (!mounted) return;
+    if (v.error != null || !v.listening) setState(() => _dictating = v.listening);
+    if (v.error != null && !errShown) toast(context, v.error!);
   }
 
   void _switchSttLanguage() {
@@ -775,7 +779,10 @@ class _MinimalTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
         padding: EdgeInsets.fromLTRB(16, MediaQuery.paddingOf(context).top + 10, 12, 0),
-        child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+        child: Row(children: [
+          // left: the PC's model, switchable from here (greyed "—" with no PC)
+          const Flexible(child: Align(alignment: Alignment.centerLeft, child: ModelSwitcherPill())),
+          const SizedBox(width: 8),
           NvIconButton(tooltip: 'Riwayat sesi di PC', icon: CupertinoIcons.clock, onPressed: onHistory),
           const SizedBox(width: 6),
           NvIconButton(tooltip: 'Sesi baru', icon: CupertinoIcons.add, onPressed: onNew),
