@@ -27,6 +27,20 @@ class RemoteTranscript {
   /// "langkah 27/150" while a long turn runs, else null.
   String? get stepLabel => running && step != null && stepLimit != null && step! > 1 ? 'langkah $step/$stepLimit' : null;
 
+  /// Live context use from `usage.update` (core ≥ 1.4.7), refreshed after every
+  /// model call of the running turn, not only at turn end.
+  int? contextTokens;
+  int? contextWindow;
+  int? sessionTokens;
+
+  /// "konteks 42% · 54k/128k" (null until the PC reports usage).
+  String? get contextLabel {
+    final t = contextTokens, w = contextWindow;
+    if (t == null || w == null || w <= 0) return null;
+    String k(int n) => n >= 1000 ? '${(n / 1000).round()}k' : '$n';
+    return 'konteks ${(100 * t / w).round()}% · ${k(t)}/${k(w)}';
+  }
+
   ChatMsg _assistant() {
     final m = ChatMsg(
         id: 'a${DateTime.now().microsecondsSinceEpoch}', role: 'assistant', ts: DateTime.now().millisecondsSinceEpoch, streaming: true);
@@ -70,6 +84,12 @@ class RemoteTranscript {
         step = (p['step'] as num?)?.toInt() ?? step;
         stepLimit = (p['limit'] as num?)?.toInt() ?? stepLimit;
         running = true;
+      case 'usage.update':
+        contextTokens = (p['context_tokens'] as num?)?.toInt() ?? contextTokens;
+        contextWindow = (p['context_window'] as num?)?.toInt() ?? contextWindow;
+        contextPercent = (p['context_percent'] as num?)?.round() ?? contextPercent;
+        final s = p['session'];
+        if (s is Map) sessionTokens = (s['total'] as num?)?.toInt() ?? sessionTokens;
       case 'message.start':
         running = true;
         error = null;

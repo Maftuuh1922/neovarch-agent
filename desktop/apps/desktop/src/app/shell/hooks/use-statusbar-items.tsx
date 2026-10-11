@@ -696,7 +696,12 @@ export function useStatusbarItems({
         menuAlign: 'end',
         menuClassName: 'w-auto border-(--ui-stroke-secondary) p-0',
         menuContent: (
-          <ContextUsagePanel breakdown={contextBreakdown} loading={contextBreakdownLoading} usage={gaugeUsage} />
+          <ContextUsagePanel
+            breakdown={contextBreakdown}
+            loading={contextBreakdownLoading}
+            sessionId={activeSessionId}
+            usage={gaugeUsage}
+          />
         ),
         toggleLabel: copy.toggleContextUsage,
         variant: 'menu'

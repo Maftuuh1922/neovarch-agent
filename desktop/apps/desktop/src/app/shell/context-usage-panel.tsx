@@ -1,6 +1,7 @@
 import { compactNumber } from '@hermes/shared'
 import { useMemo } from 'react'
 
+import { TokenMonitor } from '@/components/neovarch/token-monitor'
 import { Codicon } from '@/components/ui/codicon'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -9,6 +10,8 @@ import type { ContextBreakdown, ContextUsageCategory, UsageStats } from '@/types
 interface ContextUsagePanelProps {
   breakdown: ContextBreakdown | null
   loading: boolean
+  /** Neovarch: the session the token monitor reports ("Sesi ini"). */
+  sessionId?: null | string
   usage: UsageStats
 }
 
@@ -17,7 +20,7 @@ interface ContextUsagePanelProps {
  *  popover opens with its numbers already in hand. `usage` is the gauge's
  *  merged figure — measured occupancy when the backend has it, the estimate
  *  otherwise — so the header and the bar can never disagree. */
-export function ContextUsagePanel({ breakdown, loading, usage }: ContextUsagePanelProps) {
+export function ContextUsagePanel({ breakdown, loading, sessionId, usage }: ContextUsagePanelProps) {
   const { t } = useI18n()
   const copy = t.shell.statusbar.contextUsagePanel
   const contextMax = usage.context_max ?? 0
@@ -84,6 +87,10 @@ export function ContextUsagePanel({ breakdown, loading, usage }: ContextUsagePan
       {loading && !categories.length && <p className="text-[0.6875rem] text-muted-foreground">{copy.loading}</p>}
 
       {!loading && !categories.length && <p className="text-[0.6875rem] text-muted-foreground">{copy.empty}</p>}
+
+      <div className="border-t border-(--ui-stroke-tertiary) pt-3">
+        <TokenMonitor sessionId={sessionId} usage={usage} />
+      </div>
     </div>
   )
 }

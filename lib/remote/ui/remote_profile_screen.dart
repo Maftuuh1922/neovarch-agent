@@ -26,6 +26,7 @@ import 'nv_widgets.dart';
 import 'language_panel.dart';
 import '../l10n/strings.dart';
 import 'profile_header_slot.dart';
+import 'token_usage_panel.dart';
 import 'wake_word_panel.dart';
 import '../wake_word.dart' show WakeWordController;
 import 'remote_social_screen.dart' show SocialSection;
@@ -69,6 +70,13 @@ class RemoteProfileScreen extends StatelessWidget {
               subtitle: 'Panggil agen dengan suara (opsional)',
               children: [WakeWordPanel()],
             ),
+          const ProfileGroup(
+            id: 'tokens',
+            icon: CupertinoIcons.chart_bar_alt_fill,
+            title: 'Pemakaian token',
+            subtitle: 'Hari ini, sesi ini, sepanjang waktu, per model',
+            children: [TokenUsagePanel()],
+          ),
           const ProfileGroup(
             id: 'appearance',
             icon: CupertinoIcons.paintbrush_fill,

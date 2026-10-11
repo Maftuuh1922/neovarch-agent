@@ -444,7 +444,7 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
           kicker: 'chat · $pc',
           title: r.title.isNotEmpty ? r.title : (r.storedId == null ? 'Sesi baru' : 'Percakapan'),
           online: r.connected,
-          status: '${r.statusLabel}${r.running ? ' · agen bekerja' : ''}${r.transcript.stepLabel != null ? ' · ${r.transcript.stepLabel}' : ''}${tps != null ? ' · ${tps.toStringAsFixed(0)} tok/s' : ''}',
+          status: '${r.statusLabel}${r.running ? ' · agen bekerja' : ''}${r.transcript.stepLabel != null ? ' · ${r.transcript.stepLabel}' : ''}${r.transcript.contextLabel != null ? ' · ${r.transcript.contextLabel}' : (tps != null ? ' · ${tps.toStringAsFixed(0)} tok/s' : '')}',
           actions: [
             GlassHeaderAction(tooltip: 'Riwayat sesi di PC', icon: CupertinoIcons.clock, onPressed: r.connected ? _sessions : null),
             GlassHeaderAction(tooltip: 'Sesi baru', icon: CupertinoIcons.add, onPressed: r.connected ? r.newChat : null),

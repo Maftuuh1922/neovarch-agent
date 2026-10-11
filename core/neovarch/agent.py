@@ -497,6 +497,7 @@ class Agent:
                 comp: Completion = await self._complete(use, wire, pinned and use is active)
                 usage = comp.usage or usage
                 budget.add_usage(comp.usage)
+                self._track_usage(use, comp.usage, ctx_len)
                 if st:
                     self._turn_prompt += int((comp.usage or {}).get("prompt_tokens") or 0)
                     self._turn_cached += tempest.cached_tokens(comp.usage)
@@ -641,7 +642,8 @@ class Agent:
             **({"files_changed": ledger.files_changed()} if ledger.files_changed() else {}),
             "usage": {**usage, "avg_tps": round(out_tokens / elapsed, 1) if out_tokens else None,
                       "context_percent": round(100 * int(usage.get("prompt_tokens") or 0) / ctx_len, 1),
-                      **cache_stats},
+                      **cache_stats,
+                      **self._desktop_usage(int(usage.get("prompt_tokens") or 0), ctx_len)},
             **({"error": error} if error else {}),
             **({"error_info": error_info} if error_info else {}),
             "steps": budget.steps,
@@ -650,6 +652,35 @@ class Agent:
             **({"attachments": sent} if sent else {}),
         })
         return final_text
+
+    def _desktop_usage(self, prompt: int, ctx_len: int) -> dict:
+        """Session totals in the desktop's UsageStats shape (input/output/total/calls/context_*)."""
+        from neovarch import usage_stats
+        tot = self.rec.get("usage_total")
+        if not tot:
+            return {}
+        return usage_stats.desktop_usage(usage_stats.session_total(self.rec), prompt, ctx_len)
+
+    def _track_usage(self, endpoint: dict, usage: dict | None, ctx_len: int) -> None:
+        """Count this model call (day / lifetime / model / session) and push it live."""
+        from neovarch import usage_stats
+        try:
+            counts = usage_stats.record(str(endpoint.get("model") or ""), usage,
+                                        provider=str(endpoint.get("provider") or ""))
+        except Exception:  # counting must never break a turn
+            counts = None
+        if counts is None:
+            return
+        session_total = usage_stats.add_session(self.rec, counts)
+        prompt = int(counts["input"])
+        self.emit("usage.update", {
+            "prompt_tokens": prompt, "completion_tokens": int(counts["output"]), "cached_tokens": int(counts["cached"]),
+            "context_tokens": prompt, "context_window": int(ctx_len),
+            "context_percent": round(100 * prompt / ctx_len, 1) if ctx_len else None,
+            "session": session_total, "model": endpoint.get("model"),
+        })
+        # Desktop statusbar contract (UsageStats): the same numbers, live during the turn.
+        self.emit("session.usage", {"usage": usage_stats.desktop_usage(session_total, prompt, ctx_len)})
 
     # ---- files the agent sends into the chat (send_file / final-answer paths) ----
     def _emit_attachment(self, meta: dict) -> None:

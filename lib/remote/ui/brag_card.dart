@@ -307,7 +307,7 @@ class _StoryLayout extends StatelessWidget {
       _Head(data: data, c: c, size: 52, nameSize: 24),
       const SizedBox(height: 12),
       if (office) ...[
-        _OfficeShot(data: data, c: c, height: stats ? 112 : 170),
+        _OfficeShot(data: data, c: c, height: stats ? (data.stats.tileCount > 4 ? 92 : 112) : 170),
         const SizedBox(height: 12),
       ],
       if (stats) ...[
@@ -338,7 +338,7 @@ class _FeedLayout extends StatelessWidget {
     final office = showOffice && data.officeShot != null;
     final stats = showStats && !data.stats.isEmpty;
     final side = stats
-        ? _StatsGrid(stats: data.stats, c: c, columns: 2, compact: true)
+        ? _StatsGrid(stats: data.stats, c: c, columns: data.stats.tileCount > 4 ? 3 : 2, compact: true)
         : (data.heatmap != null ? BragHeat(heatmap: data.heatmap!, c: c, height: 64) : const SizedBox.shrink());
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Row(children: [
@@ -468,6 +468,8 @@ class _StatsGrid extends StatelessWidget {
       if (stats.tasksDone != null) ('${stats.tasksDone}', 'tugas selesai'),
       if (stats.sessions != null) ('${stats.sessions}', 'sesi'),
       if (stats.messages != null) (_compactNum(stats.messages!), 'pesan'),
+      if (stats.tokensToday != null) (compactTokens(stats.tokensToday!), 'token hari ini'),
+      if (stats.tokensTotal != null) (compactTokens(stats.tokensTotal!), 'total token'),
     ];
     final rows = <Widget>[];
     for (var i = 0; i < cells.length; i += columns) {
@@ -497,6 +499,13 @@ class _StatsGrid extends StatelessWidget {
         ),
     ]);
   }
+}
+
+/// 950 → "950", 12 400 → "12rb", 3 400 000 → "3,4jt", 2 100 000 000 → "2,1M".
+String compactTokens(int n) {
+  if (n >= 1000000000) return '${(n / 1000000000).toStringAsFixed(1).replaceAll('.', ',')}M';
+  if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1).replaceAll('.', ',')}jt';
+  return _compactNum(n);
 }
 
 String _compactNum(int n) => n >= 10000 ? '${(n / 1000).toStringAsFixed(0)}rb' : (n >= 1000 ? '${(n / 1000).toStringAsFixed(1).replaceAll('.', ',')}rb' : '$n');
