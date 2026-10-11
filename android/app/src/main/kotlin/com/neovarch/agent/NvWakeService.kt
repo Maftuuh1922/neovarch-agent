@@ -59,7 +59,7 @@ class NvWakeService : Service(), RecognitionListener {
             // Android 12+/14: a microphone service may not start from the background.
             Log.w(TAG, "startForeground refused: ${e.message}")
             setState(this, "stopped")
-            notifyUser(this, "Hey Neo berhenti", "Ketuk untuk menyalakan lagi", "wake", BOOT_ID)
+            notifyUser(this, NvLocale.str(this, R.string.nv_wake_stopped), NvLocale.str(this, R.string.nv_wake_tap_restart), "wake", BOOT_ID)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -69,7 +69,7 @@ class NvWakeService : Service(), RecognitionListener {
         if (intent == null && Build.VERSION.SDK_INT >= 30) {
             Log.w(TAG, "sticky restart from background: microphone would be silenced")
             setState(this, "stopped")
-            notifyUser(this, "Hey Neo dihentikan sistem", "Ketuk untuk menyalakan lagi", "wake", BOOT_ID)
+            notifyUser(this, NvLocale.str(this, R.string.nv_wake_killed), NvLocale.str(this, R.string.nv_wake_tap_restart), "wake", BOOT_ID)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -192,7 +192,7 @@ class NvWakeService : Service(), RecognitionListener {
         }
         // Otherwise (or as well): heads-up notification with a full-screen intent,
         // which Android shows over the lock screen / opens directly when allowed.
-        notifyUser(this, "Hey Neo", "Ketuk untuk bicara ke agen", "voice", HIT_ID, fullScreen = !opened)
+        notifyUser(this, "Hey Neo", NvLocale.str(this, R.string.nv_wake_tap_talk), "voice", HIT_ID, fullScreen = !opened)
     }
 
     override fun onPartialResult(hypothesis: String?) {
@@ -364,7 +364,7 @@ class NvBootReceiver : BroadcastReceiver() {
             try {
                 NvWakeService.setEnabled(context, true)
             } catch (e: Exception) {
-                NvWakeService.notifyUser(context, "Hey Neo berhenti", "Ketuk untuk menyalakan lagi", "wake", NvWakeService.BOOT_ID)
+                NvWakeService.notifyUser(context, NvLocale.str(context, R.string.nv_wake_stopped), NvLocale.str(context, R.string.nv_wake_tap_restart), "wake", NvWakeService.BOOT_ID)
             }
         }
     }

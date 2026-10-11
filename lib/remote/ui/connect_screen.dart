@@ -13,6 +13,7 @@ import '../appearance.dart' show appearanceProvider;
 import 'nv_widgets.dart';
 import 'remote_background.dart' show NvAccentArt, showAppearanceSheet;
 import 'scan_screen.dart';
+import '../l10n/strings.dart';
 
 class ConnectScreen extends ConsumerStatefulWidget {
   const ConnectScreen({super.key, this.onboarding = false});
@@ -50,7 +51,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
       _error = err;
     });
     if (err == null) {
-      toast(context, 'Terhubung ke ${p.displayName}');
+      toast(context, tr('Terhubung ke {name}', {'name': p.displayName}));
       if (Navigator.of(context).canPop()) Navigator.of(context).pop();
     }
   }
@@ -60,7 +61,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
     if (raw == null || !mounted) return;
     final p = GatewayPairing.parse(raw);
     if (p == null) {
-      setState(() => _error = 'QR tidak dikenali.');
+      setState(() => _error = tr('QR tidak dikenali.'));
       return;
     }
     if (p.token.isEmpty) {
@@ -68,7 +69,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
       setState(() {
         _manual = true;
         _addr.text = p.url;
-        _error = 'QR ini tidak memuat token. Salin token dari PC lalu tekan Hubungkan.';
+        _error = tr('QR ini tidak memuat token. Salin token dari PC lalu tekan Hubungkan.');
       });
       return;
     }
@@ -78,7 +79,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
   Future<void> _submitManual() async {
     final p = GatewayPairing.parse(_addr.text);
     if (p == null) {
-      setState(() => _error = 'Alamat tidak valid. Contoh: 192.168.1.5:9319');
+      setState(() => _error = tr('Alamat tidak valid. Contoh: 192.168.1.5:9319'));
       return;
     }
     final token = _token.text.trim().isNotEmpty ? _token.text.trim() : p.token;
@@ -93,7 +94,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
     final palette = NvIconButton(
       key: const ValueKey('connect-appearance'),
       icon: CupertinoIcons.paintbrush,
-      tooltip: 'Tampilan',
+      tooltip: tr('Tampilan'),
       onPressed: () => showAppearanceSheet(context),
     );
     final top = MediaQuery.paddingOf(context).top;
@@ -149,10 +150,10 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('REMOTE', style: NV.monoLabel(color: NV.redInk)),
                   const SizedBox(height: 8),
-                  Text('Hubungkan ke PC', style: NV.display(size: 34)),
+                  Text(tr('Hubungkan ke PC'), style: NV.display(size: 34)),
                   const SizedBox(height: 10),
                   Text(
-                    'Agen Neovarch berjalan di aplikasi desktop. HP ini hanya remote: kirim perintah, pantau tugas, dan setujui aksi agen dari jaringan yang sama.',
+                    tr('Agen Neovarch berjalan di aplikasi desktop. HP ini hanya remote: kirim perintah, pantau tugas, dan setujui aksi agen dari jaringan yang sama.'),
                     style: TextStyle(fontSize: 17, height: 1.4, letterSpacing: NV.tracking(17), color: NV.muted),
                   ),
                 ]),
@@ -178,7 +179,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
                       child: Text('${i + 1}', style: TextStyle(fontFamily: NV.sans, fontWeight: FontWeight.w600, fontSize: 12.5, color: NV.redInk)),
                     ),
                     const SizedBox(width: 12),
-                    Expanded(child: Padding(padding: const EdgeInsets.only(top: 3), child: Text(t, style: TextStyle(fontSize: 14, height: 1.45, color: NV.text)))),
+                    Expanded(child: Padding(padding: const EdgeInsets.only(top: 3), child: Text(tr(t), style: TextStyle(fontSize: 14, height: 1.45, color: NV.text)))),
                   ]),
                 ],
               ]),
@@ -190,7 +191,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
                 style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56)),
                 onPressed: _busy ? null : _scan,
                 icon: const Icon(CupertinoIcons.qrcode_viewfinder),
-                label: const Text('Pindai QR dari PC'),
+                label: Text(tr('Pindai QR dari PC')),
               ),
             const SizedBox(height: 10),
             if (!_manual)
@@ -198,7 +199,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
                 style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52)),
                 onPressed: _busy ? null : () => setState(() => _manual = true),
                 icon: const Icon(CupertinoIcons.keyboard),
-                label: const Text('Masukkan alamat & token'),
+                label: Text(tr('Masukkan alamat & token')),
               )
             else ...[
               const NvSection('manual', padding: EdgeInsets.fromLTRB(4, 10, 4, 12)),
@@ -206,10 +207,10 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
                   controller: _addr,
                   keyboardType: TextInputType.url,
                   autocorrect: false,
-                  decoration: const InputDecoration(
-                    labelText: 'Alamat gateway PC',
-                    hintText: '192.168.1.5:9319 atau tautan pemasangan',
-                    helperText: 'Port bawaan 9319. Tautan neovarch://pair… juga bisa ditempel di sini.',
+                  decoration: InputDecoration(
+                    labelText: tr('Alamat gateway PC'),
+                    hintText: tr('192.168.1.5:9319 atau tautan pemasangan'),
+                    helperText: tr('Port bawaan 9319. Tautan neovarch://pair… juga bisa ditempel di sini.'),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -218,25 +219,25 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
                   obscureText: !_showToken,
                   autocorrect: false,
                   decoration: InputDecoration(
-                    labelText: 'Token',
-                    hintText: 'token dari Remote / Perangkat di PC',
+                    labelText: tr('Token'),
+                    hintText: tr('token dari Remote / Perangkat di PC'),
                     suffixIcon: IconButton(
-                      tooltip: _showToken ? 'Sembunyikan' : 'Tampilkan',
+                      tooltip: tr(_showToken ? 'Sembunyikan' : 'Tampilkan'),
                       icon: Icon(_showToken ? CupertinoIcons.eye_slash : CupertinoIcons.eye),
                       onPressed: () => setState(() => _showToken = !_showToken),
                     ),
                   ),
                 ),
                 const SizedBox(height: 10),
-                TextField(controller: _name, decoration: const InputDecoration(labelText: 'Nama PC (opsional)', hintText: 'PC Kantor')),
+                TextField(controller: _name, decoration: InputDecoration(labelText: tr('Nama PC (opsional)'), hintText: 'PC Kantor')),
                 const SizedBox(height: 14),
                 FilledButton(
                   style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
                   onPressed: _busy ? null : _submitManual,
-                  child: Text(_busy ? 'Menghubungkan…' : 'Hubungkan'),
+                  child: Text(tr(_busy ? 'Menghubungkan…' : 'Hubungkan')),
                 ),
               ],
-            if (_busy) const Padding(padding: EdgeInsets.only(top: 16), child: CenterLoader(label: 'menghubungi PC…')),
+            if (_busy) Padding(padding: const EdgeInsets.only(top: 16), child: CenterLoader(label: tr('menghubungi PC…'))),
             if (saved.isNotEmpty) ...[
               const NvSection('pc tersimpan', padding: EdgeInsets.fromLTRB(4, 26, 4, 10)),
               NvList(margin: EdgeInsets.zero, children: [
@@ -258,7 +259,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
             Padding(
               padding: EdgeInsets.symmetric(horizontal: 4),
               child: Text(
-                'Cukup pindai sekali. Di Wi-Fi yang sama HP tersambung langsung; di luar rumah otomatis lewat relay terenkripsi — tanpa aplikasi tambahan. Kunci disimpan terenkripsi di HP.',
+                tr('Cukup pindai sekali. Di Wi-Fi yang sama HP tersambung langsung; di luar rumah otomatis lewat relay terenkripsi — tanpa aplikasi tambahan. Kunci disimpan terenkripsi di HP.'),
                 style: TextStyle(fontSize: 12.5, height: 1.5, color: NV.faint),
               ),
             ),

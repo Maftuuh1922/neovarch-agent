@@ -15,6 +15,7 @@ import 'package:flutter/services.dart' show HapticFeedback;
 import '../../models/models.dart';
 import '../../theme/neovarch_mobile_theme.dart';
 import '../../ui/widgets/common.dart' show clockOf, LogView, reduceMotion;
+import '../l10n/strings.dart';
 
 /// Screen header: `// KICKER` in mono, a serif title, optional status line and
 /// actions on the right. Replaces the stock AppBar on every remote tab.
@@ -32,8 +33,8 @@ class NvHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final top = MediaQuery.paddingOf(context).top;
-    final kick = Text(kicker.toUpperCase(), style: NV.monoLabel(color: NV.redInk));
-    final head = Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: NV.display(size: 34));
+    final kick = Text(tr(kicker).toUpperCase(), style: NV.monoLabel(color: NV.redInk));
+    final head = Text(tr(title), maxLines: 1, overflow: TextOverflow.ellipsis, style: NV.display(size: 34));
     final Widget body;
     if (onBack != null) {
       // Kicker on its own line, then the back button and the title on one
@@ -42,7 +43,7 @@ class NvHeader extends StatelessWidget {
         Padding(padding: const EdgeInsets.only(left: 52), child: kick),
         const SizedBox(height: 6),
         Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-          NvIconButton(icon: CupertinoIcons.chevron_back, tooltip: 'Kembali', onPressed: onBack),
+          NvIconButton(icon: CupertinoIcons.chevron_back, tooltip: tr('Kembali'), onPressed: onBack),
           const SizedBox(width: 12),
           Expanded(child: head),
           for (final a in actions) Padding(padding: const EdgeInsets.only(left: 6), child: a),
@@ -113,7 +114,7 @@ class NvSection extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
         padding: padding,
         child: Row(children: [
-          Text(label.toUpperCase(), style: NV.monoLabel()),
+          Text(tr(label).toUpperCase(), style: NV.monoLabel()),
           if (count != null) ...[const SizedBox(width: 8), NvPill('$count')],
           const SizedBox(width: 10),
           Expanded(child: Divider(color: NV.border, height: 1)),

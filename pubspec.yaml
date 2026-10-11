@@ -30,6 +30,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Bahasa Indonesia / English (Material widgets, date pickers) for Profil › Bahasa
+  flutter_localizations:
+    sdk: flutter
   # wallpaper → accent (QuantizerCelebi + Score); version pinned by the Flutter SDK
   material_color_utilities: any
 

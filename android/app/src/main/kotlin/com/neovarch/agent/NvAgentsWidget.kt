@@ -52,16 +52,16 @@ class NvAgentsWidget : AppWidgetProvider() {
             v.setOnClickPendingIntent(android.R.id.background, NvWidgets.route(context, if (st.paired) "kantor" else "connect", 60))
 
             if (!st.paired) {
-                v.setTextViewText(R.id.nva_assign_label, "Hubungkan PC")
+                v.setTextViewText(R.id.nva_assign_label, NvLocale.str(context, R.string.nv_connect_pc))
                 v.setOnClickPendingIntent(R.id.nva_assign, NvWidgets.route(context, "connect", 61))
-                v.setTextViewText(R.id.nva_empty_title, "Belum terhubung")
-                v.setTextViewText(R.id.nva_empty_sub, "Pasangkan PC Neovarch untuk melihat agennya")
+                v.setTextViewText(R.id.nva_empty_title, NvLocale.str(context, R.string.nv_not_connected))
+                v.setTextViewText(R.id.nva_empty_sub, NvLocale.str(context, R.string.nva_pair_hint))
                 v.setImageViewResource(R.id.nva_empty_ic, R.drawable.nvw_ic_link)
             } else {
-                v.setTextViewText(R.id.nva_assign_label, "Kasih tugas")
+                v.setTextViewText(R.id.nva_assign_label, NvLocale.str(context, R.string.nva_assign))
                 v.setOnClickPendingIntent(R.id.nva_assign, NvWidgets.route(context, "newtask", 62))
-                v.setTextViewText(R.id.nva_empty_title, if (st.connected) "Belum ada agen" else "PC offline")
-                v.setTextViewText(R.id.nva_empty_sub, if (st.connected) "Kasih tugas, agen akan muncul di sini" else "Daftar agen muncul lagi saat PC tersambung")
+                v.setTextViewText(R.id.nva_empty_title, NvLocale.str(context, if (st.connected) R.string.nva_no_agents else R.string.nva_pc_offline))
+                v.setTextViewText(R.id.nva_empty_sub, NvLocale.str(context, if (st.connected) R.string.nva_no_agents_sub else R.string.nva_offline_sub))
                 v.setImageViewResource(R.id.nva_empty_ic, if (st.connected) R.drawable.nvw_ic_agents else R.drawable.nvw_ic_pc)
             }
 

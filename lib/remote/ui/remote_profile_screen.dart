@@ -23,6 +23,8 @@ import 'appearance/appearance_section.dart' show NvAppearanceSection;
 import 'glass_style_picker.dart';
 import 'model_picker.dart';
 import 'nv_widgets.dart';
+import 'language_panel.dart';
+import '../l10n/strings.dart';
 import 'profile_header_slot.dart';
 import 'wake_word_panel.dart';
 import '../wake_word.dart' show WakeWordController;
@@ -88,6 +90,13 @@ class RemoteProfileScreen extends StatelessWidget {
             subtitle: 'Warna ikon di layar utama',
             children: [AppIconPanel()],
           ),
+          const ProfileGroup(
+            id: 'language',
+            icon: CupertinoIcons.globe,
+            title: 'Bahasa',
+            subtitle: 'Bahasa Indonesia, English, atau ikuti sistem',
+            children: [LanguagePanel()],
+          ),
           ProfileGroup(
             id: 'friends',
             icon: CupertinoIcons.person_2_fill,
@@ -100,16 +109,16 @@ class RemoteProfileScreen extends StatelessWidget {
             NvRow(
               key: const ValueKey('profile-about'),
               icon: CupertinoIcons.info_circle,
-              title: 'Tentang aplikasi',
-              subtitle: 'v${SettingsController.appVersion} · pembaruan, tautan, lisensi',
+              title: tr('Tentang aplikasi'),
+              subtitle: tr('v{v} · pembaruan, tautan, lisensi', {'v': SettingsController.appVersion}),
               trailing: Icon(CupertinoIcons.chevron_right, size: 17, color: NV.muted),
               onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const RemoteAboutScreen())),
             ),
             NvRow(
               key: const ValueKey('profile-changelog'),
               icon: CupertinoIcons.clock,
-              title: 'Riwayat perubahan',
-              subtitle: 'Yang baru di setiap versi',
+              title: tr('Riwayat perubahan'),
+              subtitle: tr('Yang baru di setiap versi'),
               trailing: Icon(CupertinoIcons.chevron_right, size: 17, color: NV.muted),
               onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ChangelogScreen())),
             ),
@@ -162,8 +171,8 @@ class _ProfileGroupState extends State<ProfileGroup> {
             const SizedBox(width: 12),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(widget.title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: NV.text)),
-                Text(widget.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12.5, color: NV.muted)),
+                Text(tr(widget.title), style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: NV.text)),
+                Text(tr(widget.subtitle), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12.5, color: NV.muted)),
               ]),
             ),
             AnimatedRotation(
@@ -200,7 +209,7 @@ class PamerkanButton extends ConsumerWidget {
           key: const ValueKey('profile-pamerkan'),
           onPressed: () => showBragShareSheet(context, ref),
           icon: const Icon(CupertinoIcons.sparkles, size: 18),
-          label: const Text('Pamerkan'),
+          label: Text(tr('Pamerkan')),
         ),
       );
 }

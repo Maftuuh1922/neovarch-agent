@@ -220,6 +220,12 @@ class MainActivity : FlutterActivity() {
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "deviceInfo" -> result.success(deviceInfo())
+            // Profil › Bahasa: "" (ikuti sistem), "id" or "en"; Android 13+ per-app language.
+            "setAppLanguage" -> {
+                NvLocale.apply(this, call.argument<String>("language") ?: "")
+                result.success(true)
+            }
+            "getAppLanguage" -> result.success(NvLocale.system(this))
             "checkPermissions" -> {
                 val perms = call.argument<List<String>>("permissions") ?: emptyList()
                 result.success(perms.associateWith { granted(it) })

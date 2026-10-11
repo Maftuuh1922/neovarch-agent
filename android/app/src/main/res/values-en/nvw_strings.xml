@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget picker labels and descriptions, English (Profil › Bahasa = English). -->
+<resources>
+    <string name="nvw_label">Neovarch · Quick actions</string>
+    <string name="nvw_description">Chat, Voice, New task and Office in one tap, plus the latest 3D Office snapshot</string>
+    <string name="nvw_status_label">Neovarch · Status</string>
+    <string name="nvw_status_description">Whether the PC is online, agents working and waiting, latest activity</string>
+    <string name="nvw_agents_label">Neovarch · Agents</string>
+    <string name="nvw_agents_description">Your agents with their status and task; tap to open one, or give a new task</string>
+</resources>

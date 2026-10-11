@@ -1,5 +1,6 @@
-// First launch of the phone remote: three short slides plus a "Pilih tema"
-// step (accent presets / hue / hex, Gelap·Terang·Sistem, applied live).
+// First launch of the phone remote: a "Pilih bahasa" step (Bahasa Indonesia /
+// English, the phone's language preselected, applied at once), three short
+// slides plus a "Pilih tema" step (accent presets / hue / hex, Gelap·Terang·Sistem, applied live).
 // Everything follows the current accent and brightness; the red slide art is
 // recoloured to the accent (unchanged in Merah). Replayable from the PC tab.
 //
@@ -22,6 +23,9 @@ import '../../theme/neovarch_mobile_theme.dart';
 import '../../ui/widgets/brand.dart' show Wordmark;
 import '../../ui/widgets/motion.dart' show reduceMotion;
 import '../appearance.dart' show appearanceProvider;
+import '../l10n/app_language.dart' show appLanguageProvider;
+import '../l10n/strings.dart';
+import 'language_panel.dart';
 import 'nv_glass_text.dart';
 import 'nv_widgets.dart';
 import 'remote_background.dart' show NvAccentArt;
@@ -49,9 +53,11 @@ const _slides = [
       ['Izinkan sekali', 'Tolak kapan saja']),
 ];
 
-/// Slides plus the theme step (last page).
-const introPageCount = 4;
-const introThemePage = 3;
+/// Language step (first page), slides, then the theme step (last page).
+const introPageCount = 5;
+const introLanguagePage = 0;
+const introThemePage = 4;
+const _firstSlidePage = 1;
 
 class RemoteIntroScreen extends ConsumerStatefulWidget {
   const RemoteIntroScreen({super.key, this.replay = false, this.initialPage = 0});
@@ -109,6 +115,7 @@ class _RemoteIntroScreenState extends ConsumerState<RemoteIntroScreen> with Sing
     final pad = MediaQuery.paddingOf(context);
     final last = _index == introPageCount - 1;
     ref.watch(appearanceProvider); // repaint on theme changes (live preview)
+    ref.watch(appLanguageProvider); // the language step switches every string at once
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: (NV.palette.dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark).copyWith(
         statusBarColor: Colors.transparent,
@@ -130,7 +137,7 @@ class _RemoteIntroScreenState extends ConsumerState<RemoteIntroScreen> with Sing
                   const Spacer(),
                   Text('${_index + 1} / $introPageCount', style: NV.monoLabel(size: 10, color: NV.muted)),
                   const SizedBox(width: 10),
-                  _GlassPill(key: const ValueKey('intro-skip'), label: widget.replay ? 'Tutup' : 'Lewati', onTap: _done),
+                  _GlassPill(key: const ValueKey('intro-skip'), label: tr(widget.replay ? 'Tutup' : 'Lewati'), onTap: _done),
                 ]),
               ),
               Expanded(
@@ -138,9 +145,16 @@ class _RemoteIntroScreenState extends ConsumerState<RemoteIntroScreen> with Sing
                   controller: _pc,
                   itemCount: introPageCount,
                   onPageChanged: (i) => setState(() => _index = i),
-                  itemBuilder: (context, i) => i == introThemePage
-                      ? _ThemeStep(active: _index == i)
-                      : _SlideView(slide: _slides[i], number: i + 1, active: _index == i, page: _pc, delta: () => _page - i),
+                  itemBuilder: (context, i) => i == introLanguagePage
+                      ? const _LanguageStep()
+                      : i == introThemePage
+                          ? _ThemeStep(active: _index == i)
+                          : _SlideView(
+                              slide: _slides[i - _firstSlidePage],
+                              number: i - _firstSlidePage + 1,
+                              active: _index == i,
+                              page: _pc,
+                              delta: () => _page - i),
                 ),
               ),
               Padding(
@@ -152,7 +166,7 @@ class _RemoteIntroScreenState extends ConsumerState<RemoteIntroScreen> with Sing
                     key: const ValueKey('intro-next'),
                     onPressed: _next,
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Text(last ? (widget.replay ? 'Selesai' : 'Hubungkan PC') : 'Lanjut'),
+                      Text(tr(last ? (widget.replay ? 'Selesai' : 'Hubungkan PC') : 'Lanjut')),
                       const SizedBox(width: 8),
                       const Icon(CupertinoIcons.arrow_right, size: 18),
                     ]),
@@ -407,14 +421,14 @@ class _SlideViewState extends State<_SlideView> with SingleTickerProviderStateMi
       final text = Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          _stagger(0, Text(slide.kicker.toUpperCase(), style: NV.monoLabel(color: NV.redInk))),
+          _stagger(0, Text(tr(slide.kicker).toUpperCase(), style: NV.monoLabel(color: NV.redInk))),
           const SizedBox(height: 10),
-          _stagger(1, NvGlassText(slide.title, entrance: false, sheen: false, textAlign: TextAlign.left, style: NV.display(size: 34))),
+          _stagger(1, NvGlassText(tr(slide.title), entrance: false, sheen: false, textAlign: TextAlign.left, style: NV.display(size: 34))),
           const SizedBox(height: 12),
-          _stagger(2, Text(slide.body, style: TextStyle(fontSize: 17, height: 1.4, letterSpacing: NV.tracking(17), color: NV.muted))),
+          _stagger(2, Text(tr(slide.body), style: TextStyle(fontSize: 17, height: 1.4, letterSpacing: NV.tracking(17), color: NV.muted))),
           const SizedBox(height: 14),
           Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final (k, p) in slide.points.indexed) _chip(3 + k, p),
+            for (final (k, p) in slide.points.indexed) _chip(3 + k, tr(p)),
           ]),
         ]),
       );
@@ -466,14 +480,14 @@ class _ThemeStep extends ConsumerWidget {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('TAMPILAN · TEMA', style: NV.monoLabel(color: NV.redInk)),
+            Text(tr('TAMPILAN · TEMA'), style: NV.monoLabel(color: NV.redInk)),
             const SizedBox(height: 10),
-            NvGlassText('Pilih temamu.', key: const ValueKey('intro-theme-title'), textAlign: TextAlign.left, style: NV.display(size: 34)),
+            NvGlassText(tr('Pilih temamu.'), key: const ValueKey('intro-theme-title'), textAlign: TextAlign.left, style: NV.display(size: 34)),
             const SizedBox(height: 10),
             Text(
-              look.followPc
+              tr(look.followPc
                   ? 'Pilih warna dan mode. Kalau dilewati, HP mengikuti tema PC setelah terhubung.'
-                  : 'Tema khusus HP ini dipakai, juga setelah terhubung. Ubah kapan saja di Profil → Tampilan.',
+                  : 'Tema khusus HP ini dipakai, juga setelah terhubung. Ubah kapan saja di Profil → Tampilan.'),
               key: const ValueKey('intro-theme-note'),
               style: TextStyle(fontSize: 15, height: 1.4, letterSpacing: NV.tracking(15), color: NV.muted),
             ),
@@ -481,6 +495,38 @@ class _ThemeStep extends ConsumerWidget {
         ),
         const SizedBox(height: 16),
         const AppearancePanel(showFollowPc: false, showBackground: false, margin: EdgeInsets.zero),
+      ],
+    );
+  }
+}
+
+/// "Pilih bahasa": first intro page. Bahasa Indonesia / English, the phone's
+/// language preselected; a tap switches the whole intro at once and is saved
+/// as the app language (the same setting as Profil › Bahasa).
+class _LanguageStep extends ConsumerWidget {
+  const _LanguageStep();
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(appLanguageProvider);
+    return ListView(
+      key: const ValueKey('intro-language-step'),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(tr('bahasa · language').toUpperCase(), style: NV.monoLabel(color: NV.redInk)),
+            const SizedBox(height: 10),
+            NvGlassText(tr('Pilih bahasa.'), key: const ValueKey('intro-language-title'), textAlign: TextAlign.left, style: NV.display(size: 34)),
+            const SizedBox(height: 10),
+            Text(
+              tr('Bisa diganti kapan saja di Profil → Bahasa.'),
+              style: TextStyle(fontSize: 15, height: 1.4, letterSpacing: NV.tracking(15), color: NV.muted),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 16),
+        const LanguagePanel(showSystem: false, margin: EdgeInsets.zero),
       ],
     );
   }

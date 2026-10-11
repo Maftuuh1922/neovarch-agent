@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:neovarch_agent/main.dart' as app;
 import 'package:neovarch_agent/models/models.dart' show ChatMsg;
 import 'package:neovarch_agent/remote/appearance.dart';
+import 'package:neovarch_agent/remote/l10n/strings.dart' show L10n;
 import 'package:neovarch_agent/remote/remote_controller.dart';
 import 'package:neovarch_agent/remote/remote_gateway.dart';
 import 'package:neovarch_agent/remote/remote_transcript.dart';
@@ -106,14 +107,14 @@ void main() {
   test('version is 1.4.5', () => expect(SettingsController.appVersion, '1.4.5'));
 
   group('Onboarding theme step', () {
-    testWidgets('4th page "Pilih tema": picker without "Ikuti tema PC", pick = local override, applied live', (tester) async {
+    testWidgets('last page "Pilih tema": picker without "Ikuti tema PC", pick = local override, applied live', (tester) async {
       final look = await pump(tester, const RemoteIntroScreen(initialPage: introThemePage), r: controller(paired: false));
       expect(find.byKey(const ValueKey('intro-theme-step')), findsOneWidget);
       expect(find.text('Pilih temamu.'), findsOneWidget);
       expect(find.byType(AppearancePanel), findsOneWidget);
       expect(find.text('Ikuti tema PC'), findsNothing);
       expect(find.byKey(const ValueKey('background-section')), findsNothing);
-      expect(find.text('4 / 4'), findsOneWidget);
+      expect(find.text('5 / 5'), findsOneWidget);
       expect(find.text('Hubungkan PC'), findsOneWidget); // last page
       expect(look.followPc, isTrue);
 
@@ -129,7 +130,7 @@ void main() {
       final btn = tester.widget<NvGlassButton>(find.byKey(const ValueKey('intro-next')));
       expect(Theme.of(tester.element(find.byKey(const ValueKey('intro-next')))).colorScheme.primary, _biruSwatch);
       expect(btn.onPressed, isNotNull);
-      final dot = tester.widget<Container>(find.byKey(const ValueKey('intro-dot-3')));
+      final dot = tester.widget<Container>(find.byKey(const ValueKey('intro-dot-4')));
       expect((dot.decoration as BoxDecoration).color, _biruSwatch);
       expect(find.byKey(const ValueKey('intro-theme-note')), findsOneWidget);
 
@@ -148,10 +149,24 @@ void main() {
       expect(again.dark, isFalse);
     });
 
-    testWidgets('slides 1–3 then the theme step; untouched = still follows the PC', (tester) async {
+    testWidgets('first page "Pilih bahasa": English switches the intro at once', (tester) async {
+      addTearDown(() => L10n.code = 'id');
+      await pump(tester, const RemoteIntroScreen(), r: controller(paired: false));
+      expect(find.byKey(const ValueKey('intro-language-step')), findsOneWidget);
+      expect(find.text('Pilih bahasa.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('language-system')), findsNothing); // only the two languages here
+      await tester.tap(find.byKey(const ValueKey('language-en')));
+      await settle(tester);
+      expect(find.text('Choose your language.'), findsOneWidget);
+      expect(find.text('Continue'), findsOneWidget);
+      expect(find.text('Skip'), findsOneWidget);
+    });
+
+    testWidgets('language step, slides 1–3 then the theme step; untouched = still follows the PC', (tester) async {
       final look = await pump(tester, const RemoteIntroScreen(), r: controller(paired: false));
-      expect(find.text('1 / 4'), findsOneWidget);
-      for (var i = 0; i < 3; i++) {
+      expect(find.text('1 / 5'), findsOneWidget);
+      expect(find.byKey(const ValueKey('intro-language-step')), findsOneWidget);
+      for (var i = 0; i < 4; i++) {
         await tester.tap(find.byKey(const ValueKey('intro-next')));
         await settle(tester);
       }

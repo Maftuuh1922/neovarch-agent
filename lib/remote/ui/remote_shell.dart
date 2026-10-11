@@ -32,6 +32,7 @@ import 'remote_background.dart' show NvAppBackground;
 import '../appearance.dart' show appearanceProvider;
 import '../profile_avatar.dart';
 import 'glass/glass_style.dart' show GlassStyle, glassStyleProvider;
+import '../l10n/strings.dart';
 
 class RemoteShell extends ConsumerStatefulWidget {
   const RemoteShell({super.key});
@@ -187,10 +188,10 @@ class _RemoteShellState extends ConsumerState<RemoteShell> with WidgetsBindingOb
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('Agen di PC menunggu persetujuanmu'),
+          content: Text(tr('Agen di PC menunggu persetujuanmu')),
           // Float above the nav bar instead of on top of it.
           margin: EdgeInsets.fromLTRB(16, 0, 16, _barH + _gap + 8),
-          action: SnackBarAction(label: 'Lihat', onPressed: openApprovals),
+          action: SnackBarAction(label: tr('Lihat'), onPressed: openApprovals),
         ));
       });
     }
@@ -272,7 +273,7 @@ class _RemoteShellState extends ConsumerState<RemoteShell> with WidgetsBindingOb
               child: NvNavBar(
                 index: index,
                 onTap: (i) => setState(() => index = i),
-                items: _dest,
+                items: [for (final d in _dest) (d.$1, d.$2, tr(d.$3))],
                 badges: {tabChat: pending},
                 avatars: {tabProfile: ref.watch(profileAvatarProvider)},
                 dots: {if (!remote.connected) tabPc: NV.warn},
@@ -302,13 +303,13 @@ class _ConnectionStrip extends ConsumerWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-              Text(r.desktop == null ? 'BELUM ADA PC' : '${r.desktop!.name.toUpperCase()} · ${r.statusLabel.toUpperCase()}',
+              Text(r.desktop == null ? tr('BELUM ADA PC') : '${r.desktop!.name.toUpperCase()} · ${r.statusLabel.toUpperCase()}',
                   maxLines: 1, overflow: TextOverflow.ellipsis, style: NV.monoLabel(size: 9.5, color: c)),
               if (r.error != null && !busy)
                 Text(r.error!, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: NV.muted, height: 1.35)),
             ]),
           ),
-          TextButton(onPressed: busy ? null : r.reconnect, child: const Text('Coba lagi')),
+          TextButton(onPressed: busy ? null : r.reconnect, child: Text(tr('Coba lagi'))),
         ]),
       ),
     );
@@ -340,7 +341,7 @@ class _UpdateStrip extends ConsumerWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-              Text(downloading ? 'Mengunduh v${u['latest']}${p != null ? ' · ${(p * 100).floor()}%' : '…'}' : 'Update tersedia v${u['latest']}',
+              Text(downloading ? '${tr('Mengunduh v{v}', {'v': u['latest']})}${p != null ? ' · ${(p * 100).floor()}%' : '…'}' : tr('Update tersedia v{v}', {'v': u['latest']}),
                   style: TextStyle(color: NV.text, fontWeight: FontWeight.w600, fontSize: 13)),
               if (downloading)
                 Padding(
@@ -355,10 +356,10 @@ class _UpdateStrip extends ConsumerWidget {
           TextButton(
             key: const ValueKey('nv-update-strip-action'),
             onPressed: () => showUpdateDialog(context, u, autoStart: !downloading),
-            child: Text(downloading ? 'Lihat' : 'Perbarui'),
+            child: Text(tr(downloading ? 'Lihat' : 'Perbarui')),
           ),
           IconButton(
-            tooltip: 'Tutup',
+            tooltip: tr('Tutup'),
             icon: Icon(CupertinoIcons.xmark, size: 18, color: NV.muted),
             onPressed: r.dismissUpdate,
           ),
