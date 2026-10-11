@@ -477,13 +477,17 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
                                   avatar: agent == null ? null : NvAgentAvatar.of(agent, size: 18, dot: false),
                                   live: m.streaming,
                                   appear: _fresh.remove(m.id),
-                                  child: AssistantMessage(
-                                    msg: m,
-                                    scale: s.chatScale,
-                                    showReasoning: s.showReasoning,
-                                    isLast: i == msgs.length - 1,
-                                    onLink: (u) => launchUrl(Uri.parse(u), mode: LaunchMode.externalApplication),
-                                    onOpenFile: (p) => openPcFile(context, r.gateway, p),
+                                  child: withAgentFiles(
+                                    m,
+                                    r.gateway,
+                                    AssistantMessage(
+                                      msg: m,
+                                      scale: s.chatScale,
+                                      showReasoning: s.showReasoning,
+                                      isLast: i == msgs.length - 1,
+                                      onLink: (u) => launchUrl(Uri.parse(u), mode: LaunchMode.externalApplication),
+                                      onOpenFile: (p) => openPcFile(context, r.gateway, p),
+                                    ),
                                   ),
                                 ),
                         );

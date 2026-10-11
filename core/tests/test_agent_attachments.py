@@ -249,3 +249,22 @@ async def test_sidecar_pointing_outside_store_is_ignored(client, home, tmp_path)
                                                 "kind": "file", "path": str(secret)}))
     r = await c.get(f"/api/uploads/{uid}", headers={"Authorization": "Bearer tok-123"})
     assert r.status == 404
+
+
+# ------------------------------------------------------- Windows specifics ---
+
+def test_platform_prompt_per_os():
+    from neovarch.agent import platform_prompt
+    win = platform_prompt("win32")
+    assert "cmd.exe" in win and "msedge" in win and "send_file" in win
+    assert "chromium" in platform_prompt("linux") and "send_file" in platform_prompt("linux")
+    assert "screencapture" in platform_prompt("darwin")
+
+
+def test_decode_output_falls_back_on_windows(monkeypatch):
+    from neovarch import tools
+    assert tools.decode_output("héllo".encode("utf-8")) == "héllo"
+    monkeypatch.setattr(tools.os, "name", "nt")
+    import locale
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda _=False: "cp1252")
+    assert tools.decode_output("héllo".encode("cp1252")) == "héllo"

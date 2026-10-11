@@ -75,7 +75,9 @@ String humanSize(int bytes) {
 }
 
 /// Files the PC agent makes that the phone should download instead of showing
-/// "the file is on the PC": Word/PDF reports and PowerPoint decks.
-final _downloadableDoc = RegExp(r'\.(pptx?|docx?|pdf|xlsx?|odt|odp|csv|zip)$', caseSensitive: false);
+/// "the file is on the PC": Word/PDF reports, PowerPoint decks and images
+/// (screenshots the agent only named by path).
+final _downloadableDoc =
+    RegExp(r'\.(pptx?|docx?|pdf|xlsx?|odt|odp|csv|zip|png|jpe?g|gif|webp|bmp)$', caseSensitive: false);
 
 bool isDownloadableDoc(String path) => _downloadableDoc.hasMatch(path.trim());

@@ -111,7 +111,8 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
     started = time.monotonic()
     proc = await asyncio.create_subprocess_shell(
         command, cwd=str(workdir), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        env={**os.environ, **_account_env(), "NEOVARCH_CORE": "1"}, start_new_session=True,
+        env={**os.environ, **_account_env(), "NEOVARCH_CORE": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        start_new_session=os.name != "nt",
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -121,8 +122,26 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
         except ProcessLookupError:
             pass
         return f"error: timed out after {timeout:.0f}s"
-    text = out.decode("utf-8", "replace")
+    text = decode_output(out)
     return _clip(f"exit code {proc.returncode} ({time.monotonic() - started:.1f}s)\n{text}")
+
+
+def decode_output(raw: bytes) -> str:
+    """Command output as text: UTF-8 first; on Windows cmd.exe tools often print in
+    the console/ANSI code page (cp437/cp850/cp1252), so fall back to that instead of
+    turning every accented letter into U+FFFD."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    if os.name == "nt":
+        import locale
+        for enc in ("oem", locale.getpreferredencoding(False)):
+            try:
+                return raw.decode(enc)
+            except (UnicodeDecodeError, LookupError):
+                continue
+    return raw.decode("utf-8", "replace")
 
 
 async def tool_read_file(args: dict, ctx: ToolContext) -> str:

@@ -89,8 +89,34 @@ def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "") -> s
     if skills:
         parts.append("# Skills (read one with the `skill` tool before using it)\n"
                      + "\n".join(f"- {s['name']}: {s['description']}" for s in skills))
+    parts.append(platform_prompt())
     parts.append(f"Current working directory: {cwd}\nDate: {time.strftime('%Y-%m-%d %H:%M %Z')}")
     return "\n\n".join(parts)
+
+
+def platform_prompt(platform: str | None = None) -> str:
+    """Which OS/shell the `shell` tool runs on, and how to take a screenshot there.
+
+    Without it the agent wrote bash (ls, chromium, scrot) on Windows, where the
+    shell tool runs cmd.exe, and screenshots of a page it built failed."""
+    import sys
+    plat = platform or sys.platform
+    if plat == "win32":
+        return ("# This PC\nOS: Windows. The `shell` tool runs cmd.exe (not bash): use `dir`, `type`, or "
+                "`powershell -NoProfile -Command \"...\"`. Paths look like C:\\Users\\name\\...\n"
+                "Screenshot of a web page or local HTML file: headless Edge or Chrome, e.g. "
+                "`\"%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe\" --headless=new --disable-gpu "
+                "--window-size=1280,800 --screenshot=C:\\path\\shot.png file:///C:/path/index.html` "
+                "(or chrome.exe). Then deliver the PNG with `send_file`.")
+    if plat == "darwin":
+        return ("# This PC\nOS: macOS. The `shell` tool runs /bin/sh. Screenshot of a page: headless Chrome "
+                "(`\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --headless=new "
+                "--window-size=1280,800 --screenshot=/path/shot.png file:///path/index.html`); of the screen: "
+                "`screencapture -x /path/shot.png`. Then deliver it with `send_file`.")
+    return ("# This PC\nOS: Linux. The `shell` tool runs /bin/sh. Screenshot of a page or local HTML file: "
+            "`chromium --headless=new --window-size=1280,800 --screenshot=/path/shot.png file:///path/index.html` "
+            "(or google-chrome / chromium-browser); of the screen: `grim`, `gnome-screenshot -f` or `scrot`. "
+            "Then deliver the PNG with `send_file`.")
 
 
 def _vault_prompt(cfg: dict, query: str) -> list[str]:
