@@ -44,7 +44,7 @@ jobs:
       # Targeted unit tests for the phone logic touched in 1.4.7 (the full
       # suite is not gated yet). Add files here as they are kept green.
       - name: Unit tests (targeted)
-        run: flutter test test/voice_fallback_test.dart
+        run: flutter test test/voice_fallback_test.dart test/message_queue_test.dart
 
       - name: Build APK (release, per-ABI)
         run: flutter build apk --release --split-per-abi

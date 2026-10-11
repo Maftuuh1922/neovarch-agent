@@ -147,7 +147,9 @@ class OpenedSession {
   final bool running;
   /// The chat's own reasoning level on the PC ('' = the PC default).
   final String reasoningEffort;
-  const OpenedSession({required this.storedId, required this.runtimeId, required this.title, required this.messages, this.running = false, this.reasoningEffort = ''});
+  /// The chat's message queue on the PC (core ≥ 1.4.7; null on older PCs).
+  final Map<String, dynamic>? queue;
+  const OpenedSession({required this.storedId, required this.runtimeId, required this.title, required this.messages, this.running = false, this.reasoningEffort = '', this.queue});
 }
 
 class ActiveSession {
@@ -817,8 +819,17 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
       messages: RemoteTranscript.fromGatewayMessages(r['messages'] as List? ?? const []),
       running: r['running'] == true || info['running'] == true,
       reasoningEffort: '${info['reasoning_effort'] ?? ''}',
+      queue: r['queue'] is Map ? Map<String, dynamic>.from(r['queue'] as Map) : null,
     );
   }
+
+  /// Antrean pesan (core ≥ 1.4.7): edit / remove / send-now / resume one queued message.
+  Future<dynamic> queueCall(String runtimeId, String action, {String? id, String? text}) => client.call('queue.$action', {
+        ..._p,
+        'session_id': runtimeId,
+        if (id != null) 'id': id,
+        if (text != null) 'text': text,
+      });
 
   /// Save the open chat's reasoning level on the PC — the same per-session
   /// setting the desktop's "Penalaran" writes (`PATCH /api/sessions/{id}`

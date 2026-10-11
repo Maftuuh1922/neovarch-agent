@@ -47,6 +47,7 @@ from neovarch.office import Office
 from neovarch.company import CompanyError
 from neovarch.company_runtime import CompanyRuntime
 from neovarch import uploads as upmod
+from neovarch import msg_queue
 from neovarch import cron as cronmod
 from neovarch import netinfo
 from neovarch.realtime import EventBus
@@ -233,7 +234,59 @@ class LiveSession:
     def emit(self, kind: str, payload: dict) -> None:
         if kind == "message.complete":
             self.last_text = payload.get("text", "")
+            if payload.get("error"):
+                self._turn_error = True
+        elif kind == "error":
+            self._turn_error = True
         self.gw.broadcast_event(kind, self.id, payload)
+
+    # ---- message queue (v1.4.7): messages sent while a turn runs ----
+    def queue_payload(self) -> dict:
+        return msg_queue.payload(self.rec, upmod.public)
+
+    def queue_changed(self) -> None:
+        self.gw.store.save(self.rec)
+        self.gw.broadcast_event("queue.update", self.id, self.queue_payload())
+
+    def enqueue(self, text: str, attachments: list[dict] | None = None) -> dict:
+        it = msg_queue.push(self.rec, text, attachments)
+        self.queue_changed()
+        return it
+
+    def stop(self, *, keep_queue_running: bool = False) -> None:
+        """Interrupt the running turn. A stop by the person pauses the queue."""
+        if keep_queue_running:
+            self._drain_after_stop = True
+        else:
+            self._user_stopped = True
+        self.agent.interrupt()
+        for a in list(self.approvals.values()):
+            if not a["future"].done():
+                a["future"].set_result("deny")
+
+    def _after_turn(self) -> None:
+        """Turn ended: send the next queued message, or pause the queue after a stop/error."""
+        drain = getattr(self, "_drain_after_stop", False)
+        errored = getattr(self, "_turn_error", False)
+        user_stopped = getattr(self, "_user_stopped", False)
+        stopped = user_stopped or errored
+        self._drain_after_stop = self._user_stopped = self._turn_error = False
+        if not msg_queue.items(self.rec):
+            if self.rec.pop("queue_paused", None) is not None:
+                self.queue_changed()
+            return
+        if stopped and not drain:
+            msg_queue.set_paused(self.rec, True, "stopped" if user_stopped else "error")
+            self.queue_changed()
+            return
+        if msg_queue.paused(self.rec) and not drain:
+            return
+        msg_queue.set_paused(self.rec, False)
+        nxt = msg_queue.pop_next(self.rec)
+        self.queue_changed()
+        if nxt:
+            self.gw.broadcast_event("queue.sent", self.id, {"id": nxt["id"], "text": nxt.get("text") or ""})
+            self.submit(nxt.get("text") or "", nxt.get("attachments") or None)
 
     def set_plan(self, steps: list[dict]) -> None:
         """plan_update → the chat shows the checklist (desktop paints status.update; phone reads plan.update)."""
@@ -273,6 +326,9 @@ class LiveSession:
         return False
 
     def submit(self, text: str, attachments: list[dict] | None = None) -> None:
+        self._turn_error = False
+        self.status = "running"  # claimed now: a second submit in the same tick is queued, not raced
+
         async def run():
             self.status = "running"
             self.gw.broadcast_event("session.status", self.id, {"status": "running"})
@@ -298,9 +354,10 @@ class LiveSession:
                 watch = getattr(self.gw, "session_watch", None)
                 if watch is not None:
                     watch.note_own_write()
-                queued = self.rec.get("queued") or []
-                if queued:  # a message steered in while the turn ran
-                    self.submit(queued.pop(0))
+                try:
+                    self._after_turn()
+                except Exception:  # the queue must never take the gateway down
+                    traceback.print_exc()
         self.task = asyncio.create_task(run())
 
     def info(self) -> dict:
@@ -813,7 +870,7 @@ class Gateway:
             conn.attached.add(live.id)
             open_requests = [{"id": rid, "method": "approval", "params": a["params"]} for rid, a in live.approvals.items()]
             return {"session_id": live.id, "stored_session_id": live.id, "messages": to_ui_messages(rec),
-                    "info": live.info(), "open_requests": open_requests,
+                    "info": live.info(), "open_requests": open_requests, "queue": live.queue_payload(),
                     "pending_approval": open_requests[0]["params"] if open_requests else None}
         if method == "session.status":
             live = self._live(p)
@@ -831,11 +888,10 @@ class Gateway:
             return {"ok": True, "session_id": live.id}
         if method == "session.interrupt":
             live = self._live(p)
-            live.agent.interrupt()
-            for a in list(live.approvals.values()):
-                if not a["future"].done():
-                    a["future"].set_result("deny")
+            live.stop()
             return {"ok": True}
+        if method.startswith("queue."):
+            return self._queue_rpc(method, p)
         if method == "prompt.submit":
             live = self._live(p)
             text = str(p.get("text") or "")
@@ -843,9 +899,18 @@ class Gateway:
             atts = live.pending_attachments + [a for a in atts if a["id"] not in {x["id"] for x in live.pending_attachments}]
             if not text.strip() and not atts:
                 raise RpcError(-32602, "text is required")
-            if live.status == "running":
-                raise RpcError(-32010, "a turn is already running in this session")
             conn.attached.add(live.id)
+            if live.status == "running":
+                # v1.4.7: never refuse — the message waits in the session's queue and is
+                # sent when the turn ends (phone and desktop see the same queue).
+                live.pending_attachments = []
+                try:
+                    it = live.enqueue(text, atts)
+                except msg_queue.QueueError as exc:
+                    raise RpcError(-32602, str(exc)) from None
+                q = live.queue_payload()
+                return {"ok": True, "session_id": live.id, "status": "queued", "queued": True,
+                        "queue_id": it["id"], "position": q["count"], "queue": q}
             if p.get("reasoning_effort"):  # the phone's pick rides on the prompt; it sticks to the chat
                 try:
                     self.set_session_effort(live.id, p.get("reasoning_effort"))
@@ -1170,6 +1235,43 @@ class Gateway:
             meta = w.finish(head=getattr(w, "head", b""))
             return {"ok": True, "upload_id": uid, "done": True, **upmod.public(meta)}
         return {"ok": True, "upload_id": uid, "received": w.size, "done": False}
+
+    def _queue_rpc(self, method: str, p: dict) -> dict:
+        """queue.list / queue.edit / queue.remove / queue.send_now / queue.clear / queue.resume."""
+        live = self._live(p)
+        qid = str(p.get("id") or p.get("queue_id") or "")
+        try:
+            if method == "queue.list":
+                return live.queue_payload()
+            if method == "queue.edit":
+                msg_queue.edit(live.rec, qid, str(p.get("text") or ""))
+            elif method == "queue.remove":
+                msg_queue.remove(live.rec, qid)
+                if not msg_queue.items(live.rec):
+                    live.rec.pop("queue_paused", None)
+            elif method == "queue.clear":
+                msg_queue.clear(live.rec)
+            elif method in ("queue.send_now", "queue.resume"):
+                if method == "queue.send_now":
+                    msg_queue.to_front(live.rec, qid)
+                msg_queue.set_paused(live.rec, False)
+                if live.status == "running":
+                    if method == "queue.send_now":
+                        live.stop(keep_queue_running=True)  # interrupt; the front item goes next
+                    live.queue_changed()
+                    return {**live.queue_payload(), "ok": True, "status": "interrupting"}
+                nxt = msg_queue.pop_next(live.rec)
+                live.queue_changed()
+                if nxt:
+                    self.broadcast_event("queue.sent", live.id, {"id": nxt["id"], "text": nxt.get("text") or ""})
+                    live.submit(nxt.get("text") or "", nxt.get("attachments") or None)
+                return {**live.queue_payload(), "ok": True, "status": "running" if nxt else "idle"}
+            else:
+                raise RpcError(-32601, f"unknown method: {method}")
+        except msg_queue.QueueError as exc:
+            raise RpcError(-32602, str(exc)) from None
+        live.queue_changed()
+        return {**live.queue_payload(), "ok": True}
 
     def _live(self, p: dict) -> LiveSession:
         sid = str(p.get("session_id") or "")

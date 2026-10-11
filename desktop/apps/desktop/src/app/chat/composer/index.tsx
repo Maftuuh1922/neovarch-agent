@@ -14,6 +14,7 @@ import {
 import { useTourMarker } from '@/app/chat/tour-marker'
 import { useHudComposerDrag } from '@/app/hud/composer-drag'
 import { composerFloatingStrip, composerInputBacking } from '@/components/chat/composer-dock'
+import { CoreQueuePanel } from '@/components/neovarch/core-queue-panel'
 import { useSetupChatView } from '@/components/onboarding-chat/assembly'
 import { OnboardingSkip } from '@/components/onboarding-chat/skip'
 import { Button } from '@/components/ui/button'
@@ -1302,6 +1303,9 @@ export function ChatBar({
             <SuggestionPills sessionId={statusSessionId} />
             <OnboardingSkip />
           </div>
+          {/* Neovarch: messages waiting in the PC core's queue for this chat
+              (sent from the phone, or from here while the agent worked). */}
+          <CoreQueuePanel gateway={gateway} sessionId={statusSessionId} />
           {/* Session-scoped status stack (todos, subagents, background tasks,
               queue). An in-flow dock child: the dock is bottom-anchored, so it
               grows upward over the thread and the dock's own measurement covers

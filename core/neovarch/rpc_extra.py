@@ -140,8 +140,13 @@ async def handle(gw: "Gateway", method: str, p: dict) -> Any:
         if not text:
             raise RpcError(-32602, "text is required")
         if live.status == "running":
-            live.rec.setdefault("queued", []).append(text)
-            return {"ok": True, "status": "queued", "session_id": live.id}
+            from neovarch import msg_queue
+            try:
+                it = live.enqueue(text)
+            except msg_queue.QueueError as exc:
+                raise RpcError(-32602, str(exc)) from None
+            return {"ok": True, "status": "queued", "session_id": live.id, "queue_id": it["id"],
+                    "queue": live.queue_payload()}
         live.submit(text)
         return {"ok": True, "status": "running", "session_id": live.id}
 

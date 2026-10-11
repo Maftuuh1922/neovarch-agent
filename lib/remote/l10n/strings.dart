@@ -133,4 +133,23 @@ const enStrings = <String, String>{
   'pc tersimpan': 'saved pcs',
   'Cukup pindai sekali. Di Wi-Fi yang sama HP tersambung langsung; di luar rumah otomatis lewat relay terenkripsi — tanpa aplikasi tambahan. Kunci disimpan terenkripsi di HP.':
       'Scan once. On the same Wi-Fi the phone connects directly; away from home it goes through the encrypted relay automatically — no extra app. Keys are stored encrypted on the phone.',
+
+  // ---- antrean pesan (v1.4.7) ------------------------------------------------------
+  'Antre ({n})': 'Queued ({n})',
+  'Antrean dijeda karena giliran gagal. Kirim sekarang atau lanjutkan.': 'Queue paused because the turn failed. Send now or resume.',
+  'Antrean dijeda karena agen dihentikan. Kirim sekarang atau lanjutkan.': 'Queue paused because the agent was stopped. Send now or resume.',
+  'Agen masih bekerja. Tunggu sampai selesai atau tekan Stop. Perbarui Neovarch di PC (≥ 1.4.7) agar pesan otomatis diantre.':
+      'The agent is still working. Wait for it to finish or press Stop. Update Neovarch on your PC (≥ 1.4.7) to queue messages automatically.',
+  'Antrean penuh (maks 20 pesan).': 'Queue is full (max 20 messages).',
+  'Pesan antrean sudah terkirim atau dihapus.': 'That queued message was already sent or removed.',
+  'Pesan kosong.': 'Empty message.',
+  'Belum terhubung ke PC.': 'Not connected to the PC yet.',
+  'Kirim sekarang': 'Send now',
+  'Lanjutkan antrean': 'Resume queue',
+  'Edit pesan antrean': 'Edit queued message',
+  'Hapus dari antrean': 'Remove from queue',
+  'Simpan': 'Save',
+  'Batal': 'Cancel',
+  'Masuk antrean · dikirim setelah agen selesai': 'Queued · sent when the agent finishes',
+  '{n} lampiran': '{n} attachments',
 };
