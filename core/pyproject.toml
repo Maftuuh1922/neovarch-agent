@@ -27,6 +27,9 @@ version = { attr = "neovarch.__version__" }
 [tool.setuptools.packages.find]
 include = ["neovarch*"]
 
+[tool.setuptools.package-data]
+"neovarch.skillpack" = ["*.json", "*.md", "*/*", "*/*/*", "*/*/*/*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

@@ -33,6 +33,8 @@ void main() {
     expect(isDownloadableDoc('/home/u/.neovarch/presentations/deck/exports/deck.pptx'), isTrue);
     expect(isDownloadableDoc(r'C:\Users\u\.neovarch\reports\a\report.docx'), isTrue);
     expect(isDownloadableDoc('/home/u/proyek/main.dart'), isFalse);
+    expect(isDownloadableDoc('/home/u/.neovarch/diagrams/alur-20261011-120000.html'), isTrue);
+    expect(isDownloadableDoc(r'C:\Users\u\.neovarch\diagrams\erd.svg'), isTrue);
     expect(mimeForName('deck.pptx'), 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
   });
 
