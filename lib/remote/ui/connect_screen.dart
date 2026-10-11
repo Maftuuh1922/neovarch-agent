@@ -258,7 +258,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
             Padding(
               padding: EdgeInsets.symmetric(horizontal: 4),
               child: Text(
-                'HP dan PC harus di jaringan yang sama (Wi-Fi rumah/kantor) atau terhubung lewat Tailscale/VPN. Token disimpan terenkripsi di HP.',
+                'Cukup pindai sekali. Di Wi-Fi yang sama HP tersambung langsung; di luar rumah otomatis lewat relay terenkripsi — tanpa aplikasi tambahan. Kunci disimpan terenkripsi di HP.',
                 style: TextStyle(fontSize: 12.5, height: 1.5, color: NV.faint),
               ),
             ),

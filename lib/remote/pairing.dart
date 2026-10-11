@@ -11,7 +11,15 @@
 //   http://192.168.1.5:9319/?token=…        (a dashboard URL with ?token=)
 //   ws://192.168.1.5:9319/api/ws?token=…    (the WebSocket URL itself)
 //   192.168.1.5:9319                        (manual: token typed separately)
+//
+// Remote dari mana saja (v1.5): the same QR also carries the relay room id,
+// the PC's public key, the relay URL and a short-lived pairing code
+//   …&pc=<pcId>&pk=<pcPublicKey>&relay=wss%3A%2F%2F…&pair=<code>[&bt=AA:BB:…&btch=3]
+// Old QRs without them still work (LAN only until the first LAN connect
+// enrolls this phone).
 import 'dart:convert';
+
+import 'link/link_info.dart';
 
 const int defaultGatewayPort = 9319;
 
@@ -25,7 +33,10 @@ class GatewayPairing {
   /// Other addresses of the same PC, tried after [url] (see [orderedGatewayUrls]).
   final List<String> alternates;
 
-  const GatewayPairing({required this.url, this.token = '', this.name = '', this.profile, this.headers = const {}, this.alternates = const []});
+  /// Relay / Bluetooth identity of the PC (null for an old QR).
+  final LinkInfo? link;
+
+  const GatewayPairing({required this.url, this.token = '', this.name = '', this.profile, this.headers = const {}, this.alternates = const [], this.link});
 
   /// [url] first, then the alternates, LAN before Tailscale, no duplicates.
   List<String> get allUrls => orderedGatewayUrls([url, ...alternates]);
@@ -33,7 +44,7 @@ class GatewayPairing {
   String get displayName => name.trim().isNotEmpty ? name.trim() : (Uri.tryParse(url)?.host ?? url);
 
   GatewayPairing copyWith({String? token, String? name}) => GatewayPairing(
-      url: url, token: token ?? this.token, name: name ?? this.name, profile: profile, headers: headers, alternates: alternates);
+      url: url, token: token ?? this.token, name: name ?? this.name, profile: profile, headers: headers, alternates: alternates, link: link);
 
   String toUri() => Uri(scheme: 'neovarch', host: 'pair', queryParameters: {
         'v': '1',
@@ -42,6 +53,12 @@ class GatewayPairing {
         if (name.isNotEmpty) 'name': name,
         if (profile != null && profile!.isNotEmpty) 'profile': profile!,
         if (alternates.isNotEmpty) 'alt': alternates,
+        if (link != null) 'pc': link!.pcId,
+        if (link != null) 'pk': link!.pcPk,
+        if (link?.relayUrl != null) 'relay': link!.relayUrl!,
+        if (link?.pairCode != null) 'pair': link!.pairCode!,
+        if (link?.bluetooth != null) 'bt': link!.bluetooth!.address,
+        if (link?.bluetooth?.channel != null) 'btch': '${link!.bluetooth!.channel}',
       }).toString();
 
   /// Never throws; null when [raw] carries no usable gateway address.
@@ -68,6 +85,13 @@ class GatewayPairing {
               for (final ip in ((j['tailscale'] as Map)['ips'] as List? ?? const [])) '$ip',
             ],
           ], Uri.tryParse(url)?.port),
+          link: LinkInfo.tryParse(j['link'] is Map ? j['link'] : {
+            'pc_id': j['pc'] ?? j['pc_id'],
+            'pc_pk': j['pk'] ?? j['pc_pk'],
+            'relay_url': j['relay'] ?? j['relay_url'],
+            'pair_code': j['pair'] ?? j['pair_code'],
+            'bluetooth': j['bluetooth'] ?? (j['bt'] != null ? {'address': j['bt'], 'channel': j['btch']} : null),
+          }),
         );
       } catch (_) {
         return null;
@@ -87,7 +111,14 @@ class GatewayPairing {
           alternates: _alts(url, [
             ...?all['alt'],
             for (final v in [...?all['urls'], ...?all['ts']]) ...v.split(','),
-          ], Uri.tryParse(url)?.port));
+          ], Uri.tryParse(url)?.port),
+          link: LinkInfo.tryParse({
+            'pc_id': q['pc'],
+            'pc_pk': q['pk'],
+            'relay_url': q['relay'],
+            'pair_code': q['pair'],
+            if (q['bt'] != null) 'bluetooth': {'address': q['bt'], 'channel': int.tryParse(q['btch'] ?? ''), 'uuid': q['btuuid']},
+          }));
     }
     final url = normalizeGatewayUrl(s);
     if (url == null) return null;

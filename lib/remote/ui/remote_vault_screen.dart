@@ -15,6 +15,7 @@ import '../../ui/widgets/markdown_view.dart';
 import '../remote_controller.dart';
 import '../vault_models.dart';
 import 'nv_widgets.dart';
+import '../remote_errors.dart';
 
 const _wikiScheme = 'nvwiki:';
 
@@ -73,7 +74,7 @@ class _RemoteVaultScreenState extends ConsumerState<RemoteVaultScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = '$e';
+        _error = friendlyRemoteError(e);
         _loading = false;
       });
     }
@@ -89,7 +90,7 @@ class _RemoteVaultScreenState extends ConsumerState<RemoteVaultScreen> {
       final h = await g.vaultSearch(q.trim());
       if (mounted) setState(() => _hits = h);
     } catch (e) {
-      if (mounted) toast(context, '$e');
+      if (mounted) toast(context, friendlyRemoteError(e));
     }
   }
 
@@ -251,7 +252,7 @@ class _VaultNoteScreenState extends ConsumerState<VaultNoteScreen> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) setState(() => _error = friendlyRemoteError(e));
     }
   }
 
@@ -428,7 +429,7 @@ class _VaultGraphScreenState extends ConsumerState<VaultGraphScreen> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) setState(() => _error = friendlyRemoteError(e));
     }
   }
 

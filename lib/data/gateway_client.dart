@@ -53,17 +53,39 @@ Uri buildGatewayWsUri(String baseUrl, {String? token, String path = '/api/ws', M
   );
 }
 
+/// A JSON-RPC frame stream that is not a direct WebSocket (the encrypted relay /
+/// Bluetooth tunnel carries the same frames as `/api/ws`).
+abstract class RpcPipe {
+  Stream<String> get stream;
+  void add(String frame);
+  Future<void> close();
+}
+
+class _WsPipe implements RpcPipe {
+  _WsPipe(this.ch);
+  final WebSocketChannel ch;
+  @override
+  Stream<String> get stream => ch.stream.map((e) => '$e');
+  @override
+  void add(String frame) => ch.sink.add(frame);
+  @override
+  Future<void> close() async => ch.sink.close();
+}
+
 class GatewayClient {
-  GatewayClient({required this.baseUrl, this.token, this.headers = const {}, this.connectTimeout = const Duration(seconds: 15)});
+  GatewayClient({required this.baseUrl, this.token, this.headers = const {}, this.connectTimeout = const Duration(seconds: 15), this.pipeOpener});
   final String baseUrl;
   final String? token;
   final Map<String, String> headers;
   final Duration connectTimeout;
 
+  /// When set, frames go through this pipe instead of a WebSocket to [baseUrl].
+  final Future<RpcPipe> Function()? pipeOpener;
+
   /// Extra query parameters for the next connect (e.g. `since`/`boot_id`).
   Map<String, String> connectQuery = const {};
 
-  WebSocketChannel? _ch;
+  RpcPipe? _ch;
   StreamSubscription? _sub;
   int _seq = 0;
   final Map<String, Completer<dynamic>> _pending = {};
@@ -78,23 +100,30 @@ class GatewayClient {
     if (_ch != null) return;
     if (_connecting != null) return _connecting!.future;
     final c = _connecting = Completer<void>();
-    WebSocketChannel? ch;
+    WebSocketChannel? ws;
+    RpcPipe? pipe;
     try {
-      final uri = buildGatewayWsUri(baseUrl, token: token, query: connectQuery);
-      ch = connectWs(uri, {
-        if (token != null && token!.isNotEmpty) 'Authorization': 'Bearer $token',
-        ...headers,
-      });
-      await ch.ready.timeout(connectTimeout);
-      _ch = ch;
-      _sub = ch.stream.listen(_onFrame, onDone: _onClose, onError: (e) {
+      if (pipeOpener != null) {
+        pipe = await pipeOpener!().timeout(connectTimeout);
+      } else {
+        final uri = buildGatewayWsUri(baseUrl, token: token, query: connectQuery);
+        ws = connectWs(uri, {
+          if (token != null && token!.isNotEmpty) 'Authorization': 'Bearer $token',
+          ...headers,
+        });
+        await ws.ready.timeout(connectTimeout);
+        pipe = _WsPipe(ws);
+      }
+      _ch = pipe;
+      _sub = pipe.stream.listen(_onFrame, onDone: _onClose, onError: (e) {
         lastError = '$e';
         _onClose();
       });
       c.complete();
     } catch (e) {
       try {
-        unawaited(ch?.sink.close());
+        unawaited(ws?.sink.close());
+        unawaited(pipe?.close());
       } catch (_) {}
       lastError = 'tidak bisa terhubung ke gateway: $e';
       c.completeError(RpcError(0, lastError!));
@@ -152,7 +181,7 @@ class GatewayClient {
     }
   }
 
-  void _send(Map<String, dynamic> frame) => _ch?.sink.add(jsonEncode(frame));
+  void _send(Map<String, dynamic> frame) => _ch?.add(jsonEncode(frame));
 
   void respondServerRequest(dynamic rid, dynamic result) =>
       _send({'jsonrpc': '2.0', 'id': rid, 'result': result});
@@ -171,7 +200,7 @@ class GatewayClient {
 
   void close() {
     _sub?.cancel();
-    _ch?.sink.close();
+    _ch?.close();
     _ch = null;
   }
 }

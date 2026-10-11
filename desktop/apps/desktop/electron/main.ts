@@ -400,6 +400,18 @@ import { createMediaProtocolHandler, MEDIA_PROTOCOL } from './media-protocol'
 import { fetchLocalMedia } from './media-range'
 import { createMinimizeToTray } from './minimize-to-tray'
 import {
+  type BackgroundSettings,
+  type BackgroundStatus,
+  type CoreBackgroundStatus,
+  applyStartAtLogin,
+  autostartSupported,
+  launchedHidden,
+  mergeWithCore,
+  quitGatewayAction,
+  readBackgroundSettings,
+  writeBackgroundSettings
+} from './neovarch-background'
+import {
   createNativeAccessTokenCoordinator,
   type NativeAccessTokenOptions,
   NativeAuthChangedError
@@ -13798,13 +13810,27 @@ const minimizeToTray = createMinimizeToTray({
   restoreMainWindow: () =>
     ensureMainWindow(mainWindow, { isReady: app.isReady(), createWindow, focusWindow: activateWindow }),
   isQuittingForHandoff: () => isQuittingForHandoff,
-  log: rememberLog
+  log: rememberLog,
+  // Tray ▸ "Hentikan semua & keluar": quit and stop the background gateway too.
+  quitEverything: () => {
+    backgroundQuitEverything = true
+    app.quit()
+  }
 })
+
+// "Jalankan di latar belakang" (Settings ▸ Remote): see neovarch-background.ts.
+const backgroundSettingsPath = path.join(app.getPath('userData'), 'neovarch-background.json')
+let backgroundSettings: BackgroundSettings = readBackgroundSettings(backgroundSettingsPath)
+let backgroundError: string | null = null
+let backgroundCore: CoreBackgroundStatus | null = null
+let backgroundQuitEverything = false
+let hiddenLaunchPending = launchedHidden(process.argv)
 
 // Neovarch Remote: a second, LAN-bound `hermes serve` for the phone app (see
 // neovarch-remote.ts for why it is a separate gated process).
 const neovarchRemote = createRemoteController({
   settingsPath: path.join(app.getPath('userData'), 'neovarch-remote.json'),
+  backgroundMode: () => backgroundSettings.runInBackground,
   currentProfile: () => primaryProfileKey() || null,
   log: rememberLog,
   resolveSpawn: async args => {
@@ -13851,6 +13877,130 @@ ipcMain.handle('neovarch:remote:set-enabled', (_event, on) => neovarchRemote.set
 ipcMain.handle('neovarch:remote:rotate', () => neovarchRemote.rotate())
 ipcMain.handle('neovarch:remote:update', (_event, patch) => neovarchRemote.update(patch && typeof patch === 'object' ? patch : {}))
 ipcMain.handle('neovarch:remote:check', () => neovarchRemote.check())
+ipcMain.handle('neovarch:remote:set-relay', (_event, patch) =>
+  neovarchRemote.setRelay(
+    patch && typeof patch === 'object'
+      ? {
+          enabled: typeof patch.enabled === 'boolean' ? patch.enabled : undefined,
+          url: typeof patch.url === 'string' || patch.url === null ? patch.url : undefined
+        }
+      : {}
+  )
+)
+ipcMain.handle('neovarch:remote:set-bluetooth', (_event, on) => neovarchRemote.setBluetooth(on === true))
+ipcMain.handle('neovarch:remote:revoke-device', (_event, id) => neovarchRemote.revokeDevice(String(id ?? '')))
+
+function backgroundStatus(): BackgroundStatus {
+  return {
+    ...backgroundSettings,
+    trayAvailable: minimizeToTray.status().available,
+    autostartSupported: autostartSupported(process.platform),
+    service: neovarchRemote.isRunning() ? (backgroundCore?.service ?? null) : null,
+    agent: neovarchRemote.isRunning() ? (backgroundCore?.agent ?? null) : null,
+    error: backgroundError
+  }
+}
+
+function broadcastBackground() {
+  const st = backgroundStatus()
+
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('neovarch:background:changed', st)
+    }
+  }
+}
+
+async function applyBackgroundSettings(next: BackgroundSettings, previous: BackgroundSettings) {
+  backgroundSettings = next
+  backgroundError = null
+
+  try {
+    writeBackgroundSettings(backgroundSettingsPath, next)
+  } catch (err) {
+    backgroundError = `Gagal menyimpan pengaturan: ${(err as Error).message}`
+  }
+
+  if (next.startAtLogin !== previous.startAtLogin || next.startAtLogin) {
+    backgroundError =
+      applyStartAtLogin({ enabled: next.startAtLogin, platform: process.platform, execPath: process.execPath, app }) ??
+      backgroundError
+  }
+
+  if (next.runInBackground !== previous.runInBackground) {
+    await minimizeToTray.setForced(next.runInBackground)
+
+    // The gateway's stdio (pipe vs. log file) is chosen at spawn: restart it so
+    // a closed window or a quit can no longer take it down.
+    if (next.runInBackground && neovarchRemote.status().enabled && neovarchRemote.hasProcess()) {
+      rememberLog('[background] restarting the LAN gateway detached')
+      await neovarchRemote.stop()
+      neovarchRemote.autostart()
+    }
+
+    if (next.runInBackground && !minimizeToTray.status().available) {
+      backgroundError =
+        'Ikon tray tidak tersedia di desktop ini: menutup jendela akan keluar dari aplikasi, tetapi gateway tetap berjalan.'
+    }
+  }
+
+  broadcastBackground()
+}
+
+/** Pull the gateway's copy (the phone may have changed it) and reconcile. */
+async function syncBackgroundWithCore() {
+  const core = await neovarchRemote.gatewayJson<CoreBackgroundStatus>('GET', '/api/remote/background')
+  backgroundCore = core
+
+  if (core) {
+    const merged = mergeWithCore(backgroundSettings, core)
+
+    if (merged.changed) {
+      rememberLog('[background] settings changed from the phone')
+      await applyBackgroundSettings(merged.settings, backgroundSettings)
+    } else if (merged.pushToCore) {
+      backgroundCore =
+        (await neovarchRemote.gatewayJson<CoreBackgroundStatus>('POST', '/api/remote/background', {
+          run_in_background: backgroundSettings.runInBackground,
+          start_at_login: backgroundSettings.startAtLogin
+        })) ?? core
+    }
+
+    if (core.service && !core.service.desktop_attached) {
+      void neovarchRemote.gatewayJson('POST', '/api/remote/background', { desktop_pid: process.pid })
+    }
+  }
+
+  broadcastBackground()
+}
+
+const backgroundSyncTimer = setInterval(() => void syncBackgroundWithCore(), 15_000)
+backgroundSyncTimer.unref?.()
+
+ipcMain.handle('neovarch:background:get', async () => {
+  await syncBackgroundWithCore()
+
+  return backgroundStatus()
+})
+ipcMain.handle('neovarch:background:set', async (_event, patch) => {
+  const p = patch && typeof patch === 'object' ? (patch as Record<string, unknown>) : {}
+  const next: BackgroundSettings = {
+    runInBackground: typeof p.runInBackground === 'boolean' ? p.runInBackground : backgroundSettings.runInBackground,
+    startAtLogin: typeof p.startAtLogin === 'boolean' ? p.startAtLogin : backgroundSettings.startAtLogin,
+    updatedAt: Date.now() / 1000
+  }
+
+  await applyBackgroundSettings(next, backgroundSettings)
+  backgroundCore =
+    (await neovarchRemote.gatewayJson<CoreBackgroundStatus>('POST', '/api/remote/background', {
+      run_in_background: next.runInBackground,
+      start_at_login: next.startAtLogin,
+      desktop_pid: process.pid
+    })) ?? backgroundCore
+  broadcastBackground()
+
+  return backgroundStatus()
+})
 
 // Neovarch wallpaper (Settings ▸ Tampilan ▸ Latar belakang): the picked image is
 // copied into userData so it survives the original moving (neovarch-wallpaper.ts).
@@ -15288,6 +15438,15 @@ function createWindow() {
 
   const revealController = wireWindowReveal(createdMainWindow, {
     onRevealed: () => {
+      // Started at login ("Mulai saat login", --hidden): go straight to the tray.
+      if (hiddenLaunchPending) {
+        hiddenLaunchPending = false
+
+        if (backgroundSettings.runInBackground && minimizeToTray.status().available) {
+          createdMainWindow.hide()
+        }
+      }
+
       // Persist geometry as soon as the window is visible so a crash before the
       // first clean resize/move/close still captures the restored bounds (#56726).
       schedulePersistWindowState()
@@ -19580,9 +19739,20 @@ app.whenReady().then(() => {
   registerPowerResumeListeners()
   keepAwakeMode = readPersistedKeepAwakeMode()
   applyKeepAwake()
-  void minimizeToTray.start()
+  void minimizeToTray.start().then(() => {
+    if (backgroundSettings.runInBackground) {
+      void minimizeToTray.setForced(true)
+    }
+  })
+
+  // Keep the login item pointing at this install (an update may move it).
+  if (backgroundSettings.startAtLogin) {
+    backgroundError = applyStartAtLogin({ enabled: true, platform: process.platform, execPath: process.execPath, app })
+  }
+
   // Give the primary backend a head start (runtime resolution, first-run setup).
-  setTimeout(() => neovarchRemote.autostart(), 8000)
+  // A background gateway left by the previous session is adopted right away.
+  setTimeout(() => neovarchRemote.autostart(), backgroundSettings.runInBackground ? 500 : 8000)
   mainProcessLagWatchdog.start()
   f12Blocked = readPersistedDisableF12()
   // Seed this before the first window exists: a picker can open before
@@ -19851,7 +20021,12 @@ app.on('before-quit', event => {
   // The LAN gateway is a second core process in its own process group, so it
   // does not die with Electron: stop it now (no late autostart may respawn it)
   // and let the teardown below wait for it, once, across before-quit re-entries.
-  remoteQuitStop ??= { wait: neovarchRemote.hasProcess(), done: neovarchRemote.shutdown() }
+  // "Jalankan di latar belakang": the gateway keeps running on its own instead
+  // (tray ▸ "Hentikan semua & keluar" stops it as before).
+  remoteQuitStop ??=
+    quitGatewayAction(backgroundSettings, neovarchRemote.status().enabled, backgroundQuitEverything) === 'detach'
+      ? { wait: false, done: neovarchRemote.detach() }
+      : { wait: neovarchRemote.hasProcess(), done: neovarchRemote.shutdown() }
   mainProcessLagWatchdog.stop()
 
   // A detached remote updater can outlive this Electron process. Do not tear

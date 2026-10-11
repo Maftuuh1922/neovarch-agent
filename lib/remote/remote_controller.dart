@@ -13,9 +13,12 @@ import '../data/gateway_client.dart';
 import '../models/models.dart';
 import 'attachments.dart';
 import 'company_models.dart';
+import 'link/frame_link.dart';
+import 'link/link_info.dart';
 import 'models_api.dart';
 import 'office_models.dart';
 import 'pairing.dart';
+import 'remote_errors.dart';
 import 'remote_gateway.dart';
 import 'update_check.dart';
 import 'vault_models.dart';
@@ -33,6 +36,9 @@ class RemoteController extends ChangeNotifier {
   RemoteStatus status = RemoteStatus.disconnected;
   String? error;
   StreamSubscription? _statusSub, _eventSub, _approvalSub, _routeSub;
+
+  /// Opens a Bluetooth link to the PC (Android platform channel; null = no Bluetooth).
+  Future<FrameLink> Function(BluetoothTarget target)? bluetoothConnector;
 
   /// The PC's appearance (`/api/appearance`, `appearance.changed`).
   void Function(Map<String, dynamic> appearance)? onAppearance;
@@ -241,33 +247,67 @@ class RemoteController extends ChangeNotifier {
   /// Validate a scanned/typed pairing against the gateway, then save it.
   /// Returns an error message, or null on success.
   Future<String?> pair(GatewayPairing p) async {
-    final g = RemoteGateway(baseUrl: p.url, token: p.token, headers: p.headers, profile: p.profile, autoReconnect: false);
+    // A new QR also carries the relay identity: pairing then works from
+    // anywhere (LAN first, else Bluetooth/relay with the QR's pairing code).
+    final id = desktops.idFor(p);
+    LinkInfo? link = p.link;
+    final g = RemoteGateway(
+        baseUrl: p.url,
+        alternates: p.alternates,
+        token: p.token,
+        headers: p.headers,
+        profile: p.profile,
+        autoReconnect: false,
+        link: link,
+        deviceKey: () => desktops.linkKey(id),
+        deviceName: deviceName,
+        onLinkChanged: (l) => link = l);
     try {
       await g.connect();
       await g.listSessions(limit: 1);
     } catch (e) {
       await g.close();
-      return _friendly('$e');
+      return _friendly('$e', relay: p.link?.canRelay == true);
     }
     await g.close();
-    final d = await desktops.upsert(p);
+    final d = await desktops.upsert(p, id: id);
+    if (link != null) desktops.updateLink(d, link: link);
     await connectTo(d);
     return null;
   }
 
-  static String _friendly(String e) {
+  /// Name this phone shows in PC Settings → Remote (paired devices).
+  String deviceName = 'HP Neovarch';
+
+  /// Never the raw exception text: network failures become one Indonesian
+  /// sentence ("PC tidak terjangkau…"), see remote_errors.dart.
+  String _friendly(String e, {bool? relay}) {
     final s = e.replaceFirst('Exception: ', '');
+    final viaRelay = relay ?? (gateway?.relayAvailable ?? false);
     if (s.contains('401') || s.contains('403') || s.contains('not upgraded')) {
       return 'PC menolak token. Buat ulang QR pemasangan di PC lalu pindai lagi.';
     }
-    if (s.contains('timed out') || s.contains('waktu habis') || s.contains('TimeoutException')) {
-      return 'PC tidak menjawab. Pastikan HP dan PC di Wi-Fi yang sama (atau Tailscale) dan gateway Neovarch di PC aktif.';
+    if (s.startsWith('PC tidak terjangkau') || s.startsWith('HP ini sudah dicabut') || s.startsWith('PC belum mengenal') || s.startsWith('Kode pemasangan')) {
+      return s;
     }
-    if (s.contains('Connection refused') || s.contains('SocketException') || s.contains('tidak bisa terhubung')) {
-      return 'Tidak bisa menjangkau PC ($s). Cek alamat IP/port dan firewall PC.';
+    if (isNetworkError(s) || s.contains('timed out') || s.contains('waktu habis') || s.contains('tidak ada alamat PC')) {
+      return RemoteUnreachable(relayAvailable: viaRelay).toString();
     }
     return s;
   }
+
+  /// Phone setting: also try Bluetooth for the active PC (off by default).
+  Future<void> setBluetooth(bool on) async {
+    final d = desktop;
+    if (d == null) return;
+    desktops.updateLink(d, bluetooth: on);
+    gateway?.bluetoothEnabled = on;
+    notifyListeners();
+  }
+
+  /// How the live connection runs: 'lan' (direct, incl. other direct
+  /// addresses), 'relay' or 'bluetooth'.
+  String get transport => gateway?.transport ?? 'lan';
 
   Future<void> connectTo(SavedDesktop d) async {
     // Another PC = another GitHub account: never show the previous one's profile.
@@ -276,7 +316,18 @@ class RemoteController extends ChangeNotifier {
     desktop = d;
     desktops.touch(d);
     final token = await desktops.token(d.id);
-    final g = gateway = RemoteGateway(baseUrl: d.url, alternates: d.alternates, token: token, headers: d.headers, profile: d.profile);
+    final g = gateway = RemoteGateway(
+        baseUrl: d.url,
+        alternates: d.alternates,
+        token: token,
+        headers: d.headers,
+        profile: d.profile,
+        link: d.link,
+        deviceKey: () => desktops.linkKey(d.id),
+        deviceName: deviceName,
+        bluetoothEnabled: d.bluetooth,
+        bluetoothConnector: bluetoothConnector,
+        onLinkChanged: (l) => desktops.updateLink(d, link: l));
     _statusSub = g.statusStream.listen(_onStatus);
     _eventSub = g.events.listen(_onEvent);
     _approvalSub = g.approvalsChanged.listen(_onApproval);
@@ -554,7 +605,7 @@ class RemoteController extends ChangeNotifier {
       officeAt = DateTime.now();
       officeError = null;
     } catch (e) {
-      officeError = '$e';
+      officeError = _friendly('$e');
     }
     notifyListeners();
   }
@@ -587,7 +638,7 @@ class RemoteController extends ChangeNotifier {
         modelsError = e.message;
       }
     } catch (e) {
-      modelsError = '$e';
+      modelsError = _friendly('$e');
     }
     notifyListeners();
   }
@@ -602,7 +653,7 @@ class RemoteController extends ChangeNotifier {
       notifyListeners();
       return null;
     } catch (e) {
-      return '$e';
+      return _friendly('$e');
     }
   }
 
@@ -614,7 +665,7 @@ class RemoteController extends ChangeNotifier {
       await api.setAgentModel(agentId, m?.id, provider: m?.provider);
       return null;
     } catch (e) {
-      return '$e';
+      return _friendly('$e');
     }
   }
 
@@ -867,7 +918,7 @@ class RemoteController extends ChangeNotifier {
       board = await g.board();
       boardError = null;
     } catch (e) {
-      boardError = '$e';
+      boardError = _friendly('$e');
     }
     boardLoading = false;
     notifyListeners();
@@ -885,7 +936,7 @@ class RemoteController extends ChangeNotifier {
       unawaited(refreshBoard());
       return null;
     } catch (e) {
-      return '$e';
+      return _friendly('$e');
     }
   }
 

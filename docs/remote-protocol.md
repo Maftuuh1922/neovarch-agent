@@ -116,7 +116,98 @@ tool rows, markdown answer) — the same widgets the desktop-style chat uses.
 ## 6. Security notes
 
 * Token = full control of the agent on the PC (tools, terminal, files). It travels in the URL/headers; on a
-  plain-`http` LAN it is visible to anyone sniffing that network → use Tailscale/WireGuard or TLS (`https`/`wss`
-  URLs are supported as-is).
-* Revocation in v1 = rotate the desktop's token (all phones must re-pair). Per-device tokens need the desktop's
-  gated auth mode (one user session per phone).
+  plain-`http` LAN it is visible to anyone sniffing that network. Outside the LAN the phone uses the end-to-end
+  encrypted relay (section 7); `https`/`wss` URLs are also supported as-is.
+* Revocation: per device for the relay/Bluetooth (Settings ▸ Remote ▸ Paired devices ▸ Cabut); rotating the
+  desktop's token ("Buat token baru") still cuts every phone's LAN access at once.
+
+---
+
+## 7. Remote dari mana saja (relay + Bluetooth)
+
+User guide, privacy and self-hosting: [relay.md](relay.md). Code: `relay/` (server), `core/neovarch/remote_link/`
+(PC side), `lib/remote/link/` (phone side). Tests: `relay/test/`, `core/tests/test_remote_link.py`,
+`test/remote_link_crypto_test.dart`, `test/remote_link_fallback_test.dart`; shared vectors in
+`test/fixtures/link_vectors.json`.
+
+### 7.1 Connection order on the phone
+
+1. Every direct address from the pairing (`url` + `alt`, refreshed from `network.addresses`), **LAN first**,
+   VPN/MagicDNS names after. A DNS failure, refused port or timeout on one address moves to the next one silently.
+2. **Bluetooth** — if the PC advertised a Bluetooth target and the phone setting is on.
+3. **Relay** — if the PC is known (`pc`/`pk`) and a relay URL is set.
+
+Every REST call (model switch, Kanban, vault, uploads…) goes through the same connection manager
+(`RemoteGateway._send`): over the live transport, and when a direct address stops answering mid-session it
+reconnects over the next route and retries once. Users never see raw socket errors; a total failure reads
+"PC tidak terjangkau. Mencoba lewat relay…" with a **Coba lagi** action. While on relay/Bluetooth the phone
+probes the LAN every 45 s and switches back as soon as it answers.
+
+### 7.2 Pairing payload additions (backward compatible)
+
+`neovarch://pair?v=1&url=…&alt=…&token=…&name=…` **plus**
+
+| Param | Meaning |
+|---|---|
+| `pc` | relay room id: `base64url(sha256(room_key))[:22]` |
+| `pk` | PC X25519 public key (base64url, 32 bytes) — pinned by the phone |
+| `relay` | relay URL (`wss://…`), prefilled from the build default, never typed by the user |
+| `pair` | pairing code (valid 30 min, refreshed every 10 min) for enrolling over relay/Bluetooth |
+| `bt`, `btch` | PC Bluetooth address and RFCOMM channel (only when Bluetooth is on) |
+
+Old QRs (no `pc`/`pk`) still pair over the LAN; the phone then enrolls its device key on the first LAN connect.
+The desktop puts the LAN IPs in `url`/first `alt`s and MagicDNS/tailnet addresses last.
+
+### 7.3 REST on the remote gateway (token required)
+
+| Route | Body / answer |
+|---|---|
+| `GET /api/remote/link` | `{protocol, pc_id, pc_pk, name, relay:{enabled,url,default_url,state,error,phones}, bluetooth:{enabled,state,error,address,channel,uuid,phones}, devices:[{id,name,added,last_seen,via}], pair_code, pair_expires}` |
+| `POST /api/remote/link/config` | `{relay_enabled?, relay_url?, bluetooth_enabled?}` → same as GET |
+| `POST /api/remote/devices` | `{pk, name}` (phone's device key, over the LAN) → `{device, pc_id, pc_pk, name, protocol, relay_url, bluetooth}` |
+| `DELETE /api/remote/devices/{id}` | revoke; live relay/Bluetooth links of that device are dropped |
+
+The desktop passes `NEOVARCH_RELAY`, `NEOVARCH_RELAY_URL`, `NEOVARCH_BT`, `NEOVARCH_REMOTE_NAME` when it starts the
+remote gateway; the gateway keeps **one outbound WebSocket** to the relay, reconnecting with backoff (1 s → 60 s,
+jittered), which survives sleep and network changes.
+
+### 7.4 Relay wire protocol
+
+```
+PC     → wss://<relay>/v1/pc/<pc_id>?k=<room_key>      (relay checks sha256(k) prefix == pc_id)
+phone  → wss://<relay>/v1/phone/<pc_id>
+relay → PC     {"type":"join"|"leave","cid"} · {"type":"msg","cid","data"} · "pong"
+PC → relay     {"type":"msg","cid","data"} · {"type":"close","cid"} · "ping"
+relay → phone  <data> · {"relay":"pc_online"|"pc_offline"} · "pong"
+phone → relay  <data> · "ping"
+```
+
+Limits: 256 KiB/message, 5 phones/room, 120 s idle, per-connection token-bucket rate limit. Close codes: 1009 too
+big, 4000 replaced, 4001 closed by PC, 4008 room full, 4029 rate limited, 4040 idle.
+
+### 7.5 Encrypted link (relay and Bluetooth)
+
+```
+phone → PC  {"t":"hello","v":1,"dev":<pk_dev>,"eph":<e_phone>}
+PC → phone  {"t":"welcome","v":1,"pc":<pk_pc>,"eph":<e_pc>}
+th   = SHA256("neovarch-link/1" | pk_dev | pk_pc | e_phone | e_pc)
+keys = HKDF-SHA256(X25519(dev,pc) | X25519(e_phone,e_pc), salt=th, info="neovarch-link/1 keys", 64)
+k_up = keys[0:32] (phone→PC), k_down = keys[32:64]
+frame = {"t":"d","c":b64url(ChaCha20-Poly1305(k, nonce=0^4|ctr_be64, aad=th, flag|json_chunk))}
+```
+
+Counters are implicit (ordered transports): replay, reorder or loss fails authentication and closes the link.
+Messages > 48 KiB are split (flag 1 = more parts). Inner messages:
+
+| Direction | Message |
+|---|---|
+| phone → PC | `{"t":"auth"}` (known device) · `{"t":"pair","code","name"}` (new device, code from the QR) |
+| PC → phone | `{"t":"ready","device","name"}` · `{"t":"denied","reason":"unknown_device"/"revoked"/"bad_code"}` |
+| phone → PC | `{"t":"ws.open"}` → `{"t":"ws.opened"}`; both ways `{"t":"ws","d":<JSON-RPC frame>}`; `{"t":"ws.closed"}` |
+| phone → PC | `{"t":"http","id","m","p":"/api/…?q","h":{…},"b":<base64>}` → `{"t":"http.res","id","s","h","b"}` |
+
+The PC replays `ws`/`http` against its own gateway on loopback with a per-process internal token (the phone's
+`Authorization` header is dropped), so every route, event and approval behaves exactly as on the LAN — including
+attachments: uploads are the same multipart `POST /api/uploads` body inside the tunnel (≤ 15 MB over the relay),
+downloads are `GET` paths (`RemoteGateway.fetchBytes`). REST and attachment shapes stay transport-agnostic: anything
+documented in sections 1–5 works over the relay unchanged.
