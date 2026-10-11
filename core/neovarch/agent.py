@@ -12,6 +12,7 @@ from typing import Any, Callable
 from neovarch import config as cfgmod
 from neovarch import session_settings
 from neovarch import tempest
+from neovarch import tempest_lint
 from neovarch.llm import Completion, LLMError, stream_chat
 from neovarch.store import SessionStore
 from neovarch.tools import ToolContext, list_skills, run_tool, tool_schemas
@@ -185,7 +186,9 @@ class Agent:
         st = tempest.for_model(tempest.settings(cfg), endpoint.get("model") or "")  # None = legacy, unchanged
         self._tempest = st
         self._changed: list[str] = []
+        self._before: dict[str, bytes | None] = {}  # content of each changed file before this turn
         verify_attempts = 0
+        lint_attempts = 0
         verify_cmd = tempest.detect_verify(self.ctx.cwd) if st else None
         obs_dir = cfgmod.neovarch_home() / "obs" / str(self.rec.get("id") or "session")
         messages = self.rec["messages"]
@@ -321,6 +324,20 @@ class Agent:
                                           comp.text)
                 if not comp.tool_calls:
                     final_text = comp.text
+                    if st and st.get("lint_gate") and self._before and not self.interrupted:
+                        diags = await asyncio.to_thread(self._lint_delta, st)
+                        if diags and lint_attempts < int(st.get("lint_retries") or 0) \
+                                and verify_attempts < st["verify_retries"]:
+                            lint_attempts += 1
+                            verify_attempts += 1  # one retry budget for both gates
+                            self.emit("status.update", {"kind": "lint", "text": f"Diagnostik baru: {len(diags)}"})
+                            messages.append({"role": "user", "kind": "lint", "ts": time.time(),
+                                             "content": tempest_lint.gate_prompt(diags, lint_attempts,
+                                                                                 int(st.get("lint_retries") or 0))})
+                            self.store.save(self.rec)
+                            continue
+                        if diags:
+                            final_text = comp.text + tempest_lint.leftover_note(diags)
                     if st and self._changed and verify_cmd and not self.interrupted:
                         self.emit("status.update", {"kind": "verify", "text": "Memverifikasi: " + " ".join(verify_cmd)})
                         ok, out = await asyncio.to_thread(tempest.run_verify, verify_cmd, self.ctx.cwd)
@@ -333,7 +350,7 @@ class Agent:
                                                                                 st["verify_retries"])})
                                 self.store.save(self.rec)
                                 continue
-                            final_text = comp.text + tempest.escalation_note(verify_cmd, summary, st["verify_retries"])
+                            final_text = final_text + tempest.escalation_note(verify_cmd, summary, st["verify_retries"])
                             error = "verification failed"
                     break
                 for call in comp.tool_calls:
@@ -415,6 +432,16 @@ class Agent:
                                                                f"~{rep['before']} → ~{rep['after']} token"})
         return tempest.apply_compaction(wire, new_state), sys_prompt, system_split
 
+    def _lint_delta(self, st: dict) -> list:
+        tools = None
+        if str(st.get("lint_tools") or "auto") != "auto":
+            tools = [t.strip() for t in str(st["lint_tools"]).split(",") if t.strip()]
+        try:
+            return tempest_lint.delta(self.ctx.cwd, self._before, tools, int(st.get("lint_timeout") or 60))
+        except Exception as exc:  # the gate must never break a turn
+            _log.warning("tempest lint gate skipped: %s", exc)
+            return []
+
     async def _checked_write(self, name: str, args: dict) -> str:
         """Tempest: write/edit, then syntax-check .py/.json/.js/.ts; a broken file is restored."""
         try:
@@ -429,6 +456,7 @@ class Agent:
         err = await asyncio.to_thread(tempest.syntax_error, path)
         if not err:
             self._changed.append(str(path))
+            self._before.setdefault(str(path), before)
             return result
         if before is None:
             path.unlink(missing_ok=True)

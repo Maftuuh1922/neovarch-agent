@@ -128,6 +128,26 @@ def main() -> None:
     print("\n## Pass by family\n")
     print(family_table(rows, arms))
     if any(r["arm"] == base for r in rows):
+        print(f"\n## Cost on runs that both the arm and {base} passed (same task+seed)\n")
+        print("| arm | common runs | input tok (arm vs base) | Δ input | est. cost USD (arm vs base) | Δ cost "
+              "| cache_read_ratio (arm vs base) |\n|---|---|---|---|---|---|---|")
+        idx = {(r["task"], r.get("seed", 0), r["arm"]): r for r in rows if "crash" not in r}
+        for a in arms:
+            if a == base:
+                continue
+            n = ia = ib = ra = rb = 0
+            ca = cb = 0.0
+            for (t, s_, ar), r in idx.items():
+                o = idx.get((t, s_, a))
+                if ar != base or not o or not (o["passed"] and r["passed"]):
+                    continue
+                n += 1
+                ia, ib = ia + o["input_tokens"], ib + r["input_tokens"]
+                ca, cb = ca + o["cost_usd"], cb + r["cost_usd"]
+                ra, rb = ra + o["cache_read"], rb + r["cache_read"]
+            if n and ib and cb:
+                print(f"| {a} | {n} | {ia:,} vs {ib:,} | {100 * (ia - ib) / ib:+.1f}% | {ca:.4f} vs {cb:.4f} "
+                      f"| {100 * (ca - cb) / cb:+.1f}% | {ra / ia:.3f} vs {rb / ib:.3f} |")
         print(f"\n## Paired deltas vs {base} (per-task mean, 95% bootstrap CI over tasks)\n")
         print("| arm | Δ pass rate | Δ input tok/run | Δ cost USD/run |\n|---|---|---|---|")
         for a in arms:

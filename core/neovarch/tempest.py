@@ -41,6 +41,10 @@ Fase 1 additions (each behind its own ``agent.tempest_*`` switch, see :data:`FEA
    structured summary (requests, notes, files touched/read, verify status, last errors,
    restorable paths) replaces the oldest turns. ``tempest_model_overrides`` turns it (or any
    knob) off per model glob, e.g. ``{"gemini-2.5-flash*": {"compact": false}}``.
+8. delta static gate (``tempest_lint_gate``) - when the model wants to finish a turn that
+   changed files, the available checkers (builtin, ruff, pyright, mypy, tsc) run on the
+   changed files before and after; only NEW diagnostics block, at most ``lint_retries``
+   times, out of the same retry budget as the verify gate (see tempest_lint.py).
 """
 
 from __future__ import annotations
@@ -74,6 +78,10 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "compact_target": 0.35,        # aim below this fraction after compacting
     "compact_keep_turns": 4,       # newest assistant turns whose tool outputs always stay
     "mask_mode": "",               # "" = derive (compact > turn masking > off) | turn | compact | off
+    "lint_gate": False,            # delta static gate at the end of a turn (tempest_lint.py)
+    "lint_retries": 1,             # how often new diagnostics block a finish (shares verify_retries)
+    "lint_tools": "auto",          # auto | comma list of builtin,ruff,pyright,mypy,tsc
+    "lint_timeout": 60,
 }
 
 HEAD_LINES = 30
