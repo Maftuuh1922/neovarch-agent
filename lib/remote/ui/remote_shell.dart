@@ -1,12 +1,13 @@
 // Remote shell: Chat · Kantor · Profil · PC on a floating iOS-style
 // liquid glass bar (content scrolls under it), with a connection strip whenever the link to the PC is not up
 // and an "Update tersedia" strip when a newer phone app is released.
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../main.dart' show previewTab;
 import '../../theme/neovarch_mobile_theme.dart';
@@ -22,6 +23,8 @@ import 'remote_kantor_tab.dart';
 import 'remote_pc_screen.dart';
 import 'remote_profile_screen.dart';
 import 'nv_widgets.dart';
+import '../apk_update.dart' show ApkUpdatePhase;
+import 'update_dialog.dart';
 import 'remote_background.dart' show NvAppBackground;
 import '../appearance.dart' show appearanceProvider;
 import '../profile_avatar.dart';
@@ -113,7 +116,20 @@ class _RemoteShellState extends ConsumerState<RemoteShell> with WidgetsBindingOb
         ref.read(wakeWordProvider).resume();
       case 'profile':
         setState(() => index = tabProfile);
+      // "Pembaruan Neovarch Agent" notification
+      case 'update':
+        openUpdate();
     }
+  }
+
+  /// The in-app update dialog for the newest release (notification tap).
+  void openUpdate() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final u = ref.read(remoteProvider).update;
+      if (u['latest'] == null) return;
+      showUpdateDialog(context, u);
+    });
   }
 
   Future<void> _takeRoute() async {
@@ -130,6 +146,9 @@ class _RemoteShellState extends ConsumerState<RemoteShell> with WidgetsBindingOb
       final r = ref.read(remoteProvider);
       r.resyncOnResume();
       _takeRoute();
+      // back from "Instal aplikasi tidak dikenal" with the dialog closed
+      ref.read(apkUpdateProvider).resume();
+      unawaited(r.checkUpdate());
     }
   }
 
@@ -213,7 +232,7 @@ class _RemoteShellState extends ConsumerState<RemoteShell> with WidgetsBindingOb
                   viewPadding: mq.viewPadding.copyWith(bottom: mq.viewPadding.bottom + reserve)),
               child: Column(children: [
                 if (!remote.connected) const _ConnectionStrip(),
-                if (remote.connected && remote.updateAvailable) const _UpdateStrip(),
+                if (remote.updateAvailable) _UpdateStrip(belowStrip: !remote.connected),
                 Expanded(
                   // Builder: removePadding must read the MediaQuery above (the
                   // one that reserves room for the floating nav bar), not the
@@ -280,19 +299,22 @@ class _ConnectionStrip extends ConsumerWidget {
 }
 
 
-/// "Update tersedia vX" — flat strip under the status bar, links to the release.
+/// "Update tersedia vX" — flat strip under the status bar (or under the
+/// connection strip). "Perbarui" downloads and installs inside the app with
+/// a progress bar ([showUpdateDialog]); the browser is only the fallback.
 class _UpdateStrip extends ConsumerWidget {
-  const _UpdateStrip();
+  const _UpdateStrip({this.belowStrip = false});
+  final bool belowStrip;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final r = ref.watch(remoteProvider);
+    final up = ref.watch(apkUpdateProvider);
     final u = r.update;
-    final url = '${u['download_url'] ?? u['url'] ?? ''}';
-    return SafeArea(
-      bottom: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-        child: NvGlass(
+    final downloading = up.phase == ApkUpdatePhase.downloading && up.version == '${u['latest']}';
+    final p = up.progress;
+    final strip = Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: NvGlass(
         key: const ValueKey('nv-update-strip'),
         radius: 14,
         padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
@@ -300,14 +322,24 @@ class _UpdateStrip extends ConsumerWidget {
           Container(width: 8, height: 8, decoration: BoxDecoration(color: NV.red, shape: BoxShape.circle)),
           const SizedBox(width: 10),
           Expanded(
-            child: Text('Update tersedia v${u['latest']}',
-                style: TextStyle(color: NV.text, fontWeight: FontWeight.w600, fontSize: 13)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              Text(downloading ? 'Mengunduh v${u['latest']}${p != null ? ' · ${(p * 100).floor()}%' : '…'}' : 'Update tersedia v${u['latest']}',
+                  style: TextStyle(color: NV.text, fontWeight: FontWeight.w600, fontSize: 13)),
+              if (downloading)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6, right: 8),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(99),
+                    child: LinearProgressIndicator(value: p, minHeight: 3, color: NV.red, backgroundColor: NV.glassBorder),
+                  ),
+                ),
+            ]),
           ),
-          if (url.isNotEmpty)
-            TextButton(
-              onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
-              child: const Text('Unduh'),
-            ),
+          TextButton(
+            key: const ValueKey('nv-update-strip-action'),
+            onPressed: () => showUpdateDialog(context, u, autoStart: !downloading),
+            child: Text(downloading ? 'Lihat' : 'Perbarui'),
+          ),
           IconButton(
             tooltip: 'Tutup',
             icon: Icon(CupertinoIcons.xmark, size: 18, color: NV.muted),
@@ -315,7 +347,7 @@ class _UpdateStrip extends ConsumerWidget {
           ),
         ]),
       ),
-      ),
     );
+    return belowStrip ? strip : SafeArea(bottom: false, child: strip);
   }
 }

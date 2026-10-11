@@ -140,11 +140,24 @@ class RemoteController extends ChangeNotifier {
   bool get updateAvailable =>
       update['available'] == true && update['latest'] != null && update['latest'] != dismissedUpdate;
 
-  Future<void> checkUpdate() async {
-    final u = await updateChecker.check(fallback: gateway?.updateInfo);
+  /// Called once per newly released version (system notification on
+  /// Android; set by `runRemoteApp`).
+  void Function(Map<String, dynamic> update)? onNewUpdate;
+
+  /// Throttled by [UpdateChecker.minInterval] (persisted when the checker has
+  /// prefs), so calling it on every start / status refresh is cheap.
+  Future<void> checkUpdate({bool force = false}) async {
+    Map<String, dynamic>? u;
+    try {
+      u = await updateChecker.check(fallback: gateway?.updateInfo, force: force);
+    } catch (_) {}
     if (u != null) {
       update = u;
       notifyListeners();
+      final latest = '${u['latest'] ?? ''}';
+      if (u['available'] == true && latest.isNotEmpty && latest != dismissedUpdate && updateChecker.shouldNotify(latest)) {
+        onNewUpdate?.call(u);
+      }
     }
   }
   void dismissUpdate() {
@@ -170,6 +183,8 @@ class RemoteController extends ChangeNotifier {
 
   /// Called once at start: reconnect to the last desktop.
   Future<void> start() async {
+    // Update notice without opening About or pairing first (throttled).
+    unawaited(checkUpdate());
     final d = desktops.active;
     if (d != null) await connectTo(d);
   }

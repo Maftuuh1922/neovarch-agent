@@ -230,6 +230,10 @@ class MainActivity : FlutterActivity() {
             "saveWidgetSnapshot", "widgetsPlaced" -> result.success(NvWidgets.handle(this, call.method, call.arguments))
             "setLauncherIcon" -> result.success(setLauncherIcon(call.argument<String>("id") ?: ""))
             "takeRoute" -> { result.success(pendingRoute); pendingRoute = null }
+            // In-app update (lib/remote/apk_update.dart)
+            "canInstallApks" -> result.success(canInstallApks())
+            "openInstallSourcesSettings" -> result.success(openInstallSourcesSettings())
+            "installApk" -> result.success(installApk(call.argument<String>("path") ?: ""))
             "wakeWord" -> {
                 NvWakeService.setEnabled(this, call.argument<Boolean>("enable") == true)
                 result.success(NvWakeService.status(this))
@@ -518,6 +522,43 @@ class MainActivity : FlutterActivity() {
             startActivity(intent); "dibuka"
         } catch (e: ActivityNotFoundException) {
             "tidak ada aplikasi yang bisa membuka ini"
+        }
+    }
+
+    // ------------------------------------------------------- in-app update --
+    /** "Instal aplikasi tidak dikenal" for this app (Android 8+); always allowed before. */
+    private fun canInstallApks(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()
+
+    private fun openInstallSourcesSettings(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+        val i = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            startActivity(i); true
+        } catch (e: ActivityNotFoundException) {
+            startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); false
+        }
+    }
+
+    /**
+     * Hands a downloaded APK (cache/updates/ only, see res/xml/nv_update_paths.xml)
+     * to the system package installer through [NvUpdateProvider]. The user
+     * confirms the install in the system UI; Android verifies the signature.
+     */
+    private fun installApk(path: String): String {
+        val dir = java.io.File(cacheDir, "updates").canonicalFile
+        val f = java.io.File(path).canonicalFile
+        if (f.parentFile != dir || !f.isFile || !f.name.endsWith(".apk")) return "berkas pembaruan tidak ditemukan"
+        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.nvupdate", f)
+        val i = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return try {
+            startActivity(i); "dibuka"
+        } catch (e: ActivityNotFoundException) {
+            "penginstal paket Android tidak ditemukan"
         }
     }
 

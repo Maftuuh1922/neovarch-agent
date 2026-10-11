@@ -6,6 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../remote/apk_update.dart' show ApkUpdateController;
+import '../../../remote/update_check.dart' show parseGithubRelease;
+import '../../../remote/ui/update_dialog.dart';
 import '../../../state/app_controller.dart';
 import '../../../state/settings_controller.dart';
 import '../../../theme/app_theme.dart';
@@ -22,6 +25,7 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
   late final _repo = TextEditingController(text: ref.read(settingsProvider).updateRepo);
   String? result;
   String? releaseUrl;
+  Map<String, dynamic>? update;
   bool busy = false;
 
   Future<void> _check() async {
@@ -34,6 +38,7 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
     setState(() {
       busy = true;
       result = null;
+      update = null;
     });
     try {
       final r = await http.get(Uri.parse('https://api.github.com/repos/$repo/releases/latest'), headers: {'Accept': 'application/vnd.github+json'});
@@ -43,9 +48,15 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
         result = r.statusCode == 403 ? 'GitHub API rate limit tercapai — coba lagi nanti' : 'GitHub membalas HTTP ${r.statusCode}';
       } else {
         final j = jsonDecode(r.body) as Map;
-        final tag = '${j['tag_name'] ?? ''}'.replaceFirst('v', '');
+        final u = parseGithubRelease(j, SettingsController.appVersion);
+        final tag = '${u?['latest'] ?? ''}';
         releaseUrl = '${j['html_url'] ?? ''}';
-        result = tag == SettingsController.appVersion ? 'Sudah versi terbaru ($tag)' : 'Versi baru tersedia: $tag (terpasang ${SettingsController.appVersion})';
+        update = u?['available'] == true ? u : null;
+        result = u == null
+            ? 'Rilis tanpa nomor versi'
+            : u['available'] == true
+                ? 'Versi baru tersedia: $tag (terpasang ${SettingsController.appVersion})'
+                : 'Sudah versi terbaru ($tag)';
       }
     } catch (e) {
       result = 'Gagal memeriksa: $e';
@@ -81,7 +92,11 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
         const SizedBox(height: 10),
         Row(children: [
           OutlinedButton.icon(onPressed: busy ? null : _check, icon: const Icon(Icons.system_update_alt, size: 18), label: const Text('Periksa pembaruan')),
-          if (releaseUrl != null && releaseUrl!.isNotEmpty) ...[
+          // Android with an APK in the release: download + install in the app.
+          if (update != null && ApkUpdateController.isApkUrl('${update!['download_url']}') && ref.read(apkUpdateProvider).supported) ...[
+            const SizedBox(width: 8),
+            FilledButton(onPressed: () => showUpdateDialog(context, update!, autoStart: true), child: const Text('Perbarui')),
+          ] else if (releaseUrl != null && releaseUrl!.isNotEmpty) ...[
             const SizedBox(width: 8),
             TextButton(onPressed: () => launchUrl(Uri.parse(releaseUrl!), mode: LaunchMode.externalApplication), child: const Text('Buka rilis')),
           ],

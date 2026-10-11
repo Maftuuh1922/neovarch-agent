@@ -97,8 +97,10 @@ void main() {
         expect(manifest.contains('<package android:name="$p" />'), isTrue, reason: p);
       }
       expect(manifest.contains('com.instagram.share.ADD_TO_STORY'), isTrue);
-      // no new permission (MediaStore on API 29+ needs none); 21 = 1.4.4's set
-      expect('uses-permission'.allMatches(manifest).length, 21);
+      // no new permission for sharing (MediaStore on API 29+ needs none);
+      // 21 = 1.4.4's set + REQUEST_INSTALL_PACKAGES (in-app update)
+      expect('uses-permission'.allMatches(manifest).length, 22);
+      expect(manifest.contains('android.permission.REQUEST_INSTALL_PACKAGES'), isTrue);
     });
   });
 
