@@ -17,6 +17,8 @@ Shape (all keys optional)::
     agent:
       max_turns: 30
       system_prompt: ""             # extra instructions appended to SOUL.md
+      harness_mode: legacy          # legacy (default) | tempest  (opt-in prototype, see tempest.py; "tempa" = old alias)
+      tempest_profile: ringan       # ringan | tinggi | otomatis   (only with harness_mode: tempest)
     memory:
       obsidian_vault: ""            # folder of an Obsidian vault used as long-term memory
       obsidian_enabled: true        # false = keep the path but stop using the vault

@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 from neovarch import PRODUCT, __version__
@@ -320,7 +321,27 @@ def build_parser() -> argparse.ArgumentParser:
     u = sub.add_parser("uninstall", help="remove Neovarch (only ~/.neovarch)")
     u.add_argument("-y", "--yes", action="store_true")
     sub.add_parser("desktop", help="open the desktop app")
+    rw = sub.add_parser("rewind", help="Tempest: restore files to a shadow checkpoint (git history untouched)")
+    rw.add_argument("ref", nargs="?", default="last-green", help="last-green (default) or a checkpoint sha")
+    rw.add_argument("--list", action="store_true", help="list checkpoints for this folder")
+    rw.add_argument("--dir", default="", help="project folder (default: current directory)")
     return p
+
+
+def cmd_rewind(args) -> int:
+    from neovarch import tempest_ckpt
+    work = Path(args.dir or os.getcwd())
+    if args.list:
+        for e in tempest_ckpt.ShadowRepo(work, neovarch_home()).log(30):
+            print(f"{e['sha'][:10]}  {e['status']:<7}  {time.strftime('%Y-%m-%d %H:%M', time.localtime(e['ts']))}  "
+                  f"{e['label']}")
+        return 0
+    try:
+        print(tempest_ckpt.rewind(work, neovarch_home(), args.ref))
+    except tempest_ckpt.CheckpointError as exc:
+        print(f"rewind: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -354,6 +375,8 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(cmd_uninstall(args))
     if args.cmd == "desktop":
         raise SystemExit(cmd_desktop(args))
+    if args.cmd == "rewind":
+        raise SystemExit(cmd_rewind(args))
     if args.cmd == "update":
         print(f"Update Neovarch by re-running its installer:\n  curl -fsSL {INSTALLER}.sh | sh\n  irm {INSTALLER}.ps1 | iex")
         return
