@@ -110,6 +110,30 @@ Untuk build sendiri: relay bawaan adalah satu konstanta di `desktop/apps/desktop
 * Memakai jabat tangan dan enkripsi yang sama dengan relay; pasangan Bluetooth sistem (bonding) tidak wajib karena
   keamanan berasal dari kunci yang dipasangkan lewat QR.
 
+### Jalankan di latar belakang
+
+PC ▸ Pengaturan ▸ Remote ▸ **Jalankan di latar belakang**: gateway dan klien relay tetap berjalan walaupun jendela
+ditutup. Jendela pindah ke ikon tray (menu tray: *Buka*, *Keluar (gateway tetap berjalan)*, *Hentikan semua &
+keluar*). Gateway dijalankan sebagai proses terpisah dengan log di `neovarch-remote-gateway.log` (folder data
+aplikasi), jadi tidak ikut mati saat aplikasi keluar; saat aplikasi dibuka lagi, gateway yang masih berjalan
+dipakai lagi, bukan dimulai ulang.
+
+**Mulai saat login** membuka Neovarch tersembunyi di tray setiap kali masuk ke komputer (Linux: berkas
+`~/.config/autostart/neovarch-agent.desktop`; Windows/macOS: item login sistem).
+
+Dari HP (layar **PC ▸ Layanan latar**): status layanan, sakelar *Jalan di latar* dan *Mulai saat login*, serta tombol
+*Hentikan agen*, *Mulai ulang agen*, *Mulai ulang gateway*, *Hentikan gateway*. REST (token gateway wajib):
+
+```
+GET  /api/remote/background                   status + pengaturan
+POST /api/remote/background                   {run_in_background?, start_at_login?}
+POST /api/remote/background/{aksi}            stop-agent | restart-agent | restart-gateway | stop-gateway
+```
+
+Catatan: gateway yang dihentikan dari HP hanya bisa dinyalakan lagi dari PC. Mematikan *Jalan di latar* dari HP saat
+aplikasi PC tertutup langsung menghentikan gateway. Perubahan *Mulai saat login* dari HP diterapkan saat aplikasi PC
+berjalan (paling lambat ±15 detik).
+
 ### Tanpa internet sama sekali
 
 Mode LAN sudah bekerja lewat **hotspot** HP atau PC tanpa internet: nyalakan hotspot di HP, sambungkan PC ke hotspot

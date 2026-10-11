@@ -33,6 +33,18 @@ export type DesktopMachineProfile = MachineProfile
 
 declare global {
   /** Neovarch Remote (phone pairing) status from the Electron main process. */
+  /** "Jalankan di latar belakang" (electron/neovarch-background.ts BackgroundStatus). */
+  interface NeovarchBackgroundStatus {
+    runInBackground: boolean
+    startAtLogin: boolean
+    updatedAt: number
+    trayAvailable: boolean
+    autostartSupported: boolean
+    service: { state: string; mode: string; desktop_attached: boolean; pid: number; port: number; uptime_s: number } | null
+    agent: { sessions: number; running: number } | null
+    error: string | null
+  }
+
   interface NeovarchRemoteStatus {
     enabled: boolean
     running: boolean
@@ -444,6 +456,11 @@ declare global {
         setBluetooth?: (on: boolean) => Promise<NeovarchRemoteStatus>
         revokeDevice?: (id: string) => Promise<NeovarchRemoteStatus>
         onChanged: (callback: (status: NeovarchRemoteStatus) => void) => () => void
+      }
+      neovarchBackground?: {
+        get: () => Promise<NeovarchBackgroundStatus>
+        set: (patch: { runInBackground?: boolean; startAtLogin?: boolean }) => Promise<NeovarchBackgroundStatus>
+        onChanged: (callback: (status: NeovarchBackgroundStatus) => void) => () => void
       }
       setDisableF12?: (blocked: boolean) => void
       setF12ShortcutActive?: (active: boolean) => void

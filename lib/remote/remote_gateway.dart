@@ -39,6 +39,7 @@ import 'link/link_crypto.dart';
 import 'link/link_info.dart';
 import 'link/tunnel.dart';
 import 'pairing.dart';
+import 'pc_background.dart';
 import 'remote_errors.dart';
 import 'vault_models.dart';
 import 'remote_transcript.dart';
@@ -152,7 +153,7 @@ class ActiveSession {
   const ActiveSession({required this.id, required this.title, required this.status, required this.model, required this.preview});
 }
 
-class RemoteGateway implements VaultApi, ModelsApi, CompanyApi {
+class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi {
   RemoteGateway({
     required this.baseUrl,
     required this.token,
@@ -995,6 +996,23 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi {
         if (assignee != null && assignee.isNotEmpty) 'assignee': assignee,
         'priority': ?priority,
       });
+  // ------------------------------------------------- jalankan di latar belakang --
+  @override
+  Future<PcBackgroundStatus> backgroundStatus() async =>
+      PcBackgroundStatus.fromJson(Map<String, dynamic>.from(await _json('GET', '/api/remote/background') as Map));
+
+  @override
+  Future<PcBackgroundStatus> setBackground({bool? runInBackground, bool? startAtLogin}) async =>
+      PcBackgroundStatus.fromJson(Map<String, dynamic>.from(await _json('POST', '/api/remote/background', body: {
+        'run_in_background': ?runInBackground,
+        'start_at_login': ?startAtLogin,
+      }) as Map));
+
+  @override
+  Future<String> backgroundAction(PcBackgroundAction action) async {
+    final j = await _json('POST', '/api/remote/background/${action.wire}', body: const {});
+    return j is Map && j['message'] != null ? '${j['message']}' : 'Selesai.';
+  }
 }
 
 extension RemoteGatewayExtras on RemoteGateway {
@@ -1094,6 +1112,7 @@ extension RemoteGatewayExtras on RemoteGateway {
 
   Future<FriendDetail> socialFriend(String login) async =>
       FriendDetail.fromJson(Map<String, dynamic>.from(await _json('GET', '/api/social/friends/${Uri.encodeComponent(login)}') as Map));
+
 }
 
 class RemoteRestError implements Exception {

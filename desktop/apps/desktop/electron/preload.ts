@@ -413,6 +413,17 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
       return () => ipcRenderer.removeListener('neovarch:remote:changed', listener)
     }
   },
+  // "Jalankan di latar belakang" + "Mulai saat login" (neovarch-background.ts)
+  neovarchBackground: {
+    get: () => ipcRenderer.invoke('neovarch:background:get'),
+    set: patch => ipcRenderer.invoke('neovarch:background:set', patch),
+    onChanged: callback => {
+      const listener = (_event, status) => callback(status)
+      ipcRenderer.on('neovarch:background:changed', listener)
+
+      return () => ipcRenderer.removeListener('neovarch:background:changed', listener)
+    }
+  },
   setDisableF12: blocked => ipcRenderer.send('hermes:devtools:disable-f12', blocked),
   setF12ShortcutActive: active => ipcRenderer.send('hermes:f12ShortcutActive', Boolean(active)),
   onF12Shortcut: callback => {

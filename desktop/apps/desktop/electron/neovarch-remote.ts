@@ -28,6 +28,8 @@ import path from 'node:path'
 import { DEFAULT_RELAY_URL, normalizeRelayUrl } from './relay-defaults'
 
 export const REMOTE_DEFAULT_PORT = 9319
+/** core/neovarch/background.py RESTART_EXIT_CODE: the gateway asks to be started again. */
+export const GATEWAY_RESTART_EXIT_CODE = 75
 /** Hermes Agent's dashboard/gateway default; Neovarch must never take it. */
 export const HERMES_DEFAULT_PORT = 9119
 const TOKEN_SUBJECT = 'neovarch-remote'
@@ -136,6 +138,14 @@ export interface RemoteControllerDeps {
   listProcesses?: () => Promise<ProcessRow[]>
   /** Test seam for the gateway's /api/remote/* calls. */
   fetch?: typeof fetch
+  /**
+   * "Jalankan di latar belakang": the gateway is started detached with its
+   * output in a log file (not a pipe into Electron), a gateway left running by
+   * an earlier session is adopted instead of reaped, and quit may detach.
+   */
+  backgroundMode?: () => boolean
+  /** Background gateway output (default: neovarch-remote-gateway.log next to settings). */
+  gatewayLogPath?: string
 }
 
 export interface ProcessRow {
@@ -516,6 +526,84 @@ export function createRemoteController(deps: RemoteControllerDeps) {
   const killGroup = deps.killProcessGroup ?? defaultKillProcessGroup
   const probePort = deps.portInUse ?? ((port: number) => portInUse(port))
   const processRows = deps.listProcesses ?? listProcesses
+  const background = () => deps.backgroundMode?.() === true
+  const gatewayLogPath = deps.gatewayLogPath ?? path.join(path.dirname(deps.settingsPath), 'neovarch-remote-gateway.log')
+  // A background gateway started by an earlier desktop session (no ChildProcess handle).
+  let adoptedPid: number | null = null
+  let adoptTimer: ReturnType<typeof setInterval> | null = null
+
+  function readGatewayLogTail(): string {
+    try {
+      const st = fs.statSync(gatewayLogPath)
+      const len = Math.min(st.size, 8000)
+      const fd = fs.openSync(gatewayLogPath, 'r')
+
+      try {
+        const buf = Buffer.alloc(len)
+        fs.readSync(fd, buf, 0, len, st.size - len)
+
+        return buf.toString('utf8')
+      } finally {
+        fs.closeSync(fd)
+      }
+    } catch {
+      return ''
+    }
+  }
+
+  function stopAdoptWatch() {
+    if (adoptTimer) {
+      clearInterval(adoptTimer)
+      adoptTimer = null
+    }
+  }
+
+  /**
+   * Background mode: keep the gateway an earlier session left running (same
+   * secret, same port) instead of killing it. True when adopted.
+   */
+  async function adoptBackgroundGateway(): Promise<boolean> {
+    const pid = readRemotePid(pidFilePath)
+
+    if (pid === null || !isOwnRemoteGatewayCommand(commandLineOf(pid), settings.port)) {
+      return false
+    }
+
+    try {
+      const res = await (deps.fetch ?? fetch)(`http://127.0.0.1:${settings.port}/api/status`, { signal: AbortSignal.timeout(2000) })
+
+      if (!res.ok) {
+        return false
+      }
+    } catch {
+      return false
+    }
+
+    adoptedPid = pid
+    running = true
+    deps.log(`[remote] adopted background LAN gateway pid=${pid}`)
+    stopAdoptWatch()
+    adoptTimer = setInterval(() => {
+      if (adoptedPid !== null && !isOwnRemoteGatewayCommand(commandLineOf(adoptedPid), settings.port)) {
+        deps.log(`[remote] background gateway pid=${adoptedPid} is gone`)
+        adoptedPid = null
+        running = false
+        stopAdoptWatch()
+        stopLinkPoll()
+        link = null
+        clearPid()
+
+        if (settings.enabled && !closed) {
+          void start()
+        } else {
+          emit()
+        }
+      }
+    }, 5000)
+    adoptTimer.unref?.()
+
+    return true
+  }
 
   function writePid(pid: number | undefined) {
     if (!pid) {
@@ -850,6 +938,16 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     emit()
 
     try {
+      if (adoptedPid !== null) {
+        return
+      }
+
+      if (background() && (await adoptBackgroundGateway())) {
+        startLinkPoll()
+
+        return
+      }
+
       // Never fight another program (a co-installed Hermes on 9119, anything
       // else) for the port: refuse up front instead of spawning and probing a
       // server that is not ours.
@@ -887,17 +985,41 @@ export function createRemoteController(deps: RemoteControllerDeps) {
 
       delete env.HERMES_DESKTOP // the primary backend owns cron ticks
       delete env.HERMES_DASHBOARD_SESSION_TOKEN
-      deps.log(`[remote] starting LAN gateway on 0.0.0.0:${settings.port}`)
+      env.NEOVARCH_DESKTOP_PID = String(process.pid)
+      const bg = background()
+      deps.log(`[remote] starting LAN gateway on 0.0.0.0:${settings.port}${bg ? ' (background)' : ''}`)
+
+      // Background: output goes to a log file so nothing ties the gateway to
+      // this Electron process (a closed pipe would kill it on its next write).
+      let logFd: number | null = null
+
+      if (bg) {
+        try {
+          fs.mkdirSync(path.dirname(gatewayLogPath), { recursive: true })
+          logFd = fs.openSync(gatewayLogPath, 'a')
+        } catch {
+          logFd = null
+        }
+      }
 
       const proc = spawn(spec.command, spec.args, {
         cwd: spec.cwd,
         env,
         shell: spec.shell,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: logFd !== null ? ['ignore', logFd, logFd] : ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
-        // Own process group on POSIX so stop() also reaches a python child behind a shell shim.
-        detached: process.platform !== 'win32'
+        // Own process group on POSIX so stop() also reaches a python child behind a shell shim;
+        // background mode also detaches on Windows so the gateway outlives the app.
+        detached: process.platform !== 'win32' || bg
       })
+
+      if (logFd !== null) {
+        try {
+          fs.closeSync(logFd)
+        } catch {
+          // the child holds its own copy
+        }
+      }
 
       child = proc
       writePid(proc.pid)
@@ -921,7 +1043,22 @@ export function createRemoteController(deps: RemoteControllerDeps) {
           stopLinkPoll()
           link = null
 
-          if (settings.enabled && gen === generation) {
+          if (!logTail) {
+            logTail = readGatewayLogTail()
+          }
+
+          // Restart asked from the phone on Windows (no exec() there): start again.
+          if (code === GATEWAY_RESTART_EXIT_CODE && settings.enabled && !closed && gen === generation) {
+            deps.log('[remote] gateway asked for a restart')
+            emit()
+            void start()
+
+            return
+          }
+
+          if (settings.enabled && gen === generation && code === 0 && signal === null) {
+            error = 'Gateway remote dihentikan (dari HP). Matikan lalu nyalakan lagi akses remote untuk memulainya.'
+          } else if (settings.enabled && gen === generation) {
             const tail = logTail.trim().split('\n').slice(-3).join(' ')
             error = `Gateway remote berhenti (kode ${code ?? signal}). ${tail}`.trim()
           }
@@ -965,6 +1102,23 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     starting = false
     stopLinkPoll()
     link = null
+
+    if (adoptedPid !== null) {
+      const pid = adoptedPid
+      adoptedPid = null
+      stopAdoptWatch()
+      killGroup(pid, 'SIGTERM')
+
+      for (let i = 0; i < 20 && isOwnRemoteGatewayCommand(commandLineOf(pid), settings.port); i++) {
+        await new Promise(r => setTimeout(r, 150))
+      }
+
+      if (isOwnRemoteGatewayCommand(commandLineOf(pid), settings.port)) {
+        killGroup(pid, 'SIGKILL')
+      }
+
+      clearPid()
+    }
 
     if (!proc || proc.exitCode !== null) {
       return
@@ -1175,9 +1329,56 @@ export function createRemoteController(deps: RemoteControllerDeps) {
 
       return stop()
     },
+    /**
+     * Quit path with "Jalankan di latar belakang": leave the gateway running on
+     * its own (its PID file stays, so the next launch adopts it).
+     */
+    async detach() {
+      closed = true
+      generation++
+      stopLinkPoll()
+      stopAdoptWatch()
+      const proc = child
+
+      if (proc && proc.exitCode === null) {
+        proc.removeAllListeners('exit')
+        proc.stdout?.destroy()
+        proc.stderr?.destroy()
+        proc.unref()
+        deps.log(`[remote] leaving LAN gateway pid=${proc.pid} running in the background`)
+      }
+
+      child = null
+      adoptedPid = null
+    },
     /** Whether a gateway process is attached (quit must wait for it). */
     hasProcess() {
       return child !== null && child.exitCode === null
+    },
+    /** Authenticated call to the running gateway (Settings ▸ Remote ▸ latar belakang). */
+    async gatewayJson<T>(method: 'GET' | 'POST', route: string, body?: unknown): Promise<T | null> {
+      if (!running) {
+        return null
+      }
+
+      const token = mintAccessToken(decodeSecret(settings.secret), settings.issuedAt)
+
+      try {
+        const res = await (deps.fetch ?? fetch)(`http://127.0.0.1:${settings.port}${route}`, {
+          method,
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: AbortSignal.timeout(5000)
+        })
+
+        return res.ok ? ((await res.json()) as T) : null
+      } catch {
+        return null
+      }
+    },
+    /** True while a gateway is up (spawned here or adopted from the background). */
+    isRunning() {
+      return running
     },
     reapStaleGateway
   }

@@ -247,6 +247,8 @@ export function RemoteSettings() {
 
           <AnywhereSection api={api} busy={busy} preview={preview} run={run} status={status} />
 
+          <BackgroundSection preview={preview} />
+
           {status.addresses.length > 1 && (
             <ListRow
               action={
@@ -488,6 +490,109 @@ function Field({ children, copy, label }: { children: React.ReactNode; copy: str
         {copy && <CopyButton appearance="inline" label={`Salin ${label.toLowerCase()}`} text={copy} />}
       </div>
       <div className="rounded-[4px] bg-(--ui-bg-quaternary) px-2.5 py-2">{children}</div>
+    </div>
+  )
+}
+
+// "Jalankan di latar belakang": the gateway + relay client keep running after
+// the window is closed (tray icon), optionally started at login. The phone can
+// change the same settings (GET/POST /api/remote/background).
+const PREVIEW_BACKGROUND: NeovarchBackgroundStatus = {
+  runInBackground: true,
+  startAtLogin: true,
+  updatedAt: 0,
+  trayAvailable: true,
+  autostartSupported: true,
+  service: { state: 'running', mode: 'app', desktop_attached: true, pid: 4242, port: 9319, uptime_s: 5400 },
+  agent: { sessions: 2, running: 1 },
+  error: null
+}
+
+export function backgroundServiceLabel(st: NeovarchBackgroundStatus | null): string {
+  if (!st) {
+    return '—'
+  }
+
+  if (!st.service) {
+    return st.runInBackground ? 'Aktif — gateway belum berjalan' : 'Mati'
+  }
+
+  if (st.service.state === 'stopping') {
+    return 'Sedang dihentikan'
+  }
+
+  if (st.service.state === 'restarting') {
+    return 'Sedang dimulai ulang'
+  }
+
+  return st.runInBackground ? 'Berjalan di latar belakang' : 'Berjalan (ikut jendela aplikasi)'
+}
+
+function BackgroundSection({ preview }: { preview: boolean }) {
+  const api = window.hermesDesktop?.neovarchBackground
+  const [st, setSt] = useState<NeovarchBackgroundStatus | null>(preview || !api ? PREVIEW_BACKGROUND : null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!api) {
+      return
+    }
+
+    let alive = true
+    void api.get().then(s => alive && setSt(s))
+    const off = api.onChanged(s => setSt(s))
+
+    return () => {
+      alive = false
+      off()
+    }
+  }, [api])
+
+  const set = async (patch: { runInBackground?: boolean; startAtLogin?: boolean }) => {
+    if (!api) {
+      return
+    }
+
+    setBusy(true)
+
+    try {
+      setSt(await api.set(patch))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div data-nv-remote-background="">
+      <ToggleRow
+        checked={Boolean(st?.runInBackground)}
+        description={
+          st?.trayAvailable === false
+            ? 'Gateway dan relay tetap berjalan setelah aplikasi ditutup. (Ikon tray tidak tersedia di desktop ini.)'
+            : 'Gateway dan relay tetap berjalan saat jendela ditutup; Neovarch pindah ke ikon tray. HP tetap bisa tersambung.'
+        }
+        disabled={busy || !st || !api}
+        label="Jalankan di latar belakang"
+        onChange={on => void set({ runInBackground: on })}
+      />
+      <ToggleRow
+        checked={Boolean(st?.startAtLogin)}
+        description="Buka Neovarch (tersembunyi di tray) setiap kali Anda masuk ke komputer."
+        disabled={busy || !st || !api || st.autostartSupported === false}
+        label="Mulai saat login"
+        onChange={on => void set({ startAtLogin: on })}
+      />
+      <ListRow
+        description={
+          st?.service
+            ? `PID ${st.service.pid} · port ${st.service.port} · ${st.agent?.running ?? 0} agen berjalan dari ${st.agent?.sessions ?? 0} sesi`
+            : 'Gateway remote belum berjalan.'
+        }
+        title={`Layanan latar: ${backgroundServiceLabel(st)}`}
+      />
+      {st?.error && (
+        <p className="my-2 rounded-[4px] bg-(--ui-bg-quaternary) px-3 py-2 text-xs text-destructive">{st.error}</p>
+      )}
     </div>
   )
 }

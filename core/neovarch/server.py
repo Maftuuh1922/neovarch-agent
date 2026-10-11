@@ -285,6 +285,7 @@ class Gateway:
         self.kanban = Kanban()
         self.auth = Auth(isolated)
         self.link = None  # remote_link.LinkService (relay / Bluetooth), created on demand
+        self.background = None  # background.BackgroundService ("Jalankan di latar belakang"), created on demand
         self.conns: set[Conn] = set()
         self.live: dict[str, LiveSession] = {}
         self.started = time.time()
@@ -1913,6 +1914,8 @@ def build_app(gw: Gateway) -> web.Application:
     r.add_get("/api/events/replay", events_replay)
     r.add_get("/api/network/addresses", network_addresses)
     _add_remote_link_routes(app, gw)
+    from neovarch.background import add_routes as _add_background_routes
+    _add_background_routes(app, gw)
     r.add_get("/api/memory/obsidian", obsidian_status)
     r.add_post("/api/memory/obsidian", obsidian_configure)
     r.add_put("/api/memory/obsidian", obsidian_configure)

@@ -14,11 +14,20 @@ interface Options {
   restoreMainWindow: () => void
   isQuittingForHandoff: () => boolean
   log: (message: string) => void
+  /**
+   * "Jalankan di latar belakang": the tray menu also offers stopping the
+   * background gateway on the way out. Called when that item is chosen.
+   */
+  quitEverything?: () => void
 }
 
 /** Device-local native preference; renderer windows only cache its status. */
 export function createMinimizeToTray(options: Options) {
   let enabled = false
+  // The user's own minimize-to-tray preference vs. the tray that "Jalankan di
+  // latar belakang" needs (the window must hide, not quit, on close).
+  let preference = false
+  let forced = false
   let quitting = false
   let tray: Tray | null = null
   let stopWatchingHost: (() => void) | undefined
@@ -184,14 +193,7 @@ export function createMinimizeToTray(options: Options) {
           })
         )
         tray.setToolTip('Neovarch')
-        tray.setContextMenu(
-          Menu.buildFromTemplate([
-            { label: 'Show Neovarch Agent', click: restore },
-            { type: 'separator' },
-            // Do not bypass the ordinary active-work confirmation or teardown.
-            { label: 'Quit Neovarch Agent', click: () => app.quit() }
-          ])
-        )
+        tray.setContextMenu(buildMenu())
 
         // macOS single-click opens the native menu, not the window behind it.
         if (process.platform !== 'darwin') {
@@ -206,9 +208,28 @@ export function createMinimizeToTray(options: Options) {
       }
     }
 
+    if (tray && !tray.isDestroyed()) {
+      tray.setToolTip(forced ? 'Neovarch — berjalan di latar belakang' : 'Neovarch')
+      tray.setContextMenu(buildMenu())
+    }
+
     broadcast()
 
     return status()
+  }
+
+  function buildMenu() {
+    return Menu.buildFromTemplate([
+      { label: forced ? 'Buka Neovarch Agent' : 'Show Neovarch Agent', click: restore },
+      { type: 'separator' },
+      // Do not bypass the ordinary active-work confirmation or teardown.
+      forced
+        ? { label: 'Keluar (gateway tetap berjalan)', click: () => app.quit() }
+        : { label: 'Quit Neovarch Agent', click: () => app.quit() },
+      ...(forced && options.quitEverything
+        ? [{ label: 'Hentikan semua & keluar', click: () => options.quitEverything?.() }]
+        : [])
+    ])
   }
 
   function registerWindow(win: BrowserWindow, { closeToTray = false } = {}) {
@@ -307,7 +328,8 @@ export function createMinimizeToTray(options: Options) {
       // Missing or malformed preference preserves ordinary minimize/close.
     }
 
-    const operation = apply(on)
+    preference = on
+    const operation = apply(preference || forced)
     pending = operation.then(
       () => undefined,
       () => undefined
@@ -322,8 +344,9 @@ export function createMinimizeToTray(options: Options) {
       fs.mkdirSync(path.dirname(options.preferencesPath), { recursive: true })
       fs.writeFileSync(`${options.preferencesPath}.tmp`, JSON.stringify({ enabled: on === true }), 'utf8')
       fs.renameSync(`${options.preferencesPath}.tmp`, options.preferencesPath)
+      preference = on === true
 
-      return apply(on === true)
+      return apply(preference || forced)
     })
 
     pending = operation.then(
@@ -341,10 +364,27 @@ export function createMinimizeToTray(options: Options) {
     destroyTray()
   })
 
+  /** "Jalankan di latar belakang" on/off: keeps a tray (close hides) without touching the user's preference. */
+  function setForced(on: boolean): Promise<MinimizeToTrayStatus> {
+    const operation = pending.then(() => {
+      forced = on === true
+
+      return apply(preference || forced)
+    })
+
+    pending = operation.then(
+      () => undefined,
+      () => undefined
+    )
+
+    return operation
+  }
+
   return {
     start,
     status,
     setEnabled,
+    setForced,
     registerWindow,
     restore,
     // Call only AFTER the active-work guard accepts the quit. Cancelling the

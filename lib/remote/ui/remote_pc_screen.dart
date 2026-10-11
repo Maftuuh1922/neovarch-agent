@@ -14,6 +14,7 @@ import '../remote_controller.dart';
 import '../remote_gateway.dart';
 import 'connect_screen.dart';
 import 'nv_widgets.dart';
+import 'pc_background_panel.dart';
 import 'appearance/appearance_section.dart' show NvAppearanceSection;
 
 class RemotePcScreen extends ConsumerWidget {
@@ -146,6 +147,10 @@ class RemotePcScreen extends ConsumerWidget {
                   },
                 ),
             ]),
+          ],
+          if (ok && r.gateway != null) ...[
+            const NvSection('layanan latar'),
+            PcBackgroundPanel(api: r.gateway!),
           ],
           NvSection('pc tersimpan',
               trailing: TextButton.icon(
