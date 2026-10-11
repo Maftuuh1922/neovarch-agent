@@ -11,8 +11,14 @@ REST (gateway token required)::
 
     GET    /api/remote/link            identity, pairing code, transports, devices
     POST   /api/remote/link/config     {relay_enabled?, relay_url?, bluetooth_enabled?}
-    POST   /api/remote/devices         {pk, name} enroll this phone's device key (LAN pairing)
+    POST   /api/remote/devices         {pk, name, session?} enroll this phone's device key (LAN pairing)
     DELETE /api/remote/devices/{id}    revoke a device
+
+``POST /api/remote/devices`` also accepts the QR's short-lived one-time pair
+token (and nothing else does). Called with that token, or with ``session: true``,
+it returns a per-device ``session_token`` the phone uses from then on; pairing
+again rotates it. Through the relay / Bluetooth bridge it only enrolls the
+phone that is on that tunnel.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ from typing import Any
 from aiohttp import web
 
 from . import DEFAULT_RELAY_URL
-from .crypto import PROTOCOL, b64d
+from .crypto import PROTOCOL, b64d, device_id
 from .peer import PeerLink
 from .relay_client import RelayClient, normalize_relay_url
 from .store import LinkStore
@@ -144,7 +150,8 @@ class LinkService:
 
     def public_status(self) -> dict:
         return {"protocol": PROTOCOL, "pc_id": self.store.pc_id, "pc_pk": self.store.pc_public,
-                "name": self.pc_name, **self.transports(), "devices": self.store.devices()}
+                "name": self.pc_name, **self.transports(), "devices": self.store.devices(),
+                "idle_days": self.store.idle_days, "pair_epoch": self.store.pair_epoch}
 
     def link_info(self) -> dict:
         code, exp = self.store.pair_code()
@@ -152,7 +159,9 @@ class LinkService:
 
     def enroll_info(self, device: dict) -> dict:
         t = self.transports()
-        return {"device": device["id"], "pc_id": self.store.pc_id, "pc_pk": self.store.pc_public,
+        extra = {"session_token": device["session_token"]} if device.get("session_token") else {}
+        return {**extra, "device": device["id"], "expires_at": device.get("expires_at"),
+                "idle_days": self.store.idle_days, "pc_id": self.store.pc_id, "pc_pk": self.store.pc_public,
                 "name": self.pc_name, "protocol": PROTOCOL,
                 "relay_url": self.relay_url if self.relay_enabled else None,
                 "bluetooth": {"address": t["bluetooth"].get("address"), "channel": t["bluetooth"].get("channel"),
@@ -196,7 +205,20 @@ def add_routes(app: web.Application, gw: Any) -> None:
             return web.json_response({"detail": "invalid device key"}, status=400)
         if len(pk) != 32:
             return web.json_response({"detail": "invalid device key"}, status=400)
-        dev = svc().store.enroll(pk, str(body.get("name") or "HP"), "lan")
+        kind = request.get("nv_auth")
+        # A phone known by its session token or its relay/Bluetooth tunnel can only (re)enroll itself.
+        own = request.get("nv_device")
+        tunnel_dev = own if request.headers.get("X-Neovarch-Link-Device") else None
+        if own and device_id(pk) != own:
+            return web.json_response({"detail": "kunci perangkat tidak cocok dengan HP di tunnel ini"}, status=403)
+        store = svc().store
+        via = "lan"
+        if tunnel_dev:
+            via = next((d.get("via") for d in store.devices() if d["id"] == tunnel_dev), None) or "relay"
+        issue = kind == "pair" or body.get("session") is True
+        dev = store.enroll(pk, str(body.get("name") or "HP"), via, issue_token=issue)
+        if kind == "pair":
+            store.mark_paired()  # the QR is spent: its pair token and pairing code stop working
         svc()._changed()
         return web.json_response(svc().enroll_info(dev))
 

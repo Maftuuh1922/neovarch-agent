@@ -263,6 +263,8 @@ class RemoteController extends ChangeNotifier {
         deviceName: deviceName,
         onLinkChanged: (l) => link = l);
     try {
+      // The QR's token is one-time: trade it for this phone's own session token first.
+      await g.exchangePairToken();
       await g.connect();
       await g.listSessions(limit: 1);
     } catch (e) {
@@ -270,7 +272,7 @@ class RemoteController extends ChangeNotifier {
       return _friendly('$e', relay: p.link?.canRelay == true);
     }
     await g.close();
-    final d = await desktops.upsert(p, id: id);
+    final d = await desktops.upsert(p.copyWith(token: g.token), id: id);
     if (link != null) desktops.updateLink(d, link: link);
     await connectTo(d);
     return null;
@@ -287,7 +289,7 @@ class RemoteController extends ChangeNotifier {
     if (s.contains('401') || s.contains('403') || s.contains('not upgraded')) {
       return 'PC menolak token. Buat ulang QR pemasangan di PC lalu pindai lagi.';
     }
-    if (s.startsWith('PC tidak terjangkau') || s.startsWith('HP ini sudah dicabut') || s.startsWith('PC belum mengenal') || s.startsWith('Kode pemasangan')) {
+    if (s.startsWith('PC tidak terjangkau') || s.startsWith('Sesi kedaluwarsa') || s.startsWith('HP ini sudah dicabut') || s.startsWith('PC belum mengenal') || s.startsWith('Kode pemasangan')) {
       return s;
     }
     if (isNetworkError(s) || s.contains('timed out') || s.contains('waktu habis') || s.contains('tidak ada alamat PC')) {
@@ -327,7 +329,8 @@ class RemoteController extends ChangeNotifier {
         deviceName: deviceName,
         bluetoothEnabled: d.bluetooth,
         bluetoothConnector: bluetoothConnector,
-        onLinkChanged: (l) => desktops.updateLink(d, link: l));
+        onLinkChanged: (l) => desktops.updateLink(d, link: l),
+        onTokenChanged: (t) => unawaited(desktops.updateToken(d, t)));
     _statusSub = g.statusStream.listen(_onStatus);
     _eventSub = g.events.listen(_onEvent);
     _approvalSub = g.approvalsChanged.listen(_onApproval);

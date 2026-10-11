@@ -68,6 +68,8 @@ DEFAULTS: dict[str, Any] = {
     "file_read_max_chars": 20000,
     "memory": {"obsidian_vault": "", "obsidian_enabled": True},
     "appearance": {"accent": "#EE1C1C", "base": "dark"},
+    # Remote HP: a paired phone not seen for this many days is unpaired (0 = never).
+    "remote": {"pairing_idle_days": 30},
 }
 
 DEFAULT_SOUL = """You are Neovarch Agent, an AI agent from NeovarchLabs that works on the user's own computer.

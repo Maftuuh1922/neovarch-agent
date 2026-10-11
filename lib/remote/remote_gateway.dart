@@ -5,7 +5,11 @@
 //
 // Gateway facts this relies on (see docs/remote-protocol.md):
 //   * auth: `?token=` on the WS URL; REST takes `X-Neovarch-Session-Token`
-//     or `Authorization: Bearer` with the same token;
+//     or `Authorization: Bearer` with the same token. A new QR carries a
+//     one-time pair token (10 min) that only `POST /api/remote/devices`
+//     accepts: it is traded for this phone's own session token (`nvd_…`),
+//     which [onTokenChanged] saves. An idle-expired session gets
+//     `401 {code: session_expired}` ([SessionExpired]);
 //   * `client.capabilities {server_requests:true}` must be sent, otherwise
 //     approvals are never sent to this connection;
 //   * approvals arrive as a server→client JSON-RPC request `approval`
@@ -174,6 +178,7 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
     this.relayConnector,
     this.bluetoothConnector,
     this.onLinkChanged,
+    this.onTokenChanged,
     this.lanProbeEvery = const Duration(seconds: 45),
   })  : _http = httpClient ?? http.Client(),
         _rand = random ?? math.Random() {
@@ -198,6 +203,12 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
   /// Called when [link] changed (enrolled, relay URL updated) so it is saved.
   final void Function(LinkInfo info)? onLinkChanged;
 
+  /// Called when the PC handed this phone a (new) device session token, so it is saved.
+  final void Function(String token)? onTokenChanged;
+
+  /// True once [token] is this phone's own device session token (not the QR's).
+  bool get hasDeviceSession => token.startsWith(deviceTokenPrefix);
+
   /// While on relay/Bluetooth, how often to check whether the LAN is back.
   final Duration lanProbeEvery;
 
@@ -212,7 +223,7 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
   /// The paired address; [alternates] are other routes to the same PC.
   final String baseUrl;
   List<String> alternates;
-  final String token;
+  String token;
   final Map<String, String> headers;
   final String? profile;
   final Duration heartbeat;
@@ -333,6 +344,7 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
       }
       if (!ok) {
         if (firstError is TunnelDenied) throw firstError;
+        if (hasDeviceSession && await _sessionExpired()) throw const SessionExpired();
         throw RemoteUnreachable(relayAvailable: relayAvailable);
       }
       await client.call('client.capabilities', {'server_requests': true}, const Duration(seconds: 15));
@@ -345,10 +357,18 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
       _setStatus(RemoteStatus.connected);
       if (_tunnel == null) {
         unawaited(_refreshRoutes());
-        unawaited(_enrollOverLan());
+        // Still on the QR's token: trade it for this phone's own session token first.
+        if (hasDeviceSession) {
+          unawaited(_enrollOverLan());
+        } else {
+          await _enrollOverLan();
+        }
         _lanProbe?.cancel();
         _lanProbe = null;
       } else {
+        // Over relay/Bluetooth the PC knows this phone by its device key; get a
+        // LAN session token through the tunnel so the LAN works when we are back.
+        if (!hasDeviceSession) await _enrollOverLan();
         _startLanProbe();
       }
       unawaited(ping());
@@ -436,7 +456,9 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
     if (keyFn == null) return;
     try {
       final key = await keyFn();
-      final j = await _json('POST', '/api/remote/devices', body: {'pk': b64e(key.publicBytes), 'name': deviceName});
+      final j = await _json('POST', '/api/remote/devices',
+          body: {'pk': b64e(key.publicBytes), 'name': deviceName, if (!hasDeviceSession) 'session': true});
+      if (j is Map) _adoptSessionToken(j['session_token']);
       final info = LinkInfo.tryParse(j);
       if (info == null) return;
       final next = info.copyWith(enrolled: true, clearPairCode: true);
@@ -451,6 +473,69 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
         onLinkChanged?.call(next);
       }
     } catch (_) {}
+  }
+
+  void _adoptSessionToken(Object? t) {
+    if (t is! String || !t.startsWith(deviceTokenPrefix) || t == token) return;
+    token = t;
+    onTokenChanged?.call(t);
+  }
+
+  /// Pairing on the LAN: trade the QR's one-time pair token for this phone's own
+  /// session token before anything else (the pair token opens nothing else).
+  /// Older PCs answer without a session token: the QR token is kept. Never throws.
+  Future<void> exchangePairToken() async {
+    final keyFn = deviceKey;
+    if (keyFn == null || hasDeviceSession || token.isEmpty) return;
+    final LinkKeyPair key;
+    try {
+      key = await keyFn();
+    } catch (_) {
+      return;
+    }
+    for (final url in candidates) {
+      if (_closed) return;
+      try {
+        final b = Uri.parse(url);
+        final uri = b.replace(path: '${b.path.replaceAll(RegExp(r'/+$'), '')}/api/remote/devices');
+        final res = await _http
+            .post(uri,
+                headers: {..._restHeaders, 'Content-Type': 'application/json'},
+                body: jsonEncode({'pk': b64e(key.publicBytes), 'name': deviceName, 'session': true}))
+            .timeout(gatewayRoute(url) == 'lan' ? lanTimeout : wanTimeout);
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          if (res.statusCode == 401 || res.statusCode == 403 || res.statusCode == 404) return;
+          continue;
+        }
+        final j = jsonDecode(res.body);
+        if (j is Map) {
+          _adoptSessionToken(j['session_token']);
+          final info = LinkInfo.tryParse(j);
+          if (info != null) {
+            link = info.copyWith(enrolled: true, clearPairCode: true);
+            onLinkChanged?.call(link!);
+          }
+        }
+        return;
+      } catch (_) {
+        continue;
+      }
+    }
+  }
+
+  /// After a failed connect with a device session token: did the PC say it expired?
+  Future<bool> _sessionExpired() async {
+    for (final url in candidates) {
+      try {
+        final b = Uri.parse(url);
+        final uri = b.replace(path: '${b.path.replaceAll(RegExp(r'/+$'), '')}/api/remote/link');
+        final res = await _http.get(uri, headers: _restHeaders).timeout(gatewayRoute(url) == 'lan' ? lanTimeout : wanTimeout);
+        return isSessionExpiredResponse(res.statusCode, res.body);
+      } catch (_) {
+        continue;
+      }
+    }
+    return false;
   }
 
   /// While on relay/Bluetooth: come back to the LAN as soon as it answers.
@@ -868,6 +953,7 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
         body: body != null ? utf8.encode(jsonEncode(body)) : null);
     final text = utf8.decode(bytes, allowMalformed: true);
     if (status == 404) throw const RemoteRestError(404, 'fitur ini belum ada di Neovarch PC — perbarui aplikasi PC');
+    if (isSessionExpiredResponse(status, text)) throw const SessionExpired();
     if (status == 401 || status == 403) throw RemoteRestError(status, 'token ditolak oleh PC — pasangkan ulang');
     if (status < 200 || status >= 300) {
       String msg = 'HTTP $status';
