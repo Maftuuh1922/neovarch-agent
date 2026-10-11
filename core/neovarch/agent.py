@@ -81,7 +81,7 @@ def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "") -> s
     if skills:
         parts.append("# Skills (read one with the `skill` tool before using it)\n"
                      + "\n".join(f"- {s['name']}: {s['description']}" for s in skills))
-    parts.append(f"Current working directory: {cwd}\nDate: {time.strftime('%Y-%m-%d %H:%M %Z')}")
+    parts.append(f"Current working directory: {cwd}\nDate: {now_text(cfg)}")
     return "\n\n".join(parts)
 
 
@@ -403,5 +403,30 @@ def _wire(m: dict) -> dict:
     return out
 
 
+def now_text(cfg: dict) -> str:
+    """Local date/time for the prompt, in Settings › Perilaku › timezone when set (e.g. Asia/Jakarta)."""
+    tz = str(cfgmod.get_path(cfg, "timezone", "") or "").strip()
+    if tz:
+        try:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo(tz)).strftime("%Y-%m-%d %H:%M ") + tz
+        except Exception:
+            pass  # unknown zone name: fall back to the PC's clock
+    return time.strftime("%Y-%m-%d %H:%M %Z")
+
+
 def default_cwd() -> Path:
-    return Path(os.environ.get("NEOVARCH_CWD") or os.getcwd())
+    """Where new chats start: NEOVARCH_CWD, else Settings › Ruang kerja › Proyek (terminal.cwd), else here."""
+    env = os.environ.get("NEOVARCH_CWD")
+    if env:
+        return Path(env)
+    try:
+        raw = str(cfgmod.get_path(cfgmod.load_config(), "terminal.cwd", "") or "").strip()
+    except Exception:
+        raw = ""
+    if raw:
+        p = Path(os.path.expanduser(raw))
+        if p.is_dir():
+            return p
+    return Path(os.getcwd())

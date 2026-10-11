@@ -2203,7 +2203,7 @@ def config_schema_payload() -> dict:
         prov_opts += [f"custom:{e['id']}" for e in providers.endpoints_response(cfgmod.load_config())["endpoints"]]
     except Exception:
         pass
-    return {"category_order": ["model", "chat", "safety", "advanced"], "fields": {
+    return {"category_order": ["model", "chat", "workspace", "safety", "advanced"], "fields": {
         "model.default": {"category": "model", "type": "string", "description": "ID model yang dipakai obrolan baru."},
         "model.provider": {"category": "model", "type": "select", "options": prov_opts,
                            "description": "Penyedia model (preset, custom, atau custom:<endpoint>)."},
@@ -2215,6 +2215,18 @@ def config_schema_payload() -> dict:
                            "description": "ask = tanya sebelum perintah berbahaya; off = jalankan tanpa bertanya."},
         "agent.max_turns": {"category": "advanced", "type": "number", "description": "Batas panggilan model per giliran."},
         "agent.system_prompt": {"category": "chat", "type": "text", "description": "Instruksi tambahan setelah SOUL.md."},
+        # Settings › Obrolan › Perilaku
+        "timezone": {"category": "chat", "type": "string", "clearable": True,
+                     "description": "Zona waktu agen (mis. Asia/Jakarta). Kosong = jam PC."},
+        "display.show_reasoning": {"category": "chat", "type": "boolean",
+                                   "description": "Tampilkan proses berpikir model di obrolan."},
+        # Settings › Ruang kerja › Proyek / Shell / File
+        "terminal.cwd": {"category": "workspace", "type": "string", "clearable": True,
+                         "description": "Folder kerja obrolan baru. Kosong = folder home."},
+        "terminal.timeout": {"category": "workspace", "type": "number",
+                             "description": "Batas waktu bawaan perintah shell (detik, maks 600)."},
+        "file_read_max_chars": {"category": "workspace", "type": "number",
+                                "description": "Batas karakter saat agen membaca satu file."},
     }}
 
 
