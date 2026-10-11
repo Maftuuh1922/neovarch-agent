@@ -50,6 +50,10 @@ Fase 1 additions (each behind its own ``agent.tempest_*`` switch, see :data:`FEA
    git dir (the user's git is untouched). When the verify gate gives up, the files go back
    to the last green checkpoint (the turn start, verified on demand); ``neovarch rewind``
    restores by hand (see tempest_ckpt.py).
+10. progress + recitation (``tempest_progress``) - an ``update_plan`` tool keeps the plan per
+   project (outside the repo); a new chat with an unfinished plan gets it recited on its first
+   message, long sessions get it recited as a trailing note on every call, and the verify gate
+   marks done items verified/unverified (see tempest_progress.py).
 """
 
 from __future__ import annotations
@@ -89,6 +93,8 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "lint_timeout": 60,
     "checkpoints": False,          # shadow-git checkpoints + rollback to last green (tempest_ckpt.py)
     "checkpoint_max_files": 5000,
+    "progress": False,             # update_plan tool + plan recitation (tempest_progress.py)
+    "recite_after": 10,            # tool results in a session before the plan is recited every call
 }
 
 HEAD_LINES = 30

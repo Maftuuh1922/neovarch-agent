@@ -15,6 +15,7 @@ from neovarch import session_settings
 from neovarch import tempest
 from neovarch import tempest_ckpt
 from neovarch import tempest_lint
+from neovarch import tempest_progress
 from neovarch.llm import Completion, LLMError, stream_chat
 from neovarch.store import SessionStore
 from neovarch.tools import ToolContext, list_skills, run_tool, tool_schemas
@@ -197,8 +198,15 @@ class Agent:
         obs_dir = cfgmod.neovarch_home() / "obs" / str(self.rec.get("id") or "session")
         messages = self.rec["messages"]
         user_msg: dict[str, Any] = {"role": "user", "content": user_text, "ts": time.time()}
+        self._progress = None
         if st:
             user_msg["wire_tail"] = prompt_tail(cfg, user_text)
+            if st.get("progress"):
+                self._progress = tempest_progress.Progress(self.ctx.cwd, cfgmod.neovarch_home())
+                if not any(m.get("role") == "assistant" for m in messages):
+                    note = tempest_progress.session_start_note(self._progress)
+                    if note:  # a fresh chat continues an unfinished plan instead of redoing it
+                        user_msg["wire_tail"] += "\n\n" + note
         if attachments:
             user_msg["attachments"] = [dict(a) for a in attachments]
             if not vision and any(a.get("kind") == "image" for a in attachments):
@@ -303,6 +311,12 @@ class Agent:
                     wire = tempest.place_breakpoints(wire, system_split, getattr(self, "_prev_last", None),
                                                      str(st.get("cache_ttl") or ""))
                     self._prev_last = len(wire) - 1
+                if self._progress is not None:
+                    n_tool = sum(1 for m in messages if m.get("role") == "tool")
+                    if n_tool >= int(st.get("recite_after") or 10):
+                        plan = tempest_progress.recitation(self._progress)
+                        if plan:  # ephemeral trailing note: nothing earlier changes
+                            wire = wire + [{"role": "user", "content": plan}]
                 if lint_prefix:
                     bad = tempest.prefix_violation(getattr(self, "_prev_wire", None), wire)
                     if bad is not None:
@@ -347,6 +361,8 @@ class Agent:
                         ok, out = await asyncio.to_thread(tempest.run_verify, verify_cmd, self.ctx.cwd)
                         if ok and self._ckpt:
                             await asyncio.to_thread(self._ckpt_mark, "akhir turn: verifikasi lulus", "green")
+                        if ok and self._progress is not None:
+                            self._progress.mark_verified(True)
                         if not ok:
                             summary = tempest.failure_summary(out)
                             if verify_attempts < st["verify_retries"]:
@@ -358,6 +374,8 @@ class Agent:
                                 continue
                             final_text = final_text + tempest.escalation_note(verify_cmd, summary, st["verify_retries"])
                             error = "verification failed"
+                            if self._progress is not None:
+                                self._progress.mark_verified(False)
                             if self._ckpt and self._ckpt_base:
                                 final_text += await asyncio.to_thread(self._rollback, verify_cmd)
                     elif st and self._ckpt and self._changed:
@@ -371,7 +389,9 @@ class Agent:
                     if st and st.get("checkpoints") and self._ckpt is None and not self.interrupted \
                             and call.name in ("write_file", "edit_file", "shell"):
                         await asyncio.to_thread(self._ckpt_start, st)
-                    if st and call.name in ("write_file", "edit_file") and not self.interrupted:
+                    if st and call.name == "update_plan" and self._progress is not None:
+                        result = self._progress.update(args, str(self.rec.get("id") or ""))
+                    elif st and call.name in ("write_file", "edit_file") and not self.interrupted:
                         result = await self._checked_write(call.name, args)
                     else:
                         result = await run_tool(call.name, args, self.ctx) if not self.interrupted else "interrupted"
@@ -527,6 +547,8 @@ class Agent:
     def _tools(self) -> list[dict]:
         tools = tool_schemas(self.ctx)
         st = getattr(self, "_tempest", None)
+        if st and st.get("progress"):
+            tools = tools + [tempest_progress.SCHEMA]
         if st and st.get("cache_v2"):
             tools = tempest.stable_tools(tools)
         return tools
