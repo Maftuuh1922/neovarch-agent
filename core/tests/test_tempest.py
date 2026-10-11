@@ -1,27 +1,31 @@
-"""Tempa harness layer (opt-in): legacy stays the default; each mechanism in isolation."""
+"""Tempest harness layer (opt-in): legacy stays the default; each mechanism in isolation."""
 
 import json
 
-from neovarch import tempa
+from neovarch import tempest
 
 
 def test_default_is_legacy():
-    assert tempa.mode({}) == "legacy"
-    assert tempa.settings({"agent": {"harness_mode": "legacy"}}) is None
-    st = tempa.settings({"agent": {"harness_mode": "tempa"}})
+    assert tempest.mode({}) == "legacy"
+    assert tempest.settings({"agent": {"harness_mode": "legacy"}}) is None
+    st = tempest.settings({"agent": {"harness_mode": "tempest"}})
     assert st["profile"] == "ringan" and st["mask"] and st["verify_retries"] == 2
-    assert tempa.settings({"agent": {"harness_mode": "tempa", "tempa_profile": "tinggi"}})["mask"] is False
-    assert tempa.settings({"agent": {"harness_mode": "tempa", "tempa_mask": False}})["mask"] is False
+    assert tempest.settings({"agent": {"harness_mode": "tempest", "tempest_profile": "tinggi"}})["mask"] is False
+    assert tempest.settings({"agent": {"harness_mode": "tempest", "tempest_mask": False}})["mask"] is False
+    # deprecated pre-rename alias: harness_mode "tempa" and tempa_* keys still work
+    assert tempest.mode({"agent": {"harness_mode": "tempa"}}) == "tempest"
+    old = tempest.settings({"agent": {"harness_mode": "tempa", "tempa_profile": "tinggi"}})
+    assert old["profile"] == "tinggi" and old["mask"] is False
 
 
 def test_offload_keeps_head_tail_and_path(tmp_path):
     big = "\n".join(f"line {i} " + "x" * 40 for i in range(2000))
-    out = tempa.offload(big, "shell", "c1", tmp_path, 2000)
+    out = tempest.offload(big, "shell", "c1", tmp_path, 2000)
     assert "line 0 " in out and "line 1999 " in out and "line 1000 " not in out
     saved = next(tmp_path.glob("*.txt"))
     assert str(saved) in out and saved.read_text() == big
-    assert tempa.offload("small", "shell", "c2", tmp_path, 2000) == "small"
-    assert tempa.offload(big, "read_file", "c3", tmp_path, 2000) == big
+    assert tempest.offload("small", "shell", "c2", tmp_path, 2000) == "small"
+    assert tempest.offload(big, "read_file", "c3", tmp_path, 2000) == big
 
 
 def _wire(n):
@@ -35,21 +39,21 @@ def _wire(n):
 
 
 def test_mask_old_observations_in_blocks():
-    st = tempa.settings({"agent": {"harness_mode": "tempa"}})
-    masked = [m for m in tempa.mask_wire(_wire(9), st) if m["role"] == "tool"
+    st = tempest.settings({"agent": {"harness_mode": "tempest"}})
+    masked = [m for m in tempest.mask_wire(_wire(9), st) if m["role"] == "tool"
               and m["content"].startswith("[output alat lama")]
     assert masked == []  # 9 - 6 = 3 old turns < block of 4: nothing moves yet
-    out = tempa.mask_wire(_wire(10), st)
+    out = tempest.mask_wire(_wire(10), st)
     tools = [m for m in out if m["role"] == "tool"]
     assert all(m["content"].startswith("[output alat lama") for m in tools[:4])
     assert all(m["content"] == "y" * 1000 for m in tools[4:])
 
 
 def test_live_reads_are_not_masked():
-    st = tempa.settings({"agent": {"harness_mode": "tempa"}})
+    st = tempest.settings({"agent": {"harness_mode": "tempest"}})
     w = _wire(10)
     w[2]["tool_calls"][0]["function"] = {"name": "read_file", "arguments": json.dumps({"path": "a.py"})}
-    out = tempa.mask_wire(w, st)
+    out = tempest.mask_wire(w, st)
     assert out[3]["content"] == "y" * 1000  # a.py was read and not touched since
 
 
@@ -57,26 +61,26 @@ def test_syntax_error(tmp_path):
     good, bad = tmp_path / "a.py", tmp_path / "b.py"
     good.write_text("x = 1\n")
     bad.write_text("def f():\n  return 1\n    x\n")
-    assert tempa.syntax_error(good) is None and "IndentationError" in tempa.syntax_error(bad)
+    assert tempest.syntax_error(good) is None and "IndentationError" in tempest.syntax_error(bad)
     j = tmp_path / "c.json"
     j.write_text('{"a": 1,}')
-    assert "JSONDecodeError" in tempa.syntax_error(j)
+    assert "JSONDecodeError" in tempest.syntax_error(j)
     (tmp_path / "d.txt").write_text("{{{")
-    assert tempa.syntax_error(tmp_path / "d.txt") is None
+    assert tempest.syntax_error(tmp_path / "d.txt") is None
 
 
 def test_detect_verify(tmp_path):
-    assert tempa.detect_verify(tmp_path) is None
+    assert tempest.detect_verify(tmp_path) is None
     (tmp_path / "tests").mkdir()
-    assert "pytest" in tempa.detect_verify(tmp_path)
+    assert "pytest" in tempest.detect_verify(tmp_path)
     other = tmp_path / "js"
     other.mkdir()
     (other / "package.json").write_text(json.dumps({"scripts": {"test": "vitest run"}}))
-    assert tempa.detect_verify(other)[:2] == ["npm", "test"]
+    assert tempest.detect_verify(other)[:2] == ["npm", "test"]
 
 
-async def test_agent_legacy_wire_unchanged_and_tempa_gate(home, tmp_path, monkeypatch):
-    """Legacy: no tail, date in system prompt, no gate. Tempa: broken .py write is rejected
+async def test_agent_legacy_wire_unchanged_and_tempest_gate(home, tmp_path, monkeypatch):
+    """Legacy: no tail, date in system prompt, no gate. Tempest: broken .py write is rejected
     and a failing test triggers one verify retry."""
     import neovarch.agent as agentmod
     from neovarch import config as cfgmod
@@ -115,9 +119,9 @@ async def test_agent_legacy_wire_unchanged_and_tempa_gate(home, tmp_path, monkey
     assert "Date:" in seen[0][0]["content"] and "Konteks saat ini" not in seen[0][-1]["content"]
     assert len(seen) == 2
 
-    # tempa: broken syntax rejected, then wrong value caught by the gate, then fixed
+    # tempest: broken syntax rejected, then wrong value caught by the gate, then fixed
     cfg = cfgmod.load_config()
-    cfg["agent"]["harness_mode"] = "tempa"
+    cfg["agent"]["harness_mode"] = "tempest"
     cfgmod.save_config(cfg)
     seen.clear()
     script[:] = [("", [w("b", "def f(:\n")]), ("", [w("c", "def f():\n    return 1\n")]), ("done", []),

@@ -1,12 +1,12 @@
-"""Tempa: an opt-in, lightweight harness layer for the agent loop (Phase 1 prototype).
+"""Tempest: an opt-in, lightweight harness layer for the agent loop (Phase 1 prototype).
 
-Off by default. ``agent.harness_mode: tempa`` in config.yaml turns it on; anything else
-("legacy", empty) keeps the loop exactly as before. ``agent.tempa_profile`` picks:
+Off by default. ``agent.harness_mode: tempest`` in config.yaml turns it on; anything else
+("legacy", empty) keeps the loop exactly as before. ``agent.tempest_profile`` picks:
 
 * ``ringan``   (default) - offload big tool output, mask old observations, 2 verify retries;
 * ``tinggi``   - no masking, larger offload threshold, 4 verify retries;
 * ``otomatis`` - ringan, but masking only starts once the wire is past
-                 ``agent.tempa_auto_mask_tokens`` (default 12000).
+                 ``agent.tempest_auto_mask_tokens`` (default 12000).
 
 What it does (all deterministic, zero extra LLM calls):
 
@@ -52,6 +52,16 @@ MASK_TEXT = "[output alat lama disembunyikan untuk menghemat konteks{where}; jal
 
 
 def _get(cfg: dict, dotted: str, default=None):
+    """Dotted lookup; ``agent.tempest_*`` falls back to the deprecated ``agent.tempa_*`` key."""
+    if dotted.startswith("agent.tempest_"):
+        val = _lookup(cfg, dotted, None)
+        if val is None:
+            val = _lookup(cfg, "agent.tempa_" + dotted[len("agent.tempest_"):], None)
+        return default if val is None else val
+    return _lookup(cfg, dotted, default)
+
+
+def _lookup(cfg: dict, dotted: str, default=None):
     cur: Any = cfg
     for part in dotted.split("."):
         if not isinstance(cur, dict) or part not in cur:
@@ -62,24 +72,25 @@ def _get(cfg: dict, dotted: str, default=None):
 
 def mode(cfg: dict) -> str:
     raw = str(_get(cfg, "agent.harness_mode", "") or "").strip().lower()
-    return "tempa" if raw == "tempa" else "legacy"
+    # "tempa" is the deprecated pre-rename name of this harness; still accepted.
+    return "tempest" if raw in ("tempest", "tempa") else "legacy"
 
 
 def settings(cfg: dict) -> dict[str, Any] | None:
-    """The Tempa knobs for this config, or None in legacy mode."""
-    if mode(cfg) != "tempa":
+    """The Tempest knobs for this config, or None in legacy mode."""
+    if mode(cfg) != "tempest":
         return None
-    name = str(_get(cfg, "agent.tempa_profile", "ringan") or "ringan").strip().lower()
+    name = str(_get(cfg, "agent.tempest_profile", "ringan") or "ringan").strip().lower()
     out = dict(PROFILES.get(name, PROFILES["ringan"]))
     out["profile"] = name if name in PROFILES else "ringan"
     for key in ("offload_tokens", "keep_turns", "mask_block", "verify_retries", "auto_mask_tokens"):
-        val = _get(cfg, f"agent.tempa_{key}")
+        val = _get(cfg, f"agent.tempest_{key}")
         if val not in (None, ""):
             try:
                 out[key] = int(val)
             except (TypeError, ValueError):
                 pass
-    mask = _get(cfg, "agent.tempa_mask")
+    mask = _get(cfg, "agent.tempest_mask")
     if isinstance(mask, bool):
         out["mask"] = mask
     return out

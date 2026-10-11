@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from neovarch import config as cfgmod
 from neovarch import session_settings
-from neovarch import tempa
+from neovarch import tempest
 from neovarch.llm import Completion, LLMError, stream_chat
 from neovarch.store import SessionStore
 from neovarch.tools import ToolContext, list_skills, run_tool, tool_schemas
@@ -66,7 +66,7 @@ def persona_prompt(session_id: str | None, office: dict | None) -> str:
 
 
 def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "", stable: bool = False) -> str:
-    """The system prompt. ``stable`` (Tempa) leaves out what changes per message or minute
+    """The system prompt. ``stable`` (Tempest) leaves out what changes per message or minute
     (vault notes matched to this message, the clock); those go to :func:`prompt_tail`."""
     parts = [cfgmod.soul_text().strip(), APP_KNOWLEDGE]
     if persona:
@@ -99,7 +99,7 @@ def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "", stab
 
 
 def prompt_tail(cfg: dict, query: str) -> str:
-    """Tempa: the dynamic context for one user message (clock + vault notes matched to it)."""
+    """Tempest: the dynamic context for one user message (clock + vault notes matched to it)."""
     out = [f"# Konteks saat ini\nDate: {now_text(cfg)}"]
     try:
         from neovarch import obsidian
@@ -165,11 +165,11 @@ class Agent:
         self.ctx.approvals_mode = str(cfgmod.get_path(cfg, "approvals.mode", "ask") or "ask")
         max_turns = int(cfgmod.get_path(cfg, "agent.max_turns", 30) or 30)
         self.interrupted = False
-        st = tempa.settings(cfg)  # None = legacy harness, unchanged
-        self._tempa = st
+        st = tempest.settings(cfg)  # None = legacy harness, unchanged
+        self._tempest = st
         self._changed: list[str] = []
         verify_attempts = 0
-        verify_cmd = tempa.detect_verify(self.ctx.cwd) if st else None
+        verify_cmd = tempest.detect_verify(self.ctx.cwd) if st else None
         obs_dir = cfgmod.neovarch_home() / "obs" / str(self.rec.get("id") or "session")
         messages = self.rec["messages"]
         user_msg: dict[str, Any] = {"role": "user", "content": user_text, "ts": time.time()}
@@ -236,7 +236,7 @@ class Agent:
                     break
                 wire = [{"role": "system", "content": sys_prompt}] + wire_messages(messages, vision, self.ctx.cwd)
                 if st:
-                    wire = tempa.mask_wire(wire, st)
+                    wire = tempest.mask_wire(wire, st)
                 comp: Completion = await self._complete(active, wire, pinned)
                 usage = comp.usage or usage
                 assistant: dict[str, Any] = {"role": "assistant", "content": comp.text, "ts": time.time()}
@@ -249,23 +249,23 @@ class Agent:
                 messages.append(assistant)
                 self.store.save(self.rec)
                 if st and len(messages) >= 2 and messages[-2].get("kind") == "verify" and comp.text:
-                    tempa.save_reflection(cfgmod.neovarch_home() / "notes", str(self.rec.get("id") or ""),
+                    tempest.save_reflection(cfgmod.neovarch_home() / "notes", str(self.rec.get("id") or ""),
                                           comp.text)
                 if not comp.tool_calls:
                     final_text = comp.text
                     if st and self._changed and verify_cmd and not self.interrupted:
                         self.emit("status.update", {"kind": "verify", "text": "Memverifikasi: " + " ".join(verify_cmd)})
-                        ok, out = await asyncio.to_thread(tempa.run_verify, verify_cmd, self.ctx.cwd)
+                        ok, out = await asyncio.to_thread(tempest.run_verify, verify_cmd, self.ctx.cwd)
                         if not ok:
-                            summary = tempa.failure_summary(out)
+                            summary = tempest.failure_summary(out)
                             if verify_attempts < st["verify_retries"]:
                                 verify_attempts += 1
                                 messages.append({"role": "user", "kind": "verify", "ts": time.time(),
-                                                 "content": tempa.verify_prompt(verify_cmd, summary, verify_attempts,
+                                                 "content": tempest.verify_prompt(verify_cmd, summary, verify_attempts,
                                                                                 st["verify_retries"])})
                                 self.store.save(self.rec)
                                 continue
-                            final_text = comp.text + tempa.escalation_note(verify_cmd, summary, st["verify_retries"])
+                            final_text = comp.text + tempest.escalation_note(verify_cmd, summary, st["verify_retries"])
                             error = "verification failed"
                     break
                 for call in comp.tool_calls:
@@ -278,7 +278,7 @@ class Agent:
                     else:
                         result = await run_tool(call.name, args, self.ctx) if not self.interrupted else "interrupted"
                     if st:
-                        result = tempa.offload(result, call.name, call.id, obs_dir, st["offload_tokens"])
+                        result = tempest.offload(result, call.name, call.id, obs_dir, st["offload_tokens"])
                     dur = time.monotonic() - t0
                     _log.info("tool %s session=%s %.2fs", call.name, self.rec.get("id"), dur)
                     messages.append({"role": "tool", "tool_call_id": call.id, "name": call.name,
@@ -310,7 +310,7 @@ class Agent:
 
 
     async def _checked_write(self, name: str, args: dict) -> str:
-        """Tempa: write/edit, then syntax-check .py/.json/.js/.ts; a broken file is restored."""
+        """Tempest: write/edit, then syntax-check .py/.json/.js/.ts; a broken file is restored."""
         try:
             from neovarch.tools import _resolve
             path = _resolve(self.ctx, str(args.get("path") or ""))
@@ -320,7 +320,7 @@ class Agent:
         result = await run_tool(name, args, self.ctx)
         if not (result.startswith("wrote") or result.startswith("edited")):
             return result
-        err = await asyncio.to_thread(tempa.syntax_error, path)
+        err = await asyncio.to_thread(tempest.syntax_error, path)
         if not err:
             self._changed.append(str(path))
             return result
@@ -465,7 +465,7 @@ def wire_messages(messages: list[dict], vision: bool, cwd: Path) -> list[dict]:
             w = uploads.user_wire(m, vision, i in recent)
         else:
             w = _wire(m)
-        if m.get("role") == "user" and m.get("wire_tail"):  # Tempa: dynamic context of that message
+        if m.get("role") == "user" and m.get("wire_tail"):  # Tempest: dynamic context of that message
             tail = "\n\n" + str(m["wire_tail"])
             if isinstance(w["content"], str):
                 w["content"] = w["content"] + tail

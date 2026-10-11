@@ -1,4 +1,4 @@
-"""Deterministic A/B replay: legacy harness vs Tempa, through the real Agent loop.
+"""Deterministic A/B replay: legacy harness vs Tempest, through the real Agent loop.
 
 No live model: ``neovarch.agent.stream_chat`` is replaced by a scripted policy per task
 that reacts to what the harness shows it (tool output, "rejected:", verify feedback,
@@ -6,8 +6,8 @@ masked observations). Tools, files, pytest and the harness code all run for real
 is simulated is only the model's choices. Token counts use tiktoken cl100k_base on the
 exact wire (tools schema + messages) the harness would send.
 
-    python3 bench/tempa_ab.py run <task> <mode>      # one run, prints JSON (used by `all`)
-    python3 bench/tempa_ab.py all [out.json]          # every task x mode, serially, subprocess each
+    python3 bench/tempest_ab.py run <task> <mode>      # one run, prints JSON (used by `all`)
+    python3 bench/tempest_ab.py all [out.json]          # every task x mode, serially, subprocess each
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from pathlib import Path
 
 CORE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(CORE))
-RUNS = Path(os.environ.get("TEMPA_BENCH_DIR", "/workspace/work/tempa-bench-runs"))
-MODES = ["legacy", "tempa", "tempa-tinggi", "tempa-nomask"]
+RUNS = Path(os.environ.get("TEMPEST_BENCH_DIR", "/workspace/work/tempest-bench-runs"))
+MODES = ["legacy", "tempest", "tempest-tinggi", "tempest-nomask"]
 # Assumed price of a cheap OpenAI-compatible model (USD per 1M tokens). Not a quote.
 PRICE_IN, PRICE_CACHED, PRICE_OUT = 0.30, 0.03, 1.20
 
@@ -616,10 +616,10 @@ def run_one(task: str, mode: str) -> dict:
     cfg.setdefault("agent", {})["max_turns"] = 60
     cfg["timezone"] = "Asia/Jakarta"
     if mode != "legacy":
-        cfg["agent"]["harness_mode"] = "tempa"
-        cfg["agent"]["tempa_profile"] = "tinggi" if mode == "tempa-tinggi" else "ringan"
-        if mode == "tempa-nomask":
-            cfg["agent"]["tempa_mask"] = False
+        cfg["agent"]["harness_mode"] = "tempest"
+        cfg["agent"]["tempest_profile"] = "tinggi" if mode == "tempest-tinggi" else "ringan"
+        if mode == "tempest-nomask":
+            cfg["agent"]["tempest_mask"] = False
     vault = base / "proj-vault"
     if vault.exists():
         cfg["memory"] = {"obsidian_vault": str(vault), "obsidian_enabled": True}
