@@ -3,10 +3,14 @@
 Off by default. ``agent.harness_mode: tempest`` in config.yaml turns it on; anything else
 ("legacy", empty) keeps the loop exactly as before. ``agent.tempest_profile`` picks:
 
-* ``ringan``   (default) - offload big tool output, mask old observations, 2 verify retries;
-* ``tinggi``   - no masking, larger offload threshold, 4 verify retries;
-* ``otomatis`` - ringan, but masking only starts once the wire is past
-                 ``agent.tempest_auto_mask_tokens`` (default 12000).
+* ``ringan``   (default) - offload big tool output, 2 verify retries;
+* ``tinggi``   - larger offload threshold, 4 verify retries;
+* ``otomatis`` - ringan with Phase-1 auto masking settings.
+
+Since Fase 1 every profile compacts at the context boundary instead of masking per turn
+(``agent.tempest_mask_mode: turn`` brings the Phase-1 per-turn masking back), and cache
+layout v2, the delta static gate and shadow checkpoints are on; progress recitation is
+opt-in. Each switch is ``agent.tempest_<name>`` (see :data:`FEATURE_DEFAULTS`).
 
 What it does (all deterministic, zero extra LLM calls):
 
@@ -79,21 +83,21 @@ PROFILES: dict[str, dict[str, Any]] = {
 # Fase 1 feature switches (``agent.tempest_<name>``). Defaults are only flipped on after the
 # A/B replay bench shows no regression (see bench/tempest_ab.py and the Fase 1 report).
 FEATURE_DEFAULTS: dict[str, Any] = {
-    "cache_v2": False,
+    "cache_v2": True,              # bench: no pass change, 0 prefix breaks; Anthropic-style cost -74%
     "cache_breakpoints": "auto",   # auto | on | off  (auto = Anthropic-compatible endpoint)
     "cache_ttl": "",               # "" (5 minutes) | "1h"
-    "compact": False,
+    "compact": True,               # bench: +7.4 pt pass (no overflow), -28% cost vs per-turn masking
     "compact_at": 0.5,             # fraction of the model window that triggers a compaction
     "compact_target": 0.35,        # aim below this fraction after compacting
     "compact_keep_turns": 4,       # newest assistant turns whose tool outputs always stay
     "mask_mode": "",               # "" = derive (compact > turn masking > off) | turn | compact | off
-    "lint_gate": False,            # delta static gate at the end of a turn (tempest_lint.py)
+    "lint_gate": True,             # delta static gate at the end of a turn (tempest_lint.py)
     "lint_retries": 1,             # how often new diagnostics block a finish (shares verify_retries)
     "lint_tools": "auto",          # auto | comma list of builtin,ruff,pyright,mypy,tsc
     "lint_timeout": 60,
-    "checkpoints": False,          # shadow-git checkpoints + rollback to last green (tempest_ckpt.py)
+    "checkpoints": True,           # shadow-git checkpoints + rollback to last green (tempest_ckpt.py)
     "checkpoint_max_files": 5000,
-    "progress": False,             # update_plan tool + plan recitation (tempest_progress.py)
+    "progress": False,             # opt-in: bench showed no pass gain and +3% cost (tempest_progress.py)
     "recite_after": 10,            # tool results in a session before the plan is recited every call
 }
 

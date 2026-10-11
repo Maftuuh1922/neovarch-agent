@@ -136,11 +136,17 @@ async def test_agent_green_turn_is_tagged_and_kept(home, tmp_path, monkeypatch):
     assert log[0]["status"] == "green" and len(log) == 2
 
 
-async def test_checkpoints_off_by_default(home, tmp_path, monkeypatch):
+async def test_checkpoints_can_be_turned_off(home, tmp_path, monkeypatch):
     script = [("", [_w("a", "def f():\n    return 1\n")]), ("selesai", [])]
     await _run(home, tmp_path, monkeypatch, script, TEST_OK, "def f():\n    return 0\n",
-               {"harness_mode": "tempest"})
+               {"harness_mode": "tempest", "tempest_checkpoints": False})
     assert not (home / "checkpoints").exists()
+
+
+async def test_checkpoints_on_by_default_in_tempest(home, tmp_path, monkeypatch):
+    script = [("", [_w("a", "def f():\n    return 1\n")]), ("selesai", [])]
+    await _run(home, tmp_path, monkeypatch, script, TEST_OK, "def f():\n    return 0\n", {"harness_mode": "tempest"})
+    assert (home / "checkpoints").exists()
 
 
 def test_neovarch_home_inside_project_is_excluded(tmp_path):

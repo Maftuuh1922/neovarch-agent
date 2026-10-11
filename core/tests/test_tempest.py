@@ -9,7 +9,9 @@ def test_default_is_legacy():
     assert tempest.mode({}) == "legacy"
     assert tempest.settings({"agent": {"harness_mode": "legacy"}}) is None
     st = tempest.settings({"agent": {"harness_mode": "tempest"}})
-    assert st["profile"] == "ringan" and st["mask"] and st["verify_retries"] == 2
+    assert st["profile"] == "ringan" and st["mask_mode"] == "compact" and st["verify_retries"] == 2
+    assert st["cache_v2"] and st["lint_gate"] and st["checkpoints"] and not st["progress"]
+    assert tempest.settings({"agent": {"harness_mode": "tempest", "tempest_compact": False}})["mask"] is True
     assert tempest.settings({"agent": {"harness_mode": "tempest", "tempest_profile": "tinggi"}})["mask"] is False
     assert tempest.settings({"agent": {"harness_mode": "tempest", "tempest_mask": False}})["mask"] is False
     # deprecated pre-rename alias: harness_mode "tempa" and tempa_* keys still work
@@ -39,7 +41,7 @@ def _wire(n):
 
 
 def test_mask_old_observations_in_blocks():
-    st = tempest.settings({"agent": {"harness_mode": "tempest"}})
+    st = tempest.settings({"agent": {"harness_mode": "tempest", "tempest_mask_mode": "turn"}})
     masked = [m for m in tempest.mask_wire(_wire(9), st) if m["role"] == "tool"
               and m["content"].startswith("[output alat lama")]
     assert masked == []  # 9 - 6 = 3 old turns < block of 4: nothing moves yet
@@ -50,7 +52,7 @@ def test_mask_old_observations_in_blocks():
 
 
 def test_live_reads_are_not_masked():
-    st = tempest.settings({"agent": {"harness_mode": "tempest"}})
+    st = tempest.settings({"agent": {"harness_mode": "tempest", "tempest_mask_mode": "turn"}})
     w = _wire(10)
     w[2]["tool_calls"][0]["function"] = {"name": "read_file", "arguments": json.dumps({"path": "a.py"})}
     out = tempest.mask_wire(w, st)
@@ -263,7 +265,8 @@ async def test_cache_v2_prefix_never_changes_across_turns(home, tmp_path, monkey
 
 async def test_without_cache_v2_the_prefix_breaks(home, tmp_path, monkeypatch):
     """Sanity check for the lint: Phase-1 Tempest rebuilds the system prompt (memory/skill/cwd)."""
-    seen, _ = await _multi_turn(home, tmp_path, monkeypatch, {"harness_mode": "tempest", "tempest_mask": False})
+    seen, _ = await _multi_turn(home, tmp_path, monkeypatch, {"harness_mode": "tempest", "tempest_mask": False,
+                                                              "tempest_cache_v2": False, "tempest_compact": False})
     breaks = [tempest.prefix_violation(p, c) for (p, _), (c, _) in zip(seen, seen[1:])]
     assert any(b == 0 for b in breaks)
 
@@ -289,8 +292,11 @@ def test_compact_settings_and_model_override():
     assert tempest.for_model(st, "gemini-2.5-flash-thinking")["compact"] is False
     assert tempest.for_model(st, "deepseek-chat")["compact"] is True
     # Phase-1 behaviour is unchanged when compaction is off
-    assert tempest.settings({"agent": {"harness_mode": "tempest"}})["mask_mode"] == "turn"
-    assert tempest.settings({"agent": {"harness_mode": "tempest", "tempest_mask": False}})["mask_mode"] == "off"
+    assert tempest.settings({"agent": {"harness_mode": "tempest", "tempest_compact": False}})["mask_mode"] == "turn"
+    # tempest_mask: false only ever meant "no per-turn masking"; boundary compaction stays on
+    assert tempest.settings({"agent": {"harness_mode": "tempest", "tempest_mask": False}})["mask_mode"] == "compact"
+    assert tempest.settings({"agent": {"harness_mode": "tempest", "tempest_mask": False,
+                                       "tempest_compact": False}})["mask_mode"] == "off"
 
 
 def _transcript(tmp_path):

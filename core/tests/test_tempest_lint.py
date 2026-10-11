@@ -175,7 +175,8 @@ async def test_agent_lint_gate_gives_up_after_retries_with_note(home, tmp_path, 
 
 async def test_agent_lint_gate_off_and_clean_edit(home, tmp_path, monkeypatch):
     script = [("", [_edit("a", "    return p + 1\n", "    return p + bonus\n")]), ("selesai", [])]
-    final, _, rec = await _gate_run(home, tmp_path, monkeypatch, {"harness_mode": "tempest"}, script, BASE)
+    final, _, rec = await _gate_run(home, tmp_path, monkeypatch, {"harness_mode": "tempest", "tempest_lint_gate": False},
+                                    script, BASE)
     assert final == "selesai" and not [m for m in rec["messages"] if m.get("kind") == "lint"]
     script = [("", [_edit("a", "    return p + 1\n", "    return p + 2\n")]), ("selesai", [])]
     final, _, rec = await _gate_run(home, tmp_path, monkeypatch,
