@@ -29,7 +29,9 @@ from typing import Awaitable, Callable
 import aiohttp
 
 from .crypto import KeyPair, LinkError, Session, pc_accept
-from .store import LinkStore
+from .store import EXPIRED_MESSAGE, LinkStore
+
+LINK_DEVICE_HEADER = "X-Neovarch-Link-Device"
 
 log = logging.getLogger("neovarch.remote_link")
 
@@ -128,13 +130,16 @@ class PeerLink:
             if t == "auth":
                 dev = self.store.device_for_key(self.session.peer)
                 if not dev:
-                    reason = "revoked" if self.store.is_revoked(self.session.peer) else "unknown_device"
-                    self._out({"t": "denied", "reason": reason})
+                    reason = self.store.denial_reason(self.session.peer)
+                    denied = {"t": "denied", "reason": reason}
+                    if reason == "expired":
+                        denied["message"] = EXPIRED_MESSAGE
+                    self._out(denied)
                     self.fail(reason)
                     return
                 self._accept(dev)
             elif t == "pair":
-                if not self.store.check_pair_code(str(msg.get("code") or "")):
+                if not self.store.consume_pair_code(str(msg.get("code") or "")):
                     self._out({"t": "denied", "reason": "bad_code"})
                     self.fail("bad pairing code")
                     return
@@ -143,6 +148,8 @@ class PeerLink:
             else:
                 raise LinkError("expected auth")
             return
+        if self.device:
+            self.store.touch(self.device["id"], self.via)  # last_seen (throttled to once a minute)
         if t == "ws.open":
             await self._open_ws()
         elif t == "ws":
@@ -205,6 +212,11 @@ class PeerLink:
             return
         headers = {k: str(v) for k, v in (msg.get("h") or {}).items() if isinstance(k, str) and k.lower() in PASS_HEADERS}
         headers["Authorization"] = f"Bearer {self.local_token}"
+        if self.device:
+            # Which paired phone this proxied request comes from (the phone cannot set it:
+            # only PASS_HEADERS survive). /api/remote/devices uses it to mint this phone's
+            # LAN session token and nobody else's.
+            headers[LINK_DEVICE_HEADER] = self.device["id"]
         body = None
         if msg.get("b"):
             try:

@@ -35,6 +35,10 @@ export const GATEWAY_RESTART_EXIT_CODE = 75
 export const HERMES_DEFAULT_PORT = 9119
 const TOKEN_SUBJECT = 'neovarch-remote'
 const TOKEN_TTL_SECONDS = 5 * 365 * 24 * 60 * 60
+/** QR pair token: one-time, short-lived; the phone trades it for its own device session token. */
+export const PAIR_TOKEN_TTL_SECONDS = 10 * 60
+/** Mint a fresh QR pair token when the shown one has less than this left. */
+const PAIR_TOKEN_MIN_LEFT_SECONDS = 2 * 60
 
 export interface RemoteSettings {
   enabled: boolean
@@ -58,6 +62,10 @@ export interface RemoteLinkDevice {
   added: number | null
   last_seen: number | null
   via: string | null
+  /** = added (core >= 1.4.6) */
+  created_at?: number | null
+  /** unix seconds when an idle device is unpaired automatically; null = never */
+  expires_at?: number | null
 }
 
 export interface RemoteTransportStatus {
@@ -77,6 +85,10 @@ export interface RemoteLinkInfo {
   devices: RemoteLinkDevice[]
   pair_code: string
   pair_expires: number
+  /** remote.pairing_idle_days (core >= 1.4.6) */
+  idle_days?: number
+  /** bumped on every successful pairing: QR pair tokens minted before it are spent (core >= 1.4.6) */
+  pair_epoch?: number
 }
 
 export interface RemoteAddress {
@@ -298,6 +310,37 @@ export function mintAccessToken(secret: Buffer, issuedAtSeconds = Math.floor(Dat
 
   // Python's urlsafe_b64encode keeps '=' padding.
   return Buffer.concat([raw, sig]).toString('base64').replace(/\+/g, '-').replace(/\//g, '_')
+}
+
+/**
+ * One-time QR pair token (core server.py Auth.verify_pair): kind "pair", valid for
+ * PAIR_TOKEN_TTL_SECONDS and only for POST /api/remote/devices, where the phone
+ * exchanges it for a per-device session token. Every successful pairing moves the
+ * gateway's pair_epoch past its iat, so a scanned/leaked QR cannot be reused.
+ */
+export function mintPairToken(secret: Buffer, nowSeconds = Date.now() / 1000): { token: string; iat: number; exp: number } {
+  const iat = Math.round(nowSeconds * 1000) / 1000
+  const exp = Math.floor(iat) + PAIR_TOKEN_TTL_SECONDS
+  const raw = Buffer.from(
+    JSON.stringify({ sub: TOKEN_SUBJECT, kind: 'pair', iat, exp, jti: crypto.randomBytes(9).toString('base64url') })
+  )
+  const sig = crypto.createHmac('sha256', secret).update(raw).digest()
+
+  return { token: Buffer.concat([raw, sig]).toString('base64').replace(/\+/g, '-').replace(/\//g, '_'), iat, exp }
+}
+
+/** Keep the shown pair token while it is unused and has time left; else mint a new one. */
+export function nextPairToken(
+  current: { token: string; iat: number; exp: number } | null,
+  pairEpoch: number,
+  secret: Buffer,
+  nowSeconds = Date.now() / 1000
+): { token: string; iat: number; exp: number } {
+  if (current && current.iat > pairEpoch && current.exp - nowSeconds >= PAIR_TOKEN_MIN_LEFT_SECONDS) {
+    return current
+  }
+
+  return mintPairToken(secret, Math.max(nowSeconds, pairEpoch + 0.001))
 }
 
 export function verifyAccessToken(token: string, secret: Buffer, nowSeconds = Math.floor(Date.now() / 1000)): boolean {
@@ -522,6 +565,7 @@ export function createRemoteController(deps: RemoteControllerDeps) {
   let logTail = ''
   let generation = 0
   let link: RemoteLinkInfo | null = null
+  let pairToken: { token: string; iat: number; exp: number } | null = null
   let linkTimer: ReturnType<typeof setInterval> | null = null
   let tailscale: TailscaleInfo | null = null
   let tailscaleAt = 0
@@ -787,7 +831,12 @@ export function createRemoteController(deps: RemoteControllerDeps) {
       null
 
     const url = address ? `http://${address}:${settings.port}` : null
-    const token = mintAccessToken(decodeSecret(settings.secret), settings.issuedAt)
+    // The QR (and the token field for typing it in) carries a one-time pair token when the
+    // gateway supports it; older cores only know the long-lived access token.
+    const token =
+      link && running && typeof link.pair_epoch === 'number'
+        ? (pairToken = nextPairToken(pairToken, link.pair_epoch, decodeSecret(settings.secret))).token
+        : mintAccessToken(decodeSecret(settings.secret), settings.issuedAt)
     const profile = deps.currentProfile()
     refreshTailscale()
     const altUrls = fallbackUrls({ primary: address, addresses, tailscale, port: settings.port })
@@ -885,7 +934,9 @@ export function createRemoteController(deps: RemoteControllerDeps) {
 
     const next = await linkCall('GET', '/api/remote/link')
 
-    if (next && JSON.stringify(next) !== JSON.stringify(link)) {
+    const pairStale = pairToken !== null && pairToken.exp - Date.now() / 1000 < PAIR_TOKEN_MIN_LEFT_SECONDS
+
+    if (next && (pairStale || JSON.stringify(next) !== JSON.stringify(link))) {
       link = next
       emit()
     }
@@ -1207,6 +1258,7 @@ export function createRemoteController(deps: RemoteControllerDeps) {
 
   async function rotate() {
     settings = { ...settings, secret: newSecret(), issuedAt: Math.floor(Date.now() / 1000) }
+    pairToken = null
     writeSettings()
 
     if (settings.enabled) {

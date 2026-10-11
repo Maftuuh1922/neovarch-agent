@@ -12,14 +12,15 @@ import '../../data/gateway_client.dart';
 import 'frame_link.dart';
 import 'link_crypto.dart';
 
-/// The PC refused this phone (`unknown_device`, `revoked`, `bad_code`).
+/// The PC refused this phone (`unknown_device`, `revoked`, `expired`, `bad_code`).
 class TunnelDenied implements Exception {
   final String reason;
   const TunnelDenied(this.reason);
   @override
   String toString() => switch (reason) {
         'revoked' => 'HP ini sudah dicabut di PC. Pindai ulang QR di PC untuk memasangkan lagi.',
-        'bad_code' => 'Kode pemasangan sudah kedaluwarsa. Pindai ulang QR di PC.',
+        'expired' => 'Sesi kedaluwarsa, pasangkan ulang: pindai QR baru di PC.',
+        'bad_code' => 'Kode pemasangan sudah kedaluwarsa atau sudah dipakai. Pindai ulang QR di PC.',
         _ => 'PC belum mengenal HP ini. Pindai ulang QR di PC.',
       };
 }

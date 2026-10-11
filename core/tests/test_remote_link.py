@@ -124,12 +124,13 @@ def test_store_devices_codes_and_permissions(tmp_path):
     d = st.enroll(pk, "HP Andi", "lan")
     assert st.device_for_key(pk)["id"] == d["id"] == device_id(pk)
     code, exp = st.pair_code()
+    assert exp - clock[0] == 10 * 60  # short-lived
     assert st.check_pair_code(code) and not st.check_pair_code("nope")
     assert st.pair_code()[0] == code  # stable while fresh
-    clock[0] += 11 * 60
+    clock[0] += 9 * 60  # < 2 min left: the QR gets a fresh code
     code2, _ = st.pair_code()
     assert code2 != code and st.check_pair_code(code)  # old one valid until expiry
-    clock[0] += 30 * 60
+    clock[0] += 2 * 60
     assert not st.check_pair_code(code)
     assert st.revoke(d["id"]) and st.device_for_key(pk) is None and st.is_revoked(pk)
 
@@ -383,5 +384,203 @@ async def test_gateway_remote_link_routes(home, monkeypatch):
         # the internal bridge token is loopback-only and works like a session token
         r = await client.get("/api/remote/link", headers={"Authorization": f"Bearer {gw.auth.internal_token}"})
         assert r.status == 200
+    finally:
+        await client.close()
+
+
+# ------------------------------------------- session expiry / one-time pairing --
+
+def test_pair_code_is_one_time(tmp_path):
+    clock = [1000.0]
+    st = LinkStore(tmp_path / "link.json", clock=lambda: clock[0])
+    code, _ = st.pair_code()
+    assert st.consume_pair_code(code)
+    assert not st.consume_pair_code(code) and not st.check_pair_code(code)  # burnt
+    assert st.pair_code()[0] != code  # the QR shows a new one
+    assert not st.consume_pair_code("guess")
+
+
+def test_idle_device_expires_and_is_told_so(tmp_path):
+    clock = [1_000_000.0]
+    st = LinkStore(tmp_path / "link.json", clock=lambda: clock[0], idle_days=30)
+    pk = KeyPair.generate().public
+    d = st.enroll(pk, "HP Andi", "relay")
+    assert d["created_at"] == d["added"] == 1_000_000 and d["expires_at"] == 1_000_000 + 30 * 86400
+    clock[0] += 20 * 86400
+    st.touch(d["id"], "relay")  # seen: the 30 days start again
+    [listed] = st.devices()
+    assert listed["last_seen"] == 1_000_000 + 20 * 86400 and listed["expires_at"] == listed["last_seen"] + 30 * 86400
+    clock[0] += 29 * 86400
+    assert st.device_for_key(pk) is not None
+    clock[0] += 2 * 86400
+    assert st.device_for_key(pk) is None and st.devices() == []
+    assert st.is_expired(pk) and not st.is_revoked(pk) and st.denial_reason(pk) == "expired"
+    # survives a restart
+    assert LinkStore(tmp_path / "link.json", clock=lambda: clock[0], idle_days=30).denial_reason(pk) == "expired"
+    # pairing again brings it back
+    st.enroll(pk, "HP Andi", "relay")
+    assert st.device_for_key(pk) and st.denial_reason(pk) == "unknown_device"
+
+
+def test_idle_expiry_can_be_disabled(tmp_path):
+    clock = [1000.0]
+    st = LinkStore(tmp_path / "link.json", clock=lambda: clock[0], idle_days=0)
+    pk = KeyPair.generate().public
+    st.enroll(pk, "HP", "lan")
+    clock[0] += 3650 * 86400
+    assert st.device_for_key(pk) and st.devices()[0]["expires_at"] is None
+
+
+def test_idle_days_from_config(home):
+    from neovarch.config import load_config, save_config
+    from neovarch.remote_link import store as store_mod
+    assert load_config()["remote"]["pairing_idle_days"] == 30
+    cfg = load_config()
+    cfg["remote"]["pairing_idle_days"] = 7
+    save_config(cfg)
+    store_mod._IDLE_CACHE[0] = 0.0
+    try:
+        assert LinkStore(home / "l.json").idle_days == 7
+    finally:
+        store_mod._IDLE_CACHE[0] = 0.0
+
+
+def test_session_token_rotation_and_expiry(tmp_path):
+    clock = [1_000_000.0]
+    st = LinkStore(tmp_path / "link.json", clock=lambda: clock[0], idle_days=30)
+    pk = KeyPair.generate().public
+    d1 = st.enroll(pk, "HP", "lan", issue_token=True)
+    t1 = d1["session_token"]
+    assert t1.startswith("nvd_") and t1 not in (tmp_path / "link.json").read_text()  # only the hash is stored
+    state, dev = st.check_session_token(t1)
+    assert state == "ok" and dev["id"] == d1["id"] and "token_hash" not in dev
+    t2 = st.enroll(pk, "HP", "lan", issue_token=True)["session_token"]  # re-pairing rotates
+    assert t2 != t1 and st.check_session_token(t1)[0] == "invalid" and st.check_session_token(t2)[0] == "ok"
+    st.enroll(pk, "HP", "relay")  # plain enroll (relay) keeps the current token
+    assert st.check_session_token(t2)[0] == "ok"
+    clock[0] += 10 * 86400
+    st.check_session_token(t2)  # a request counts as activity
+    assert st.devices()[0]["last_seen"] == 1_000_000 + 10 * 86400
+    clock[0] += 31 * 86400
+    assert st.check_session_token(t2) == ("expired", None)
+    assert st.check_session_token("nvd_bogus")[0] == "invalid"
+    assert st.check_session_token("not-a-device-token")[0] == "invalid"
+
+
+async def test_peer_denies_expired_device(tmp_path, local_gateway):
+    base, token = local_gateway
+    clock = [1_000_000.0]
+    store = LinkStore(tmp_path / "l.json", clock=lambda: clock[0], idle_days=30)
+    dev = KeyPair.generate()
+    store.enroll(dev.public, "HP", "relay")
+    clock[0] += 31 * 86400
+    phone = PhoneSim(dev, store.pc_keys.public)
+    peer = await _link(store, base, token, phone)
+    await _send(peer, phone, {"t": "auth"})
+    denied = await phone.next("denied")
+    assert denied["reason"] == "expired" and "pasangkan ulang" in denied["message"]
+    assert phone.closed
+
+
+async def test_peer_pair_code_works_once(tmp_path, local_gateway):
+    base, token = local_gateway
+    store = LinkStore(tmp_path / "l.json")
+    code, _ = store.pair_code()
+    phone = PhoneSim(KeyPair.generate(), store.pc_keys.public)
+    peer = await _link(store, base, token, phone)
+    await _send(peer, phone, {"t": "pair", "code": code, "name": "HP 1"})
+    await phone.next("ready")
+    peer.close_local()
+    phone2 = PhoneSim(KeyPair.generate(), store.pc_keys.public)  # someone else with the same QR
+    peer2 = await _link(store, base, token, phone2)
+    await _send(peer2, phone2, {"t": "pair", "code": code, "name": "HP 2"})
+    assert (await phone2.next("denied"))["reason"] == "bad_code"
+
+
+def _sign(secret: bytes, payload: dict) -> str:
+    import hashlib
+    import hmac as _hmac
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw + _hmac.new(secret, raw, hashlib.sha256).digest()).decode()
+
+
+async def test_gateway_pair_token_one_time_and_device_sessions(home, monkeypatch):
+    import time as _time
+    from aiohttp.test_utils import TestClient, TestServer
+    from neovarch.server import Gateway, build_app
+    secret = b"s" * 32
+    monkeypatch.setenv("NEOVARCH_REMOTE_SECRET", base64.b64encode(secret).decode())
+    gw = Gateway(True)
+    client = TestClient(TestServer(build_app(gw)))
+    await client.start_server()
+    try:
+        now = _time.time()
+        pair = _sign(secret, {"sub": "neovarch-remote", "kind": "pair", "iat": now, "exp": now + 600})
+        ph = {"Authorization": f"Bearer {pair}"}
+        # a pair token opens nothing but the enroll route
+        assert (await client.get("/api/remote/link", headers=ph)).status == 401
+        assert (await client.get("/api/ws", params={"token": pair})).status == 401
+        dev = KeyPair.generate()
+        r = await client.post("/api/remote/devices", json={"pk": b64e(dev.public), "name": "HP Uji"}, headers=ph)
+        assert r.status == 200
+        enr = await r.json()
+        tok = enr["session_token"]
+        assert tok.startswith("nvd_") and enr["idle_days"] == 30 and enr["expires_at"]
+        # one-time: the same QR token is spent
+        dev2 = KeyPair.generate()
+        r = await client.post("/api/remote/devices", json={"pk": b64e(dev2.public)}, headers=ph)
+        assert r.status == 401
+        # expired pair token
+        old = _sign(secret, {"kind": "pair", "iat": now + 1, "exp": now - 1})
+        assert (await client.post("/api/remote/devices", json={"pk": b64e(dev2.public)},
+                                  headers={"Authorization": f"Bearer {old}"})).status == 401
+        # the device session token works everywhere, and only for this phone's own key
+        dh = {"Authorization": f"Bearer {tok}"}
+        info = await (await client.get("/api/remote/link", headers=dh)).json()
+        assert [d["id"] for d in info["devices"]] == [device_id(dev.public)]
+        assert info["devices"][0]["expires_at"] and info["devices"][0]["created_at"]
+        r = await client.post("/api/remote/devices", json={"pk": b64e(dev2.public)}, headers=dh)
+        assert r.status == 403
+        # rotation: asking for a new session hands out a new token and kills the old one
+        r = await client.post("/api/remote/devices", json={"pk": b64e(dev.public), "session": True}, headers=dh)
+        tok2 = (await r.json())["session_token"]
+        assert tok2 != tok
+        assert (await client.get("/api/remote/link", headers=dh)).status == 401
+        dh2 = {"Authorization": f"Bearer {tok2}"}
+        assert (await client.get("/api/remote/link", headers=dh2)).status == 200
+        # idle expiry: a clear "pair again" answer
+        store = gw.link.store
+        rec = store._data["devices"][device_id(dev.public)]
+        rec["last_seen"] = rec["added"] = int(_time.time()) - 31 * 86400
+        r = await client.get("/api/remote/link", headers=dh2)
+        assert r.status == 401
+        body = await r.json()
+        assert body["code"] == "session_expired" and body["detail"] == "Sesi kedaluwarsa, pasangkan ulang"
+        # a pair token minted before the last pairing is dead; a fresh one works
+        fresh = _sign(secret, {"kind": "pair", "iat": _time.time() + 0.5, "exp": _time.time() + 600})
+        r = await client.post("/api/remote/devices", json={"pk": b64e(dev.public)},
+                              headers={"Authorization": f"Bearer {fresh}"})
+        assert r.status == 200 and (await r.json())["session_token"] != tok2
+    finally:
+        await client.close()
+
+
+async def test_bridge_enroll_is_limited_to_its_own_device(home, monkeypatch):
+    from aiohttp.test_utils import TestClient, TestServer
+    from neovarch.server import Gateway, build_app
+    monkeypatch.setenv("NEOVARCH_SESSION_TOKEN", "tok")
+    gw = Gateway(False)
+    client = TestClient(TestServer(build_app(gw)))
+    await client.start_server()
+    try:
+        dev, other = KeyPair.generate(), KeyPair.generate()
+        gw._link_store().enroll(dev.public, "HP", "relay")
+        h = {"Authorization": f"Bearer {gw.auth.internal_token}", "X-Neovarch-Link-Device": device_id(dev.public)}
+        r = await client.post("/api/remote/devices", json={"pk": b64e(other.public)}, headers=h)
+        assert r.status == 403
+        r = await client.post("/api/remote/devices", json={"pk": b64e(dev.public), "session": True}, headers=h)
+        j = await r.json()
+        assert r.status == 200 and j["session_token"].startswith("nvd_")
+        assert gw.link.store.devices()[0]["via"] == "relay"
     finally:
         await client.close()

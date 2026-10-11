@@ -48,7 +48,17 @@ const PREVIEW_STATUS: NeovarchRemoteStatus = {
     phones: 1
   },
   bluetooth: { enabled: false, state: 'off', error: null, address: null, phones: 0 },
-  devices: [{ id: 'q3Jm0xA1bC2dE3fG', name: 'HP Andi', added: 1791000000, last_seen: 1791480000, via: 'relay' }]
+  devices: [
+    {
+      id: 'q3Jm0xA1bC2dE3fG',
+      name: 'HP Andi',
+      added: 1791000000,
+      created_at: 1791000000,
+      last_seen: 1791480000,
+      expires_at: 1791480000 + 30 * 86400,
+      via: 'relay'
+    }
+  ]
 }
 
 async function renderQr(payload: string): Promise<string> {
@@ -240,7 +250,7 @@ export function RemoteSettings() {
                 </div>
               </div>
             }
-            description="Di HP: buka Neovarch Agent ▸ Pindai QR dari PC."
+            description="Di HP: buka Neovarch Agent ▸ Pindai QR dari PC. QR hanya bisa dipakai sekali dan berlaku 10 menit; setelah dipindai, QR baru muncul otomatis."
             title="Pasangkan HP"
             wide
           />
@@ -342,6 +352,26 @@ function formatSeen(ts: number | null): string {
   }
 
   return new Date(ts * 1000).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+/** "Kedaluwarsa …" line under a paired phone (auto-unpaired after remote.pairing_idle_days idle). */
+export function formatExpiry(ts: number | null | undefined, nowMs = Date.now()): string {
+  if (ts === undefined) {
+    return 'Masa aktif: tidak diketahui (perbarui core)'
+  }
+
+  if (ts === null) {
+    return 'Tidak kedaluwarsa otomatis'
+  }
+
+  const days = Math.ceil((ts * 1000 - nowMs) / 86_400_000)
+  const when = new Date(ts * 1000).toLocaleDateString('id-ID', { dateStyle: 'medium' })
+
+  if (days <= 0) {
+    return `Kedaluwarsa ${when} · pasangkan ulang`
+  }
+
+  return `Kedaluwarsa ${when} (${days} hari lagi) bila tidak dipakai`
 }
 
 const VIA: Record<string, string> = { lan: 'LAN', relay: 'relay', bluetooth: 'Bluetooth' }
@@ -453,8 +483,11 @@ function AnywhereSection({
                   <div className="min-w-0">
                     <p className="truncate text-xs text-(--ui-text-primary)">{d.name || 'HP'}</p>
                     <p className={CAPTION}>
-                      Terakhir: {formatSeen(d.last_seen)}
+                      Terakhir aktif: {formatSeen(d.last_seen)}
                       {d.via ? ` · lewat ${VIA[d.via] ?? d.via}` : ''} · <span className="font-mono">{d.id}</span>
+                    </p>
+                    <p className={CAPTION} data-nv-device-expiry="">
+                      {formatExpiry(d.expires_at)}
                     </p>
                   </div>
                   <Button
@@ -474,7 +507,7 @@ function AnywhereSection({
             </p>
           )
         }
-        description="HP yang boleh tersambung lewat relay atau Bluetooth."
+        description="HP yang boleh tersambung lewat LAN, relay atau Bluetooth. HP yang lama tidak dipakai dilepas otomatis dan harus memindai QR lagi."
         title="Perangkat terpasang"
         wide
       />

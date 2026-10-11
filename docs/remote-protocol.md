@@ -55,6 +55,18 @@ Settings ▸ **Remote / Perangkat** ("Aktifkan akses remote"):
    (`GET /api/plugins/kanban/board` with the phone token via the LAN address) and **Buat token baru**
    (new secret → gateway restart → every paired phone must re-scan). The process stops on quit and
    auto-starts on launch when left enabled.
+   **Since 1.4.6 the QR carries a one-time pair token instead** (`{"kind":"pair","iat","exp","jti"}`, same
+   signature, valid 10 minutes) whenever the gateway reports `pair_epoch` on `/api/remote/link`. A pair token
+   opens only `POST /api/remote/devices` (`{pk, name, session:true}`), which answers with this phone's own
+   `session_token` (`nvd_…`; the core stores only its SHA-256). Every successful pairing (pair token or relay
+   pairing code) moves `pair_epoch` past the token's `iat`, so the same QR cannot pair a second phone; the
+   desktop then shows a fresh QR. Pairing again rotates the device token (the old one stops working). Phones
+   still holding the old long-lived access token trade it for a session token on their next LAN connect.
+   Paired devices carry `created_at`/`last_seen` (updated on every authenticated request and relay/Bluetooth
+   frame, throttled to once a minute); one not seen for `remote.pairing_idle_days` days (config.yaml, default
+   30, `0` = never) is unpaired: its token gets `401 {"code":"session_expired","detail":"Sesi kedaluwarsa,
+   pasangkan ulang"}` and its relay auth `{"t":"denied","reason":"expired"}`. Desktop Settings ▸ Remote lists
+   each device with "Terakhir aktif" and its expiry, and **Cabut** revokes it at once.
 4. Kanban is a bundled plugin and answers by default; status changes follow the board's own rules
    (e.g. `running` only via the dispatcher, some transitions answer 400/409 — the phone shows the error).
 
