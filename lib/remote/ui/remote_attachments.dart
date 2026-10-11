@@ -12,6 +12,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/device_tools.dart' show deviceCall;
+import '../../models/models.dart' show ChatMsg;
 import '../../theme/neovarch_mobile_theme.dart';
 import '../../ui/widgets/brand.dart' show showPaperSheet;
 import '../../ui/widgets/common.dart' show toast;
@@ -19,6 +20,7 @@ import '../attachments.dart';
 import '../remote_controller.dart';
 import '../remote_gateway.dart';
 import 'nv_widgets.dart';
+import '../remote_errors.dart';
 
 enum AttachSource { gallery, camera, file }
 
@@ -70,7 +72,7 @@ Future<void> attachFrom(BuildContext context, RemoteController r, AttachSource s
     final err = await r.addAttachment(picked.name, picked.bytes, mime: picked.mime);
     if (err != null && context.mounted) toast(context, err);
   } catch (e) {
-    if (context.mounted) toast(context, '$e');
+    if (context.mounted) toast(context, friendlyRemoteError(e));
   }
 }
 
@@ -87,7 +89,7 @@ Future<void> pasteClipboardImage(BuildContext context, RemoteController r) async
     final err = await r.addAttachment('${m['name'] ?? 'tempel.png'}', bytes, mime: m['mime'] as String?);
     if (err != null && context.mounted) toast(context, err);
   } catch (e) {
-    if (context.mounted) toast(context, '$e');
+    if (context.mounted) toast(context, friendlyRemoteError(e));
   }
 }
 
@@ -232,43 +234,72 @@ class _Thumb extends StatelessWidget {
   }
 }
 
-/// Attachments of a sent user message, right-aligned above its bubble.
+/// Files on a chat message: the person's own (right-aligned above their bubble)
+/// or files the PC agent sent with send_file ([alignEnd] false, under its reply).
+/// Images show inline (tap: full-screen zoom + download), others as a file card
+/// that downloads from the PC.
 class MessageAttachments extends StatelessWidget {
-  const MessageAttachments({super.key, required this.attachments, required this.gateway});
+  const MessageAttachments({super.key, required this.attachments, required this.gateway, this.alignEnd = true});
   final List<Map<String, dynamic>> attachments;
   final RemoteGateway? gateway;
+  final bool alignEnd;
 
   @override
   Widget build(BuildContext context) {
     final atts = [for (final a in attachments) RemoteAttachment.fromJson(a)];
     final g = gateway;
+    final side = alignEnd ? 150.0 : 220.0; // the agent's screenshots get more room
     return Align(
-      alignment: Alignment.centerRight,
-      child: Wrap(alignment: WrapAlignment.end, spacing: 6, runSpacing: 6, children: [
+      alignment: alignEnd ? Alignment.centerRight : Alignment.centerLeft,
+      child: Wrap(alignment: alignEnd ? WrapAlignment.end : WrapAlignment.start, spacing: 6, runSpacing: 6, children: [
         for (final a in atts)
           if (a.isImage && g != null)
             GestureDetector(
               key: ValueKey('msg-att-${a.id}'),
-              onTap: () => showImagePreview(context, remoteImageProvider(g.restUri(a.url ?? '/api/uploads/${a.id}'), g.restHeaders), a.name),
+              onTap: () => showImagePreview(
+                  context, remoteImageProvider(g.restUri(a.url ?? '/api/uploads/${a.id}'), g.restHeaders), a.name,
+                  onDownload: () => _download(context, g, a)),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Image(
                   image: remoteImageProvider(g.restUri(a.url ?? '/api/uploads/${a.id}'), g.restHeaders),
-                  width: 150,
-                  height: 150,
+                  width: side,
+                  height: side,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => _FileChip(att: a, onTap: null),
+                  errorBuilder: (_, _, _) => _FileChip(att: a, onTap: () => _download(context, g, a)),
                 ),
               ),
             )
           else
             _FileChip(
               att: a,
-              onTap: g == null ? null : () => launchUrl(g.downloadUri(a), mode: LaunchMode.externalApplication),
+              onTap: g == null ? null : () => _download(context, g, a),
             ),
       ]),
     );
   }
+}
+
+/// The agent's reply with the files it sent (send_file) underneath it.
+Widget withAgentFiles(ChatMsg m, RemoteGateway? gateway, Widget reply) {
+  if (m.attachments.isEmpty) return reply;
+  return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+    reply,
+    const SizedBox(height: 8),
+    MessageAttachments(key: ValueKey('agent-files-${m.id}'), attachments: m.attachments, gateway: gateway, alignEnd: false),
+  ]);
+}
+
+/// Downloads an attachment from the PC through the system browser / download
+/// manager (keeps the `?token=` auth); says so in Indonesian when it fails.
+Future<void> _download(BuildContext context, RemoteGateway g, RemoteAttachment a) async {
+  bool ok;
+  try {
+    ok = await launchDownload(g.downloadUri(a));
+  } catch (_) {
+    ok = false;
+  }
+  if (!ok && context.mounted) toast(context, 'Gagal mengunduh ${a.name} dari PC. Pastikan HP masih terhubung ke PC.');
 }
 
 class _FileChip extends StatelessWidget {
@@ -301,7 +332,8 @@ class _FileChip extends StatelessWidget {
       );
 }
 
-Future<void> showImagePreview(BuildContext context, ImageProvider image, String name) => showDialog<void>(
+Future<void> showImagePreview(BuildContext context, ImageProvider image, String name, {VoidCallback? onDownload}) =>
+    showDialog<void>(
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.88),
       builder: (ctx) => Dialog.fullscreen(
@@ -320,6 +352,13 @@ Future<void> showImagePreview(BuildContext context, ImageProvider image, String 
             right: 8,
             child: Row(children: [
               Expanded(child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 14))),
+              if (onDownload != null)
+                IconButton(
+                  key: const ValueKey('image-preview-download'),
+                  tooltip: 'Unduh / simpan',
+                  onPressed: onDownload,
+                  icon: const Icon(CupertinoIcons.arrow_down_circle_fill, color: Colors.white, size: 28),
+                ),
               IconButton(
                 tooltip: 'Tutup',
                 onPressed: () => Navigator.pop(ctx),

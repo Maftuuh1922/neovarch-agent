@@ -25,7 +25,12 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 
+import { DEFAULT_RELAY_URL, normalizeRelayUrl } from './relay-defaults'
+import { ensureFirewallRule, firewallHelp } from './windows-firewall'
+
 export const REMOTE_DEFAULT_PORT = 9319
+/** core/neovarch/background.py RESTART_EXIT_CODE: the gateway asks to be started again. */
+export const GATEWAY_RESTART_EXIT_CODE = 75
 /** Hermes Agent's dashboard/gateway default; Neovarch must never take it. */
 export const HERMES_DEFAULT_PORT = 9119
 const TOKEN_SUBJECT = 'neovarch-remote'
@@ -38,6 +43,40 @@ export interface RemoteSettings {
   issuedAt: number // unix seconds; token exp = issuedAt + TTL (stable QR between renders)
   preferredAddress: string | null
   deviceName: string
+  /** Remote dari mana saja: the PC also keeps an outbound connection to the relay. */
+  relayEnabled: boolean
+  /** null = DEFAULT_RELAY_URL (relay-defaults.ts) */
+  relayUrl: string | null
+  /** Bluetooth transport (off by default). */
+  bluetoothEnabled: boolean
+}
+
+/** A phone allowed to use the relay / Bluetooth (core /api/remote/link). */
+export interface RemoteLinkDevice {
+  id: string
+  name: string | null
+  added: number | null
+  last_seen: number | null
+  via: string | null
+}
+
+export interface RemoteTransportStatus {
+  enabled: boolean
+  state: 'off' | 'connecting' | 'online' | 'offline' | 'unavailable' | string
+  error: string | null
+  phones: number
+}
+
+/** What the remote gateway reports on GET /api/remote/link. */
+export interface RemoteLinkInfo {
+  pc_id: string
+  pc_pk: string
+  name?: string
+  relay: RemoteTransportStatus & { url: string; default_url?: string }
+  bluetooth: RemoteTransportStatus & { address: string | null; channel: number | null; uuid?: string | null }
+  devices: RemoteLinkDevice[]
+  pair_code: string
+  pair_expires: number
 }
 
 export interface RemoteAddress {
@@ -69,6 +108,10 @@ export interface RemoteStatus {
   profile: string | null
   error: string | null
   logTail: string
+  /** Remote dari mana saja (relay) */
+  relay: { enabled: boolean; url: string; defaultUrl: string; state: string; error: string | null; phones: number }
+  bluetooth: { enabled: boolean; state: string; error: string | null; address: string | null; phones: number }
+  devices: RemoteLinkDevice[]
 }
 
 export interface RemoteSpawnSpec {
@@ -94,6 +137,16 @@ export interface RemoteControllerDeps {
   portInUse?: (port: number) => Promise<boolean>
   /** Every running process as pid + command line (orphan gateways without a PID file). */
   listProcesses?: () => Promise<ProcessRow[]>
+  /** Test seam for the gateway's /api/remote/* calls. */
+  fetch?: typeof fetch
+  /**
+   * "Jalankan di latar belakang": the gateway is started detached with its
+   * output in a log file (not a pipe into Electron), a gateway left running by
+   * an earlier session is adopted instead of reaped, and quit may detach.
+   */
+  backgroundMode?: () => boolean
+  /** Background gateway output (default: neovarch-remote-gateway.log next to settings). */
+  gatewayLogPath?: string
 }
 
 export interface ProcessRow {
@@ -291,7 +344,13 @@ export function portInUse(port: number, host = '127.0.0.1', timeoutMs = 800): Pr
 
 // ---- LAN addresses ----------------------------------------------------------
 
-const VIRTUAL_IFACE = /^(docker|br-|veth|virbr|vmnet|vboxnet|lo|utun|awdl|llw|zt|tun|tap)/i
+// Adapters the phone can never reach the PC through. Linux/macOS names are
+// prefixes; Windows names are descriptive ("vEthernet (WSL)", "VirtualBox
+// Host-Only Network", "VMware Network Adapter VMnet8", "Bluetooth Network
+// Connection"), so they are matched anywhere. Before this, a VirtualBox
+// host-only 192.168.56.1 ranked first on Windows and went into the QR code.
+const VIRTUAL_IFACE =
+  /^(docker|br-|veth|virbr|vmnet|vboxnet|lo\d*$|utun|awdl|llw|zt|tun|tap)|vethernet|hyper-v|\bwsl\b|virtualbox|vmware|virtual|bluetooth|loopback|npcap|tap-|openvpn|wireguard|zerotier|hamachi|radmin|\bvpn\b/i
 
 export function lanAddresses(interfaces = os.networkInterfaces()): RemoteAddress[] {
   const out: RemoteAddress[] = []
@@ -379,6 +438,8 @@ export function buildPairingUri(input: {
   name: string
   profile: string | null
   alt?: string[]
+  /** Remote dari mana saja: relay room id, PC public key, relay URL, pairing code, Bluetooth target. */
+  link?: { pcId: string; pcPk: string; relayUrl: string | null; pairCode: string; btAddress?: string | null; btChannel?: number | null } | null
 }): string {
   const q = new URLSearchParams({ v: '1', url: input.url })
 
@@ -391,6 +452,25 @@ export function buildPairingUri(input: {
 
   if (input.profile) {
     q.set('profile', input.profile)
+  }
+
+  if (input.link) {
+    q.set('pc', input.link.pcId)
+    q.set('pk', input.link.pcPk)
+
+    if (input.link.relayUrl) {
+      q.set('relay', input.link.relayUrl)
+    }
+
+    q.set('pair', input.link.pairCode)
+
+    if (input.link.btAddress) {
+      q.set('bt', input.link.btAddress)
+
+      if (input.link.btChannel) {
+        q.set('btch', String(input.link.btChannel))
+      }
+    }
   }
 
   return `neovarch://pair?${q.toString()}`
@@ -426,7 +506,10 @@ function defaultSettings(): RemoteSettings {
     secret: newSecret(),
     issuedAt: Math.floor(Date.now() / 1000),
     preferredAddress: null,
-    deviceName: resolveDeviceName()
+    deviceName: resolveDeviceName(),
+    relayEnabled: true,
+    relayUrl: null,
+    bluetoothEnabled: false
   }
 }
 
@@ -438,6 +521,8 @@ export function createRemoteController(deps: RemoteControllerDeps) {
   let error: string | null = null
   let logTail = ''
   let generation = 0
+  let link: RemoteLinkInfo | null = null
+  let linkTimer: ReturnType<typeof setInterval> | null = null
   let tailscale: TailscaleInfo | null = null
   let tailscaleAt = 0
   // Set once the app is quitting: a late autostart/rotate must not spawn a
@@ -448,6 +533,84 @@ export function createRemoteController(deps: RemoteControllerDeps) {
   const killGroup = deps.killProcessGroup ?? defaultKillProcessGroup
   const probePort = deps.portInUse ?? ((port: number) => portInUse(port))
   const processRows = deps.listProcesses ?? listProcesses
+  const background = () => deps.backgroundMode?.() === true
+  const gatewayLogPath = deps.gatewayLogPath ?? path.join(path.dirname(deps.settingsPath), 'neovarch-remote-gateway.log')
+  // A background gateway started by an earlier desktop session (no ChildProcess handle).
+  let adoptedPid: number | null = null
+  let adoptTimer: ReturnType<typeof setInterval> | null = null
+
+  function readGatewayLogTail(): string {
+    try {
+      const st = fs.statSync(gatewayLogPath)
+      const len = Math.min(st.size, 8000)
+      const fd = fs.openSync(gatewayLogPath, 'r')
+
+      try {
+        const buf = Buffer.alloc(len)
+        fs.readSync(fd, buf, 0, len, st.size - len)
+
+        return buf.toString('utf8')
+      } finally {
+        fs.closeSync(fd)
+      }
+    } catch {
+      return ''
+    }
+  }
+
+  function stopAdoptWatch() {
+    if (adoptTimer) {
+      clearInterval(adoptTimer)
+      adoptTimer = null
+    }
+  }
+
+  /**
+   * Background mode: keep the gateway an earlier session left running (same
+   * secret, same port) instead of killing it. True when adopted.
+   */
+  async function adoptBackgroundGateway(): Promise<boolean> {
+    const pid = readRemotePid(pidFilePath)
+
+    if (pid === null || !isOwnRemoteGatewayCommand(commandLineOf(pid), settings.port)) {
+      return false
+    }
+
+    try {
+      const res = await (deps.fetch ?? fetch)(`http://127.0.0.1:${settings.port}/api/status`, { signal: AbortSignal.timeout(2000) })
+
+      if (!res.ok) {
+        return false
+      }
+    } catch {
+      return false
+    }
+
+    adoptedPid = pid
+    running = true
+    deps.log(`[remote] adopted background LAN gateway pid=${pid}`)
+    stopAdoptWatch()
+    adoptTimer = setInterval(() => {
+      if (adoptedPid !== null && !isOwnRemoteGatewayCommand(commandLineOf(adoptedPid), settings.port)) {
+        deps.log(`[remote] background gateway pid=${adoptedPid} is gone`)
+        adoptedPid = null
+        running = false
+        stopAdoptWatch()
+        stopLinkPoll()
+        link = null
+        clearPid()
+
+        if (settings.enabled && !closed) {
+          void start()
+        } else {
+          emit()
+        }
+      }
+    }, 5000)
+    adoptTimer.unref?.()
+
+    return true
+  }
 
   function writePid(pid: number | undefined) {
     if (!pid) {
@@ -596,7 +759,10 @@ export function createRemoteController(deps: RemoteControllerDeps) {
         secret: typeof parsed.secret === 'string' && decodeSecret(parsed.secret).length >= 32 ? parsed.secret : base.secret,
         issuedAt: Number.isInteger(parsed.issuedAt) && parsed.issuedAt > 0 ? parsed.issuedAt : base.issuedAt,
         preferredAddress: typeof parsed.preferredAddress === 'string' ? parsed.preferredAddress : null,
-        deviceName: typeof parsed.deviceName === 'string' ? resolveDeviceName(parsed.deviceName) : base.deviceName
+        deviceName: typeof parsed.deviceName === 'string' ? resolveDeviceName(parsed.deviceName) : base.deviceName,
+        relayEnabled: typeof parsed.relayEnabled === 'boolean' ? parsed.relayEnabled : base.relayEnabled,
+        relayUrl: typeof parsed.relayUrl === 'string' ? normalizeRelayUrl(parsed.relayUrl) : null,
+        bluetoothEnabled: parsed.bluetoothEnabled === true
       }
     } catch {
       return defaultSettings()
@@ -625,6 +791,19 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     const profile = deps.currentProfile()
     refreshTailscale()
     const altUrls = fallbackUrls({ primary: address, addresses, tailscale, port: settings.port })
+    const relayUrl = settings.relayUrl || DEFAULT_RELAY_URL
+
+    const pairLink =
+      link && running
+        ? {
+            pcId: link.pc_id,
+            pcPk: link.pc_pk,
+            relayUrl: settings.relayEnabled ? link.relay?.url || relayUrl : null,
+            pairCode: link.pair_code,
+            btAddress: settings.bluetoothEnabled ? link.bluetooth?.address : null,
+            btChannel: settings.bluetoothEnabled ? link.bluetooth?.channel : null
+          }
+        : null
 
     return {
       enabled: settings.enabled,
@@ -636,13 +815,93 @@ export function createRemoteController(deps: RemoteControllerDeps) {
       url,
       token: settings.enabled ? token : null,
       pairingUri:
-        settings.enabled && url ? buildPairingUri({ url, token, name: settings.deviceName, profile, alt: altUrls }) : null,
+        settings.enabled && url
+          ? buildPairingUri({ url, token, name: settings.deviceName, profile, alt: altUrls, link: pairLink })
+          : null,
       altUrls,
       tailscale,
       deviceName: settings.deviceName,
       profile,
       error,
-      logTail: logTail.slice(-2000)
+      logTail: logTail.slice(-2000),
+      relay: {
+        enabled: settings.relayEnabled,
+        url: relayUrl,
+        defaultUrl: DEFAULT_RELAY_URL,
+        state: !settings.enabled || !settings.relayEnabled ? 'off' : (link?.relay?.state ?? 'connecting'),
+        error: link?.relay?.error ?? null,
+        phones: link?.relay?.phones ?? 0
+      },
+      bluetooth: {
+        enabled: settings.bluetoothEnabled,
+        state: !settings.enabled || !settings.bluetoothEnabled ? 'off' : (link?.bluetooth?.state ?? 'connecting'),
+        error: link?.bluetooth?.error ?? null,
+        address: link?.bluetooth?.address ?? null,
+        phones: link?.bluetooth?.phones ?? 0
+      },
+      devices: link?.devices ?? []
+    }
+  }
+
+  /** Env for the remote gateway's encrypted-link transports (core remote_link/service.py). */
+  function linkEnv(): NodeJS.ProcessEnv {
+    return {
+      NEOVARCH_LINK: '1',
+      NEOVARCH_RELAY: settings.relayEnabled ? '1' : '0',
+      NEOVARCH_RELAY_URL: settings.relayUrl || DEFAULT_RELAY_URL,
+      NEOVARCH_BT: settings.bluetoothEnabled ? '1' : '0',
+      NEOVARCH_REMOTE_NAME: settings.deviceName
+    }
+  }
+
+  /** Ask the running gateway for its link identity, pairing code, transports and devices. */
+  async function linkCall(method: 'GET' | 'POST' | 'DELETE', route: string, body?: unknown): Promise<RemoteLinkInfo | null> {
+    const token = mintAccessToken(decodeSecret(settings.secret), settings.issuedAt)
+
+    try {
+      const res = await (deps.fetch ?? fetch)(`http://127.0.0.1:${settings.port}${route}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(5000)
+      })
+
+      if (!res.ok) {
+        return null
+      }
+
+      const j = (await res.json()) as RemoteLinkInfo
+
+      return j && typeof j.pc_id === 'string' ? j : null
+    } catch {
+      return null
+    }
+  }
+
+  async function refreshLink() {
+    if (!running) {
+      return
+    }
+
+    const next = await linkCall('GET', '/api/remote/link')
+
+    if (next && JSON.stringify(next) !== JSON.stringify(link)) {
+      link = next
+      emit()
+    }
+  }
+
+  function startLinkPoll() {
+    stopLinkPoll()
+    void refreshLink()
+    linkTimer = setInterval(() => void refreshLink(), 15_000)
+    linkTimer.unref?.()
+  }
+
+  function stopLinkPoll() {
+    if (linkTimer) {
+      clearInterval(linkTimer)
+      linkTimer = null
     }
   }
 
@@ -674,6 +933,9 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     return false
   }
 
+  // Windows: ask once per app run for the inbound firewall rule (UAC prompt).
+  let firewallAsked = false
+
   async function start() {
     if (child || starting || closed) {
       return
@@ -686,6 +948,16 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     emit()
 
     try {
+      if (adoptedPid !== null) {
+        return
+      }
+
+      if (background() && (await adoptBackgroundGateway())) {
+        startLinkPoll()
+
+        return
+      }
+
       // Never fight another program (a co-installed Hermes on 9119, anything
       // else) for the port: refuse up front instead of spawning and probing a
       // server that is not ours.
@@ -717,22 +989,50 @@ export function createRemoteController(deps: RemoteControllerDeps) {
         // Random per start and never shown: the phone never logs in with a
         // password, it presents the HMAC token minted above.
         HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: crypto.randomBytes(24).toString('base64url'),
-        HERMES_DASHBOARD_BASIC_AUTH_SECRET: settings.secret
+        HERMES_DASHBOARD_BASIC_AUTH_SECRET: settings.secret,
+        // Windows consoles default to cp1252/cp437; keep the core's stdio UTF-8.
+        PYTHONUTF8: '1',
+        PYTHONIOENCODING: 'utf-8',
+        ...linkEnv()
       }
 
       delete env.HERMES_DESKTOP // the primary backend owns cron ticks
       delete env.HERMES_DASHBOARD_SESSION_TOKEN
-      deps.log(`[remote] starting LAN gateway on 0.0.0.0:${settings.port}`)
+      env.NEOVARCH_DESKTOP_PID = String(process.pid)
+      const bg = background()
+      deps.log(`[remote] starting LAN gateway on 0.0.0.0:${settings.port}${bg ? ' (background)' : ''}`)
+
+      // Background: output goes to a log file so nothing ties the gateway to
+      // this Electron process (a closed pipe would kill it on its next write).
+      let logFd: number | null = null
+
+      if (bg) {
+        try {
+          fs.mkdirSync(path.dirname(gatewayLogPath), { recursive: true })
+          logFd = fs.openSync(gatewayLogPath, 'a')
+        } catch {
+          logFd = null
+        }
+      }
 
       const proc = spawn(spec.command, spec.args, {
         cwd: spec.cwd,
         env,
         shell: spec.shell,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: logFd !== null ? ['ignore', logFd, logFd] : ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
-        // Own process group on POSIX so stop() also reaches a python child behind a shell shim.
-        detached: process.platform !== 'win32'
+        // Own process group on POSIX so stop() also reaches a python child behind a shell shim;
+        // background mode also detaches on Windows so the gateway outlives the app.
+        detached: process.platform !== 'win32' || bg
       })
+
+      if (logFd !== null) {
+        try {
+          fs.closeSync(logFd)
+        } catch {
+          // the child holds its own copy
+        }
+      }
 
       child = proc
       writePid(proc.pid)
@@ -753,8 +1053,25 @@ export function createRemoteController(deps: RemoteControllerDeps) {
           child = null
           running = false
           starting = false
+          stopLinkPoll()
+          link = null
 
-          if (settings.enabled && gen === generation) {
+          if (!logTail) {
+            logTail = readGatewayLogTail()
+          }
+
+          // Restart asked from the phone on Windows (no exec() there): start again.
+          if (code === GATEWAY_RESTART_EXIT_CODE && settings.enabled && !closed && gen === generation) {
+            deps.log('[remote] gateway asked for a restart')
+            emit()
+            void start()
+
+            return
+          }
+
+          if (settings.enabled && gen === generation && code === 0 && signal === null) {
+            error = 'Gateway remote dihentikan (dari HP). Matikan lalu nyalakan lagi akses remote untuk memulainya.'
+          } else if (settings.enabled && gen === generation) {
             const tail = logTail.trim().split('\n').slice(-3).join(' ')
             error = `Gateway remote berhenti (kode ${code ?? signal}). ${tail}`.trim()
           }
@@ -771,6 +1088,23 @@ export function createRemoteController(deps: RemoteControllerDeps) {
       }
 
       running = ready && child === proc
+
+      if (running) {
+        startLinkPoll()
+      }
+
+      if (running && process.platform === 'win32' && !firewallAsked) {
+        firewallAsked = true
+        void ensureFirewallRule(settings.port)
+          .then(result => {
+            deps.log(`[remote] windows firewall rule for port ${settings.port}: ${result}`)
+
+            if (result === 'declined') {
+              deps.log(`[remote] ${firewallHelp(settings.port)}`)
+            }
+          })
+          .catch(err => deps.log(`[remote] windows firewall check failed: ${(err as Error).message}`))
+      }
 
       if (!ready && child === proc) {
         error = error || `Gateway remote tidak merespons di port ${settings.port}. Port mungkin sudah dipakai aplikasi lain.`
@@ -792,6 +1126,25 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     child = null
     running = false
     starting = false
+    stopLinkPoll()
+    link = null
+
+    if (adoptedPid !== null) {
+      const pid = adoptedPid
+      adoptedPid = null
+      stopAdoptWatch()
+      killGroup(pid, 'SIGTERM')
+
+      for (let i = 0; i < 20 && isOwnRemoteGatewayCommand(commandLineOf(pid), settings.port); i++) {
+        await new Promise(r => setTimeout(r, 150))
+      }
+
+      if (isOwnRemoteGatewayCommand(commandLineOf(pid), settings.port)) {
+        killGroup(pid, 'SIGKILL')
+      }
+
+      clearPid()
+    }
 
     if (!proc || proc.exitCode !== null) {
       return
@@ -881,6 +1234,75 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     return status()
   }
 
+  /** Settings → Remote: "Akses dari mana saja (relay)" toggle and relay URL (empty = default). */
+  async function setRelay(patch: { enabled?: boolean; url?: string | null }) {
+    if (typeof patch.enabled === 'boolean') {
+      settings.relayEnabled = patch.enabled
+    }
+
+    if (patch.url !== undefined) {
+      const raw = (patch.url ?? '').trim()
+      const n = raw ? normalizeRelayUrl(raw) : null
+
+      if (raw && !n) {
+        error = 'Relay URL harus diawali wss:// atau https://'
+        emit()
+
+        return status()
+      }
+
+      settings.relayUrl = n && n !== DEFAULT_RELAY_URL ? n : null
+    }
+
+    error = null
+    writeSettings()
+
+    if (running) {
+      const next = await linkCall('POST', '/api/remote/link/config', {
+        relay_enabled: settings.relayEnabled,
+        relay_url: settings.relayUrl || DEFAULT_RELAY_URL
+      })
+
+      if (next) {
+        link = next
+      }
+    }
+
+    emit()
+
+    return status()
+  }
+
+  /** Settings → Remote: Bluetooth transport (off by default). */
+  async function setBluetooth(on: boolean) {
+    settings.bluetoothEnabled = on
+    writeSettings()
+
+    if (running) {
+      const next = await linkCall('POST', '/api/remote/link/config', { bluetooth_enabled: on })
+
+      if (next) {
+        link = next
+      }
+    }
+
+    emit()
+
+    return status()
+  }
+
+  /** Revoke one paired phone's relay/Bluetooth access (its live link is dropped). */
+  async function revokeDevice(id: string) {
+    if (running && /^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+      await linkCall('DELETE', `/api/remote/devices/${encodeURIComponent(id)}`)
+      await refreshLink()
+    }
+
+    emit()
+
+    return status()
+  }
+
   /** Probe what the phone will call: the Kanban board with the phone's token. */
   async function check(): Promise<{ ok: boolean; message: string }> {
     if (!running) {
@@ -906,7 +1328,12 @@ export function createRemoteController(deps: RemoteControllerDeps) {
 
       return { ok: false, message: `Gateway menjawab HTTP ${res.status}.` }
     } catch (err) {
-      return { ok: false, message: `Tidak bisa menjangkau ${host}:${settings.port} (${(err as Error).message}). Periksa firewall.` }
+      return {
+        ok: false,
+        message:
+          `Tidak bisa menjangkau ${host}:${settings.port} (${(err as Error).message}). ` +
+          (process.platform === 'win32' ? firewallHelp(settings.port) : 'Periksa firewall.')
+      }
     }
   }
 
@@ -915,6 +1342,10 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     setEnabled,
     rotate,
     update,
+    setRelay,
+    setBluetooth,
+    revokeDevice,
+    refreshLink,
     check,
     stop,
     /** Start at boot when the user left remote access on. */
@@ -929,9 +1360,56 @@ export function createRemoteController(deps: RemoteControllerDeps) {
 
       return stop()
     },
+    /**
+     * Quit path with "Jalankan di latar belakang": leave the gateway running on
+     * its own (its PID file stays, so the next launch adopts it).
+     */
+    async detach() {
+      closed = true
+      generation++
+      stopLinkPoll()
+      stopAdoptWatch()
+      const proc = child
+
+      if (proc && proc.exitCode === null) {
+        proc.removeAllListeners('exit')
+        proc.stdout?.destroy()
+        proc.stderr?.destroy()
+        proc.unref()
+        deps.log(`[remote] leaving LAN gateway pid=${proc.pid} running in the background`)
+      }
+
+      child = null
+      adoptedPid = null
+    },
     /** Whether a gateway process is attached (quit must wait for it). */
     hasProcess() {
       return child !== null && child.exitCode === null
+    },
+    /** Authenticated call to the running gateway (Settings ▸ Remote ▸ latar belakang). */
+    async gatewayJson<T>(method: 'GET' | 'POST', route: string, body?: unknown): Promise<T | null> {
+      if (!running) {
+        return null
+      }
+
+      const token = mintAccessToken(decodeSecret(settings.secret), settings.issuedAt)
+
+      try {
+        const res = await (deps.fetch ?? fetch)(`http://127.0.0.1:${settings.port}${route}`, {
+          method,
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: AbortSignal.timeout(5000)
+        })
+
+        return res.ok ? ((await res.json()) as T) : null
+      } catch {
+        return null
+      }
+    },
+    /** True while a gateway is up (spawned here or adopted from the background). */
+    isRunning() {
+      return running
     },
     reapStaleGateway
   }

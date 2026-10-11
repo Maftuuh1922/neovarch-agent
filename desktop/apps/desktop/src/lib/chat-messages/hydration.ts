@@ -1,6 +1,7 @@
 import { skillInvocationText } from '@hermes/shared'
 
 import { splitLeadingAttachmentRefs } from '@/components/assistant-ui/reference-kinds'
+import { withAgentAttachments } from '@/lib/chat-messages/agent-attachments'
 import { extractImageRefs } from '@/lib/embedded-images'
 import { parseErrorSurface } from '@/lib/error-surface'
 import { dedupeGeneratedImageEchoesInParts } from '@/lib/generated-images'
@@ -484,7 +485,10 @@ export function toChatMessages(messages: SessionMessage[]): ChatMessage[] {
       parts.push(reasoningPart(reasoning, message.timestamp))
     }
 
-    const reply = message.display_content !== undefined ? displayContent : displayContent || codexText?.reply
+    const baseReply = message.display_content !== undefined ? displayContent : displayContent || codexText?.reply
+    // Files the agent sent with send_file ride on the assistant row.
+    const sentFiles = message.role === 'assistant' ? (message as { attachments?: unknown }).attachments : undefined
+    const reply = sentFiles ? withAgentAttachments(baseReply ?? '', sentFiles) : baseReply
     // Some providers also persist the joined commentary as canonical content.
     // Keep that authoritative copy once, without treating unrelated final text
     // as a reason to discard the earlier public messages.

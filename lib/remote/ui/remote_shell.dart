@@ -308,7 +308,7 @@ class _ConnectionStrip extends ConsumerWidget {
                 Text(r.error!, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: NV.muted, height: 1.35)),
             ]),
           ),
-          TextButton(onPressed: busy ? null : r.reconnect, child: const Text('Sambungkan')),
+          TextButton(onPressed: busy ? null : r.reconnect, child: const Text('Coba lagi')),
         ]),
       ),
     );

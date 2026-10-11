@@ -62,14 +62,14 @@ def vault_path(cfg: dict | None = None) -> Path | None:
 def configure(path: str, enabled: bool = True) -> dict[str, Any]:
     """Save ``memory.obsidian_vault`` / ``memory.obsidian_enabled`` (Settings ▸ Vault Obsidian).
 
-    An enabled vault must be an existing folder outside any Hermes install;
+    An enabled vault must be an existing folder outside any foreign agent install (see paths.is_foreign_path);
     an empty path clears it. Returns the new :func:`status`.
     """
     raw = str(path or "").strip()
     if raw:
         target = Path(os.path.expanduser(raw)).resolve()
         if is_foreign_path(target):
-            raise VaultError("the folder is inside a Hermes Agent install; Neovarch does not touch it")
+            raise VaultError("the folder is inside a foreign agent install; Neovarch does not touch it")
         if enabled and not target.is_dir():
             raise VaultError(f"the folder does not exist: {target}")
         raw = str(target)
@@ -85,7 +85,7 @@ def require_vault(cfg: dict | None = None) -> Path:
     if vault is None:
         raise VaultError("no Obsidian vault is configured (set memory.obsidian_vault)")
     if is_foreign_path(vault):
-        raise VaultError("the configured vault is inside a Hermes Agent install; Neovarch does not touch it")
+        raise VaultError("the configured vault is inside a foreign agent install; Neovarch does not touch it")
     if not vault.is_dir():
         raise VaultError(f"the Obsidian vault folder does not exist: {vault}")
     return vault

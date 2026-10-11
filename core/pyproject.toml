@@ -13,6 +13,8 @@ requires-python = ">=3.11"
 dependencies = [
   "aiohttp>=3.9,<4",
   "PyYAML>=6,<7",
+  # Remote dari mana saja: X25519 / ChaCha20-Poly1305 for the relay link
+  "cryptography>=42",
 ]
 
 [project.optional-dependencies]

@@ -727,8 +727,9 @@ class ChatMsg {
   final List<String> images; // data: URLs
   final List<ToolActivity> tools;
 
-  /// Files sent with a user message (phone remote: PC uploads
-  /// `{id, name, mime, size, kind, url}`).
+  /// Files on a message (phone remote: PC uploads `{id, name, mime, size, kind,
+  /// url, origin}`): sent by the person (user rows) or by the PC agent with
+  /// send_file (assistant rows).
   final List<Map<String, dynamic>> attachments;
 
   /// Raw OpenAI tool_calls of an assistant message (local runtime only).

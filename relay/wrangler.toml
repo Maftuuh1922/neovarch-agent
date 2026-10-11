@@ -1,0 +1,25 @@
+# Neovarch relay on Cloudflare (Workers free plan).
+#   npx wrangler login
+#   npx wrangler deploy
+# Then put the printed https://neovarch-relay.<you>.workers.dev URL (as wss://…)
+# into Neovarch PC: Settings → Remote → Relay URL.
+name = "neovarch-relay"
+main = "src/worker.js"
+compatibility_date = "2026-01-01"
+
+# Optional custom domain (zone must be on your Cloudflare account):
+# routes = [{ pattern = "relay.example.com", custom_domain = true }]
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RelayRoomDO"
+
+# SQLite-backed Durable Objects are the ones available on the free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayRoomDO"]
+
+[vars]
+MAX_MESSAGE_BYTES = "262144"
+MAX_PHONES_PER_ROOM = "5"
+IDLE_SECONDS = "120"

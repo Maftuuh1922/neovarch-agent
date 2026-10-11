@@ -47,7 +47,13 @@ class _ModelPickerSheetState extends ConsumerState<ModelPickerSheet> {
     if (!mounted) return;
     setState(() => _busy = null);
     if (err != null) {
-      toast(context, err);
+      // The picker keeps the previous model (nothing changed on the PC).
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          content: Text(err),
+          action: SnackBarAction(label: 'Coba lagi', onPressed: () => _pick(m)),
+        ));
       return;
     }
     toast(context, a == null ? 'Model default PC: ${modelShort(m!.id)}' : (m == null ? '${a.name} ikut default PC' : 'Model ${a.name}: ${modelShort(m.id)}'));

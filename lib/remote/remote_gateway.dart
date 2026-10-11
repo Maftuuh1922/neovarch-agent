@@ -34,10 +34,19 @@ import 'company_models.dart';
 import 'composer.dart';
 import 'models_api.dart';
 import 'office_models.dart';
+import 'link/frame_link.dart';
+import 'link/link_crypto.dart';
+import 'link/link_info.dart';
+import 'link/tunnel.dart';
 import 'pairing.dart';
+import 'pc_background.dart';
+import 'remote_errors.dart';
 import 'vault_models.dart';
 import 'remote_transcript.dart';
 import 'social_models.dart';
+
+/// Upload cap through the relay/Bluetooth tunnel (the PC side allows 16 MB bodies).
+const int kMaxTunnelUploadBytes = 15 * 1024 * 1024;
 
 enum RemoteStatus { disconnected, connecting, connected, reconnecting, failed }
 
@@ -144,7 +153,7 @@ class ActiveSession {
   const ActiveSession({required this.id, required this.title, required this.status, required this.model, required this.preview});
 }
 
-class RemoteGateway implements VaultApi, ModelsApi, CompanyApi {
+class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi {
   RemoteGateway({
     required this.baseUrl,
     required this.token,
@@ -158,11 +167,47 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi {
     this.lanTimeout = const Duration(milliseconds: 2500),
     this.wanTimeout = const Duration(seconds: 6),
     math.Random? random,
+    this.link,
+    this.deviceKey,
+    this.deviceName = 'HP Neovarch',
+    this.bluetoothEnabled = false,
+    this.relayConnector,
+    this.bluetoothConnector,
+    this.onLinkChanged,
+    this.lanProbeEvery = const Duration(seconds: 45),
   })  : _http = httpClient ?? http.Client(),
         _rand = random ?? math.Random() {
     activeUrl = candidates.first;
     client = GatewayClient(baseUrl: activeUrl, token: token, headers: headers);
   }
+
+  // ------------------------------------------------- remote dari mana saja --
+  /// Relay / Bluetooth identity of this PC (null until paired with a QR that
+  /// carries it, or until the first LAN connect enrolled this device).
+  LinkInfo? link;
+
+  /// This phone's device key for [link] (created and kept by SavedDesktops).
+  final Future<LinkKeyPair> Function()? deviceKey;
+  final String deviceName;
+  bool bluetoothEnabled;
+
+  /// Test seams; default: RelayFrameLink.connect / none.
+  final Future<FrameLink> Function(String relayUrl, String pcId)? relayConnector;
+  final Future<FrameLink> Function(BluetoothTarget target)? bluetoothConnector;
+
+  /// Called when [link] changed (enrolled, relay URL updated) so it is saved.
+  final void Function(LinkInfo info)? onLinkChanged;
+
+  /// While on relay/Bluetooth, how often to check whether the LAN is back.
+  final Duration lanProbeEvery;
+
+  Tunnel? _tunnel;
+  Timer? _lanProbe;
+
+  /// `lan`, `relay` or `bluetooth`: what carries the live connection.
+  String get transport => _tunnel?.kind ?? 'lan';
+
+  bool get relayAvailable => link?.canRelay == true && deviceKey != null;
 
   /// The paired address; [alternates] are other routes to the same PC.
   final String baseUrl;
@@ -183,7 +228,9 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi {
 
   /// LAN first, then Tailscale MagicDNS, then tailnet IPs.
   List<String> get candidates => orderedGatewayUrls([baseUrl, ...alternates]);
-  String get route => gatewayRoute(activeUrl);
+
+  /// `lan` / `tailscale` / `other` for a direct address, else `relay` / `bluetooth`.
+  String get route => _tunnel != null ? _tunnel!.kind : gatewayRoute(activeUrl);
 
   RemoteStatus status = RemoteStatus.disconnected;
   String? lastError;
@@ -254,6 +301,8 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi {
     try {
       Object? firstError;
       var ok = false;
+      // 1. Direct addresses, LAN first. A DNS failure (a MagicDNS name while
+      //    that VPN is off) or a refused port just moves on to the next one.
       for (final url in candidates) {
         if (_closed) break;
         final c = GatewayClient(
@@ -267,13 +316,25 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi {
         }
         await _sub?.cancel();
         client.close();
+        await _dropTunnel();
         client = c;
         activeUrl = url;
         _sub = c.events.listen(_onFrame);
         ok = true;
         break;
       }
-      if (!ok) throw firstError ?? const RpcError(0, 'tidak ada alamat PC yang menjawab');
+      // 2. Bluetooth (if paired and enabled), 3. the encrypted relay.
+      if (!ok && !_closed) {
+        try {
+          ok = await _connectTunnel();
+        } catch (e) {
+          firstError = e;
+        }
+      }
+      if (!ok) {
+        if (firstError is TunnelDenied) throw firstError;
+        throw RemoteUnreachable(relayAvailable: relayAvailable);
+      }
       await client.call('client.capabilities', {'server_requests': true}, const Duration(seconds: 15));
       await _replayMissed(since);
       _attempt = 0;
@@ -282,15 +343,131 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi {
       _beat?.cancel();
       _beat = Timer.periodic(heartbeat, (_) => ping());
       _setStatus(RemoteStatus.connected);
-      unawaited(_refreshRoutes());
+      if (_tunnel == null) {
+        unawaited(_refreshRoutes());
+        unawaited(_enrollOverLan());
+        _lanProbe?.cancel();
+        _lanProbe = null;
+      } else {
+        _startLanProbe();
+      }
       unawaited(ping());
     } catch (e) {
-      lastError = '$e';
+      lastError = friendlyRemoteError(e, relayAvailable: relayAvailable);
       final retrying = autoReconnect && !_closed && (_attempt > 0 || _everConnected);
       _setStatus(retrying ? RemoteStatus.reconnecting : RemoteStatus.failed);
       if (retrying) _scheduleRetry();
       rethrow;
     }
+  }
+
+  /// Bluetooth first (no internet needed), then the relay. True when a tunnel
+  /// carries the RPC stream; throws [TunnelDenied] when the PC refused us.
+  Future<bool> _connectTunnel() async {
+    final l = link;
+    final keyFn = deviceKey;
+    if (l == null || !l.valid || keyFn == null) return false;
+    final key = await keyFn();
+    final attempts = <Future<FrameLink> Function()>[
+      if (bluetoothEnabled && l.bluetooth != null && bluetoothConnector != null) () => bluetoothConnector!(l.bluetooth!),
+      if (l.canRelay) () => (relayConnector ?? (u, id) => RelayFrameLink.connect(u, id))(l.relayUrl!, l.pcId),
+    ];
+    Object? denied;
+    for (final open in attempts) {
+      if (_closed) return false;
+      Tunnel t;
+      try {
+        final fl = await open().timeout(wanTimeout + const Duration(seconds: 4));
+        t = await Tunnel.open(fl,
+            device: key,
+            pcPublicKey: b64d(l.pcPk),
+            pairCode: l.enrolled ? null : l.pairCode,
+            deviceName: deviceName,
+            timeout: wanTimeout + const Duration(seconds: 4));
+      } on TunnelDenied catch (e) {
+        denied = e;
+        continue;
+      } catch (_) {
+        continue;
+      }
+      final c = GatewayClient(baseUrl: activeUrl, token: token, headers: headers, connectTimeout: wanTimeout, pipeOpener: () => t.openRpc());
+      try {
+        await c.ensureConnected();
+      } catch (_) {
+        c.close();
+        await t.close();
+        continue;
+      }
+      await _sub?.cancel();
+      client.close();
+      await _dropTunnel();
+      _tunnel = t;
+      client = c;
+      _sub = c.events.listen(_onFrame);
+      unawaited(t.done.then((_) {
+        if (identical(_tunnel, t) && !_closed) {
+          client.close();
+          _onDisconnected();
+        }
+      }));
+      if (!l.enrolled || l.deviceId != t.deviceId) {
+        link = l.copyWith(enrolled: true, clearPairCode: true, deviceId: t.deviceId);
+        onLinkChanged?.call(link!);
+      }
+      return true;
+    }
+    if (denied != null) throw denied;
+    return false;
+  }
+
+  Future<void> _dropTunnel() async {
+    final t = _tunnel;
+    _tunnel = null;
+    _lanProbe?.cancel();
+    _lanProbe = null;
+    if (t != null) await t.close();
+  }
+
+  /// On the LAN: register this phone's device key with the PC (and refresh the
+  /// relay URL / Bluetooth target), so the relay works later without re-pairing.
+  /// Older PCs (no /api/remote/devices) are ignored quietly.
+  Future<void> _enrollOverLan() async {
+    final keyFn = deviceKey;
+    if (keyFn == null) return;
+    try {
+      final key = await keyFn();
+      final j = await _json('POST', '/api/remote/devices', body: {'pk': b64e(key.publicBytes), 'name': deviceName});
+      final info = LinkInfo.tryParse(j);
+      if (info == null) return;
+      final next = info.copyWith(enrolled: true, clearPairCode: true);
+      final prev = link;
+      link = next;
+      if (prev == null ||
+          prev.pcId != next.pcId ||
+          prev.pcPk != next.pcPk ||
+          prev.relayUrl != next.relayUrl ||
+          !prev.enrolled ||
+          prev.bluetooth?.address != next.bluetooth?.address) {
+        onLinkChanged?.call(next);
+      }
+    } catch (_) {}
+  }
+
+  /// While on relay/Bluetooth: come back to the LAN as soon as it answers.
+  void _startLanProbe() {
+    _lanProbe?.cancel();
+    _lanProbe = Timer.periodic(lanProbeEvery, (_) async {
+      if (_tunnel == null || _closed || status != RemoteStatus.connected) return;
+      for (final url in candidates.where((u) => gatewayRoute(u) == 'lan')) {
+        try {
+          final res = await _http.get(Uri.parse(url).replace(path: '${Uri.parse(url).path}/api/status')).timeout(lanTimeout);
+          if (res.statusCode == 200) {
+            unawaited(reconnect().catchError((Object _) {}));
+            return;
+          }
+        } catch (_) {}
+      }
+    });
   }
 
   /// After a reconnect: ask the core for the events this phone missed
@@ -492,6 +669,7 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi {
     await _sub?.cancel();
     _sub = null;
     client.close();
+    await _dropTunnel();
     _http.close();
     _setStatus(RemoteStatus.disconnected);
     await _status.close();
@@ -642,25 +820,71 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi {
     return b.replace(path: '${b.path.replaceAll(RegExp(r'/+$'), '')}$path', queryParameters: q == null || q.isEmpty ? null : q);
   }
 
-  Future<dynamic> _json(String method, String path, {Map<String, dynamic>? body, Map<String, String>? query}) async {
-    final req = http.Request(method, _rest(path, query))..headers.addAll(_restHeaders);
-    if (body != null) {
-      req.headers['Content-Type'] = 'application/json';
-      req.body = jsonEncode(body);
+  /// Every REST call goes through here: over the live transport (direct HTTP
+  /// on the LAN, or the encrypted tunnel). When a direct address stops
+  /// answering (DNS failure, refused, timeout) the gateway reconnects over the
+  /// next route (other LAN address → Bluetooth → relay) and retries once, so a
+  /// stale address never surfaces as a raw socket error.
+  Future<(int, Uint8List, Map<String, String>)> _send(String method, String path,
+      {Map<String, String>? query, Map<String, String> headers = const {}, List<int>? body, Duration timeout = const Duration(seconds: 20)}) async {
+    Future<(int, Uint8List, Map<String, String>)> once() async {
+      final t = _tunnel;
+      if (t != null && t.isOpen) {
+        final uri = _rest(path, query);
+        final r = await t.request(method, uri.hasQuery ? '${uri.path}?${uri.query}' : uri.path,
+            headers: {...headers, 'X-Neovarch-Client': 'mobile'}, body: body, timeout: timeout + const Duration(seconds: 10));
+        if (r.status == 0) throw RemoteUnreachable(relayAvailable: relayAvailable);
+        return (r.status, r.body, r.headers);
+      }
+      final req = http.Request(method, _rest(path, query))..headers.addAll({..._restHeaders, ...headers});
+      if (body != null) req.bodyBytes = body;
+      final res = await _http.send(req).timeout(timeout);
+      return (res.statusCode, await res.stream.toBytes(), res.headers);
     }
-    final res = await _http.send(req).timeout(const Duration(seconds: 20));
-    final text = await res.stream.bytesToString();
-    if (res.statusCode == 404) throw const RemoteRestError(404, 'fitur ini belum ada di Neovarch PC — perbarui aplikasi PC');
-    if (res.statusCode == 401 || res.statusCode == 403) throw RemoteRestError(res.statusCode, 'token ditolak oleh PC — pasangkan ulang');
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      String msg = 'HTTP ${res.statusCode}';
+
+    try {
+      return await once();
+    } catch (e) {
+      if (!isNetworkError(e) || _closed) rethrow;
+      // This route is gone: find a live one (the socket may not have noticed yet).
+      try {
+        await reconnect();
+      } catch (_) {
+        throw RemoteUnreachable(relayAvailable: relayAvailable);
+      }
+      try {
+        return await once();
+      } catch (e2) {
+        if (isNetworkError(e2)) throw RemoteUnreachable(relayAvailable: relayAvailable);
+        rethrow;
+      }
+    }
+  }
+
+  Future<dynamic> _json(String method, String path, {Map<String, dynamic>? body, Map<String, String>? query}) async {
+    final (status, bytes, _) = await _send(method, path,
+        query: query,
+        headers: body != null ? const {'Content-Type': 'application/json'} : const {},
+        body: body != null ? utf8.encode(jsonEncode(body)) : null);
+    final text = utf8.decode(bytes, allowMalformed: true);
+    if (status == 404) throw const RemoteRestError(404, 'fitur ini belum ada di Neovarch PC — perbarui aplikasi PC');
+    if (status == 401 || status == 403) throw RemoteRestError(status, 'token ditolak oleh PC — pasangkan ulang');
+    if (status < 200 || status >= 300) {
+      String msg = 'HTTP $status';
       try {
         final j = jsonDecode(text);
         if (j is Map && j['detail'] != null) msg = '${j['detail']}';
       } catch (_) {}
-      throw RemoteRestError(res.statusCode, msg);
+      throw RemoteRestError(status, msg);
     }
     return text.isEmpty ? null : jsonDecode(text);
+  }
+
+  /// Raw bytes of a core path (images, files) over whichever transport is live.
+  Future<Uint8List> fetchBytes(String path, {Map<String, String>? query}) async {
+    final (status, bytes, _) = await _send('GET', path, query: query, timeout: const Duration(minutes: 2));
+    if (status < 200 || status >= 300) throw RemoteRestError(status, 'HTTP $status');
+    return bytes;
   }
 
   /// Public `/api/status` (version, components); never throws.
@@ -772,6 +996,23 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi {
         if (assignee != null && assignee.isNotEmpty) 'assignee': assignee,
         'priority': ?priority,
       });
+  // ------------------------------------------------- jalankan di latar belakang --
+  @override
+  Future<PcBackgroundStatus> backgroundStatus() async =>
+      PcBackgroundStatus.fromJson(Map<String, dynamic>.from(await _json('GET', '/api/remote/background') as Map));
+
+  @override
+  Future<PcBackgroundStatus> setBackground({bool? runInBackground, bool? startAtLogin}) async =>
+      PcBackgroundStatus.fromJson(Map<String, dynamic>.from(await _json('POST', '/api/remote/background', body: {
+        'run_in_background': ?runInBackground,
+        'start_at_login': ?startAtLogin,
+      }) as Map));
+
+  @override
+  Future<String> backgroundAction(PcBackgroundAction action) async {
+    final j = await _json('POST', '/api/remote/background/${action.wire}', body: const {});
+    return j is Map && j['message'] != null ? '${j['message']}' : 'Selesai.';
+  }
 }
 
 extension RemoteGatewayExtras on RemoteGateway {
@@ -815,18 +1056,33 @@ extension RemoteGatewayExtras on RemoteGateway {
 
     // The core sniffs images and maps the file name to a MIME type itself.
     req.files.add(http.MultipartFile('file', stream(), bytes.length, filename: name));
-    final res = await _http.send(req).timeout(const Duration(minutes: 5));
-    final text = await res.stream.bytesToString();
-    if (res.statusCode == 404) throw const RemoteRestError(404, 'PC belum mendukung lampiran — perbarui Neovarch di PC');
-    if (res.statusCode == 401 || res.statusCode == 403) throw RemoteRestError(res.statusCode, 'token ditolak oleh PC — pasangkan ulang');
-    if (res.statusCode == 413) throw const RemoteRestError(413, 'File terlalu besar (maks 25 MB).');
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      String msg = 'Unggah gagal (HTTP ${res.statusCode})';
+    int statusCode;
+    String text;
+    if (_tunnel != null) {
+      // Relay / Bluetooth: the same multipart body, carried inside the encrypted tunnel.
+      if (bytes.length > kMaxTunnelUploadBytes) {
+        throw const RemoteRestError(413, 'Lewat relay, file maksimal 15 MB. Sambungkan ke Wi-Fi yang sama dengan PC untuk file lebih besar.');
+      }
+      final ct = req.headers['content-type'] ?? req.headers['Content-Type'] ?? '';
+      final body = await req.finalize().toBytes();
+      final (s, b, _) = await _send('POST', '/api/uploads', headers: {'Content-Type': ct}, body: body, timeout: const Duration(minutes: 5));
+      statusCode = s;
+      text = utf8.decode(b, allowMalformed: true);
+    } else {
+      final res = await _http.send(req).timeout(const Duration(minutes: 5));
+      statusCode = res.statusCode;
+      text = await res.stream.bytesToString();
+    }
+    if (statusCode == 404) throw const RemoteRestError(404, 'PC belum mendukung lampiran — perbarui Neovarch di PC');
+    if (statusCode == 401 || statusCode == 403) throw RemoteRestError(statusCode, 'token ditolak oleh PC — pasangkan ulang');
+    if (statusCode == 413) throw const RemoteRestError(413, 'File terlalu besar (maks 25 MB).');
+    if (statusCode < 200 || statusCode >= 300) {
+      String msg = 'Unggah gagal (HTTP $statusCode)';
       try {
         final j = jsonDecode(text);
         if (j is Map && j['detail'] != null) msg = '${j['detail']}';
       } catch (_) {}
-      throw RemoteRestError(res.statusCode, msg);
+      throw RemoteRestError(statusCode, msg);
     }
     // A PC core without the upload route answers through its quiet
     // catch-all with a 200 `{available: false, name: "uploads"}` and no id
@@ -863,6 +1119,7 @@ extension RemoteGatewayExtras on RemoteGateway {
 
   Future<FriendDetail> socialFriend(String login) async =>
       FriendDetail.fromJson(Map<String, dynamic>.from(await _json('GET', '/api/social/friends/${Uri.encodeComponent(login)}') as Map));
+
 }
 
 class RemoteRestError implements Exception {

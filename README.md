@@ -187,7 +187,7 @@ Try: *"Make a folder called test-neovarch, write a file notes.md with 3 project 
 |---|---|
 | **1. Download** | From [Releases](https://github.com/Maftuuh1922/neovrach_Agent/releases/latest) get `neovarch-agent-android-arm64.apk` (most phones) or `neovarch-agent-android-universal.apk` |
 | **2. Install** | Open the file, allow **install unknown apps**, tap **Install** (it's signed with a test key, so Android may warn) |
-| **3. Same network** | Phone and PC on the same Wi-Fi. Away from home: [Tailscale](https://tailscale.com) on both, use the PC's `100.x` address |
+| **3. Network** | Nothing to set up: same Wi-Fi connects directly; away from home the app goes through the free end-to-end-encrypted relay automatically ([how it works / self-host](docs/relay.md)) |
 | **4. On the PC** | **Pengaturan ▸ Remote / Perangkat** (Settings ▸ Remote / Devices) → turn on **Aktifkan akses remote** (Enable remote access) |
 | **5. On the phone** | **Pindai QR dari PC** (Scan QR from PC), or **Masukkan alamat & token** (e.g. `192.168.1.5:9319` + token) → **Hubungkan** (Connect) |
 
@@ -198,7 +198,9 @@ Try: *"Make a folder called test-neovarch, write a file notes.md with 3 project 
 | **Setujui** | Approve risky commands |
 | **PC** | Status, switch or forget the PC |
 
-**Lost your phone?** On the PC press **Buat token baru** (Create new token): every paired phone is disconnected. Treat the QR code like a password.
+**Remote dari mana saja (from anywhere):** scan the QR once. The phone tries the LAN first (also works over a phone/PC hotspot without internet), then Bluetooth if you turned it on, then the relay — no extra app, no VPN, no account. The relay only forwards encrypted messages and can be self-hosted for free on Cloudflare (`cd relay && npx wrangler deploy`) or with Docker. See [docs/relay.md](docs/relay.md).
+
+**Lost your phone?** On the PC open **Remote ▸ Perangkat terpasang** and press **Cabut** (Revoke) next to it, and press **Buat token baru** (Create new token) to cut LAN access for every paired phone. Treat the QR code like a password.
 
 ### Approving commands
 

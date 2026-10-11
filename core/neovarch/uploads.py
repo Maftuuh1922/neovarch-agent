@@ -111,7 +111,10 @@ def public(meta: dict) -> dict:
     """What clients see: never the bytes, always a download URL."""
     return {"id": meta["id"], "name": meta["name"], "mime": meta["mime"], "size": meta["size"],
             "kind": meta["kind"], "session_id": meta.get("session_id"), "path": meta["path"],
-            "created_at": meta.get("created_at"), "url": f"/api/uploads/{meta['id']}"}
+            "created_at": meta.get("created_at"), "url": f"/api/uploads/{meta['id']}",
+            # "user" = sent by the person (phone/desktop composer), "agent" = sent by the
+            # agent with send_file. Same schema both ways, so any transport can carry it.
+            "origin": meta.get("origin") or "user"}
 
 
 class UploadStore:
@@ -140,7 +143,14 @@ class UploadStore:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
-            if Path(meta.get("path", "")).is_file():
+            p = Path(meta.get("path", ""))
+            # Only bytes that live inside the uploads store are ever served; a sidecar
+            # that points elsewhere (edited, or from an older layout) is ignored.
+            try:
+                inside = p.resolve().is_relative_to(base.resolve())
+            except (OSError, ValueError):
+                inside = False
+            if inside and p.is_file():
                 return meta
         return None
 
@@ -165,8 +175,9 @@ class UploadStore:
                 pass
         return True
 
-    def import_path(self, session_id: str, src: Path) -> dict:
-        """Stage a copy of a host file (desktop drag-drop / paste of a saved file)."""
+    def import_path(self, session_id: str, src: Path, extra: dict | None = None) -> dict:
+        """Stage a copy of a host file (desktop drag-drop / paste of a saved file, or a
+        file the agent sends to the chat with ``extra={"origin": "agent", ...}``)."""
         src = Path(src).expanduser()
         if not src.is_file():
             raise UploadError(f"File tidak ditemukan: {src}", 404)
@@ -178,7 +189,7 @@ class UploadStore:
         with src.open("rb") as fh:
             shutil.copyfileobj(fh, w.fh)
         w.size = src.stat().st_size
-        return w.finish(head=head)
+        return w.finish(head=head, extra=extra)
 
 
 class _Writer:
@@ -210,7 +221,7 @@ class _Writer:
         except OSError:
             pass
 
-    def finish(self, head: bytes = b"") -> dict:
+    def finish(self, head: bytes = b"", extra: dict | None = None) -> dict:
         self.fh.close()
         if self.size == 0:
             self.abort()
@@ -218,7 +229,7 @@ class _Writer:
         mime = guess_mime(self.name, self.given_mime, head)
         meta = {"id": self.id, "name": self.name, "mime": mime, "size": self.size,
                 "kind": kind_of(self.name, mime), "session_id": self.session_id,
-                "path": str(self.path), "created_at": time.time()}
+                "path": str(self.path), "created_at": time.time(), "origin": "user", **(extra or {})}
         (self.dir / f"{self.id}.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         return meta
 

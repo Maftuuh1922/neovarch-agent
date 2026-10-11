@@ -403,11 +403,25 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     rotate: () => ipcRenderer.invoke('neovarch:remote:rotate'),
     update: patch => ipcRenderer.invoke('neovarch:remote:update', patch),
     check: () => ipcRenderer.invoke('neovarch:remote:check'),
+    setRelay: patch => ipcRenderer.invoke('neovarch:remote:set-relay', patch),
+    setBluetooth: on => ipcRenderer.invoke('neovarch:remote:set-bluetooth', on),
+    revokeDevice: id => ipcRenderer.invoke('neovarch:remote:revoke-device', id),
     onChanged: callback => {
       const listener = (_event, status) => callback(status)
       ipcRenderer.on('neovarch:remote:changed', listener)
 
       return () => ipcRenderer.removeListener('neovarch:remote:changed', listener)
+    }
+  },
+  // "Jalankan di latar belakang" + "Mulai saat login" (neovarch-background.ts)
+  neovarchBackground: {
+    get: () => ipcRenderer.invoke('neovarch:background:get'),
+    set: patch => ipcRenderer.invoke('neovarch:background:set', patch),
+    onChanged: callback => {
+      const listener = (_event, status) => callback(status)
+      ipcRenderer.on('neovarch:background:changed', listener)
+
+      return () => ipcRenderer.removeListener('neovarch:background:changed', listener)
     }
   },
   setDisableF12: blocked => ipcRenderer.send('hermes:devtools:disable-f12', blocked),

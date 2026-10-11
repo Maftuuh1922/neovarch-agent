@@ -86,6 +86,9 @@ class Auth:
         secret = os.environ.get("HERMES_DASHBOARD_BASIC_AUTH_SECRET") or os.environ.get("NEOVARCH_REMOTE_SECRET") or ""
         self.secret = base64.b64decode(secret) if secret else b""
         self.isolated = isolated
+        # Loopback-only credential for this process's own encrypted-link bridge
+        # (relay / Bluetooth). Random per start, never written anywhere.
+        self.internal_token = secrets.token_urlsafe(32)
         if not self.session_token and not self.secret:
             # Never run an open gateway: mint one and print it for CLI users.
             self.session_token = secrets.token_urlsafe(24)
@@ -117,6 +120,8 @@ class Auth:
         candidates.append(request.headers.get("X-Hermes-Session-Token", ""))
         candidates.append(request.headers.get("X-Neovarch-Session-Token", ""))
         for c in filter(None, candidates):
+            if hmac.compare_digest(c, self.internal_token) and (request.remote or "") in ("127.0.0.1", "::1"):
+                return True
             if self.session_token and hmac.compare_digest(c, self.session_token):
                 return True
             if self.verify_signed(c):
@@ -160,7 +165,8 @@ class LiveSession:
         company = getattr(gw, "company", None)
         self.ctx = ToolContext(cwd=Path(rec.get("cwd") or default_cwd()), approve=self.approve,
                                office=getattr(gw, "office_status", None),
-                               kantor=getattr(company, "main_tool", None))
+                               kantor=getattr(company, "main_tool", None),
+                               session_id=self.id, uploads=getattr(gw, "uploads", None))
         self.agent = Agent(rec, gw.store, self.ctx, self.emit)
         self.last_text = ""
         # Desktop composers stage images with image.attach* before prompt.submit;
@@ -270,7 +276,9 @@ def to_ui_messages(rec: dict) -> list[dict]:
             item["name"] = m.get("name")
         if m.get("reasoning"):
             item["reasoning"] = m["reasoning"]
-        if role == "user" and m.get("attachments"):
+        # Same schema both ways: files the person sent (user) and files the agent
+        # sent with send_file (assistant); the bytes come from GET /api/uploads/<id>.
+        if role in ("user", "assistant") and m.get("attachments"):
             item["attachments"] = [upmod.public(a) for a in m["attachments"] if isinstance(a, dict) and a.get("id")]
         out.append(item)
     return out
@@ -282,6 +290,8 @@ class Gateway:
         self.uploads = upmod.UploadStore()
         self.kanban = Kanban()
         self.auth = Auth(isolated)
+        self.link = None  # remote_link.LinkService (relay / Bluetooth), created on demand
+        self.background = None  # background.BackgroundService ("Jalankan di latar belakang"), created on demand
         self.conns: set[Conn] = set()
         self.live: dict[str, LiveSession] = {}
         self.started = time.time()
@@ -1909,6 +1919,9 @@ def build_app(gw: Gateway) -> web.Application:
     r.add_get("/api/events", events_sse)
     r.add_get("/api/events/replay", events_replay)
     r.add_get("/api/network/addresses", network_addresses)
+    _add_remote_link_routes(app, gw)
+    from neovarch.background import add_routes as _add_background_routes
+    _add_background_routes(app, gw)
     r.add_get("/api/memory/obsidian", obsidian_status)
     r.add_post("/api/memory/obsidian", obsidian_configure)
     r.add_put("/api/memory/obsidian", obsidian_configure)
@@ -2264,6 +2277,34 @@ async def _dispatch(gw: Gateway, conn: Conn, frame: dict) -> None:
             await conn.send({"jsonrpc": "2.0", "id": fid, "error": {"code": -32603, "message": f"{type(exc).__name__}: {exc}"}})
 
 
+def _add_remote_link_routes(app: web.Application, gw: "Gateway") -> None:
+    try:
+        from neovarch.remote_link.service import add_routes
+    except ImportError as exc:  # `cryptography` missing: LAN keeps working, relay/Bluetooth off
+        reason = f"Remote dari mana saja tidak tersedia: {exc}"
+
+        async def unavailable(_request):
+            return web.json_response({"detail": reason}, status=503)
+        for path in ("/api/remote/link", "/api/remote/link/config", "/api/remote/devices", "/api/remote/devices/{device_id}"):
+            app.router.add_route("*", path, unavailable)
+        return
+    add_routes(app, gw)
+
+
+async def _start_remote_link(gw: "Gateway") -> None:
+    """The remote gateway (``--isolated``) also listens on the relay / Bluetooth."""
+    if os.environ.get("NEOVARCH_LINK", "1" if gw.auth.isolated else "0").lower() in ("0", "false", "off"):
+        return
+    try:
+        from neovarch.remote_link.service import LinkService
+    except ImportError as exc:
+        print(f"neovarch serve: remote link disabled ({exc})", file=sys.stderr, flush=True)
+        return
+    if gw.link is None:
+        gw.link = LinkService(gw)
+    await gw.link.start()
+
+
 def serve(host: str, port: int, *, isolated: bool = False) -> int:
     async def main() -> None:
         gw = Gateway(isolated)
@@ -2282,6 +2323,7 @@ def serve(host: str, port: int, *, isolated: bool = False) -> int:
         # The desktop waits for this exact sentinel (legacy wire name, kept for compatibility).
         print(f"HERMES_BACKEND_READY port={gw.port}", flush=True)
         print(f"Neovarch gateway listening on {host}:{gw.port} (home {neovarch_home()})", flush=True)
+        await _start_remote_link(gw)
         await asyncio.Event().wait()
 
     try:

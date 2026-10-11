@@ -38,7 +38,17 @@ const PREVIEW_STATUS: NeovarchRemoteStatus = {
   deviceName: 'PC Kantor',
   profile: 'default',
   error: null,
-  logTail: ''
+  logTail: '',
+  relay: {
+    enabled: true,
+    url: 'wss://relay.neovarchlabs.web.id',
+    defaultUrl: 'wss://relay.neovarchlabs.web.id',
+    state: 'online',
+    error: null,
+    phones: 1
+  },
+  bluetooth: { enabled: false, state: 'off', error: null, address: null, phones: 0 },
+  devices: [{ id: 'q3Jm0xA1bC2dE3fG', name: 'HP Andi', added: 1791000000, last_seen: 1791480000, via: 'relay' }]
 }
 
 async function renderQr(payload: string): Promise<string> {
@@ -167,8 +177,9 @@ export function RemoteSettings() {
       </section>
       <SectionHeading icon={QrCode} meta={stateLabel} title="Detail koneksi" />
       <p className={`${CAPTION} mb-2`}>
-        Kendalikan agen di PC ini dari aplikasi Neovarch di HP: obrolan, persetujuan, dan Kanban. HP harus berada di
-        jaringan yang sama (Wi‑Fi/LAN) atau terhubung lewat Tailscale/VPN.
+        Kendalikan agen di PC ini dari aplikasi Neovarch di HP: obrolan, persetujuan, dan Kanban. Pindai QR sekali —
+        HP tersambung langsung di Wi‑Fi yang sama, atau dari mana saja lewat relay terenkripsi (tanpa aplikasi
+        tambahan).
         {preview && ' (Pratinjau — data contoh.)'}
       </p>
 
@@ -234,6 +245,10 @@ export function RemoteSettings() {
             wide
           />
 
+          <AnywhereSection api={api} busy={busy} preview={preview} run={run} status={status} />
+
+          <BackgroundSection preview={preview} />
+
           {status.addresses.length > 1 && (
             <ListRow
               action={
@@ -297,12 +312,173 @@ export function RemoteSettings() {
           />
 
           <p className={`${CAPTION} mt-3`}>
-            Token = kendali penuh atas agen di PC ini. Di Wi‑Fi tanpa enkripsi token bisa disadap; untuk di luar
-            rumah gunakan Tailscale/WireGuard. Izinkan port {status.port} di firewall bila HP tidak bisa terhubung.
+            Token = kendali penuh atas agen di PC ini. Di Wi‑Fi tanpa enkripsi token bisa disadap; di luar rumah HP
+            memakai relay yang terenkripsi ujung‑ke‑ujung. Izinkan port {status.port} di firewall bila HP tidak bisa
+            terhubung lewat LAN.
           </p>
         </>
       )}
     </SettingsContent>
+  )
+}
+
+const RELAY_STATE: Record<string, string> = {
+  off: 'Nonaktif',
+  connecting: 'Menghubungkan…',
+  online: 'Tersambung',
+  offline: 'Terputus — mencoba lagi',
+  unavailable: 'Tidak tersedia'
+}
+
+export function relayStateLabel(state: string | undefined, phones = 0): string {
+  const base = RELAY_STATE[state ?? 'off'] ?? state ?? 'Nonaktif'
+
+  return state === 'online' && phones > 0 ? `${base} · ${phones} HP aktif` : base
+}
+
+function formatSeen(ts: number | null): string {
+  if (!ts) {
+    return '—'
+  }
+
+  return new Date(ts * 1000).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+const VIA: Record<string, string> = { lan: 'LAN', relay: 'relay', bluetooth: 'Bluetooth' }
+
+// "Akses dari mana saja": the remote gateway's outbound relay connection, the
+// Bluetooth transport and the phones allowed to use them (docs/relay.md).
+function AnywhereSection({
+  api,
+  busy,
+  preview,
+  run,
+  status
+}: {
+  api: Window['hermesDesktop']['neovarchRemote']
+  busy: boolean
+  preview: boolean
+  run: (fn: () => Promise<NeovarchRemoteStatus>) => Promise<void>
+  status: NeovarchRemoteStatus
+}) {
+  const relay = status.relay
+  const bt = status.bluetooth
+  const [url, setUrl] = useState(relay?.url ?? '')
+
+  useEffect(() => setUrl(relay?.url ?? ''), [relay?.url])
+
+  const revoke = async (id: string, name: string | null) => {
+    const ok = await confirm({
+      title: `Cabut ${name || 'HP ini'}?`,
+      description:
+        'HP ini langsung terputus dari relay dan Bluetooth dan harus memindai QR lagi untuk tersambung dari luar rumah.',
+      confirmLabel: 'Cabut',
+      destructive: true
+    })
+
+    if (ok && api?.revokeDevice) {
+      await run(() => api.revokeDevice!(id))
+    }
+  }
+
+  const online = relay?.state === 'online'
+
+  return (
+    <div data-nv-remote-anywhere="">
+      <ToggleRow
+        checked={Boolean(relay?.enabled)}
+        description={
+          <span>
+            PC menjaga satu koneksi keluar ke relay sehingga HP bisa tersambung dari mana saja (data seluler, Wi‑Fi
+            lain) tanpa Tailscale atau membuka port. Isi pesan terenkripsi ujung‑ke‑ujung; relay tidak bisa
+            membacanya.{' '}
+            <span data-nv-relay-state={relay?.state ?? 'off'}>
+              Status:{' '}
+              <span className={online ? 'text-(--ui-text-primary)' : 'text-(--ui-text-tertiary)'}>
+                {relayStateLabel(relay?.state, relay?.phones)}
+              </span>
+            </span>
+            {relay?.error && relay.state !== 'online' && (
+              <span className="block text-(--ui-text-tertiary)">({relay.error})</span>
+            )}
+          </span>
+        }
+        disabled={busy || preview || !api?.setRelay}
+        label="Akses dari mana saja (relay)"
+        onChange={on => api?.setRelay && void run(() => api.setRelay!({ enabled: on }))}
+      />
+
+      {relay?.enabled && (
+        <ListRow
+          action={
+            <Input
+              aria-label="Relay URL"
+              className="h-8 w-72 font-mono text-xs"
+              disabled={busy || preview}
+              onBlur={() =>
+                api?.setRelay && url.trim() !== (relay?.url ?? '') && void run(() => api.setRelay!({ url: url.trim() || null }))
+              }
+              onChange={e => setUrl(e.target.value)}
+              placeholder={relay?.defaultUrl}
+              value={url}
+            />
+          }
+          description={
+            relay && relay.url !== relay.defaultUrl
+              ? 'Relay sendiri. Kosongkan untuk kembali ke relay bawaan NeovarchLabs.'
+              : 'Relay bawaan NeovarchLabs (gratis). Bisa diganti dengan relay Anda sendiri (lihat docs/relay.md).'
+          }
+          title="Relay URL"
+        />
+      )}
+
+      <ToggleRow
+        checked={Boolean(bt?.enabled)}
+        description={
+          bt?.enabled
+            ? `Untuk HP di dekat PC tanpa internet. Status: ${relayStateLabel(bt.state, bt.phones)}${bt.error ? ` (${bt.error})` : ''}${bt.address ? ` · ${bt.address}` : ''}`
+            : 'Untuk HP di dekat PC tanpa internet (Linux dengan BlueZ). Aktifkan juga di pengaturan HP.'
+        }
+        disabled={busy || preview || !api?.setBluetooth}
+        label="Bluetooth"
+        onChange={on => api?.setBluetooth && void run(() => api.setBluetooth!(on))}
+      />
+
+      <ListRow
+        below={
+          (status.devices?.length ?? 0) > 0 ? (
+            <ul className="mt-2 space-y-1.5" data-nv-remote-devices="">
+              {status.devices!.map(d => (
+                <li className="flex items-center justify-between gap-3 rounded-[4px] bg-(--ui-bg-quaternary) px-2.5 py-1.5" key={d.id}>
+                  <div className="min-w-0">
+                    <p className="truncate text-xs text-(--ui-text-primary)">{d.name || 'HP'}</p>
+                    <p className={CAPTION}>
+                      Terakhir: {formatSeen(d.last_seen)}
+                      {d.via ? ` · lewat ${VIA[d.via] ?? d.via}` : ''} · <span className="font-mono">{d.id}</span>
+                    </p>
+                  </div>
+                  <Button
+                    disabled={busy || preview}
+                    onClick={() => void revoke(d.id, d.name)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Cabut
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className={`${CAPTION} mt-1`}>
+              Belum ada. HP terdaftar otomatis setelah memindai QR atau tersambung lewat LAN.
+            </p>
+          )
+        }
+        description="HP yang boleh tersambung lewat relay atau Bluetooth."
+        title="Perangkat terpasang"
+        wide
+      />
+    </div>
   )
 }
 
@@ -314,6 +490,109 @@ function Field({ children, copy, label }: { children: React.ReactNode; copy: str
         {copy && <CopyButton appearance="inline" label={`Salin ${label.toLowerCase()}`} text={copy} />}
       </div>
       <div className="rounded-[4px] bg-(--ui-bg-quaternary) px-2.5 py-2">{children}</div>
+    </div>
+  )
+}
+
+// "Jalankan di latar belakang": the gateway + relay client keep running after
+// the window is closed (tray icon), optionally started at login. The phone can
+// change the same settings (GET/POST /api/remote/background).
+const PREVIEW_BACKGROUND: NeovarchBackgroundStatus = {
+  runInBackground: true,
+  startAtLogin: true,
+  updatedAt: 0,
+  trayAvailable: true,
+  autostartSupported: true,
+  service: { state: 'running', mode: 'app', desktop_attached: true, pid: 4242, port: 9319, uptime_s: 5400 },
+  agent: { sessions: 2, running: 1 },
+  error: null
+}
+
+export function backgroundServiceLabel(st: NeovarchBackgroundStatus | null): string {
+  if (!st) {
+    return '—'
+  }
+
+  if (!st.service) {
+    return st.runInBackground ? 'Aktif — gateway belum berjalan' : 'Mati'
+  }
+
+  if (st.service.state === 'stopping') {
+    return 'Sedang dihentikan'
+  }
+
+  if (st.service.state === 'restarting') {
+    return 'Sedang dimulai ulang'
+  }
+
+  return st.runInBackground ? 'Berjalan di latar belakang' : 'Berjalan (ikut jendela aplikasi)'
+}
+
+function BackgroundSection({ preview }: { preview: boolean }) {
+  const api = window.hermesDesktop?.neovarchBackground
+  const [st, setSt] = useState<NeovarchBackgroundStatus | null>(preview || !api ? PREVIEW_BACKGROUND : null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!api) {
+      return
+    }
+
+    let alive = true
+    void api.get().then(s => alive && setSt(s))
+    const off = api.onChanged(s => setSt(s))
+
+    return () => {
+      alive = false
+      off()
+    }
+  }, [api])
+
+  const set = async (patch: { runInBackground?: boolean; startAtLogin?: boolean }) => {
+    if (!api) {
+      return
+    }
+
+    setBusy(true)
+
+    try {
+      setSt(await api.set(patch))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div data-nv-remote-background="">
+      <ToggleRow
+        checked={Boolean(st?.runInBackground)}
+        description={
+          st?.trayAvailable === false
+            ? 'Gateway dan relay tetap berjalan setelah aplikasi ditutup. (Ikon tray tidak tersedia di desktop ini.)'
+            : 'Gateway dan relay tetap berjalan saat jendela ditutup; Neovarch pindah ke ikon tray. HP tetap bisa tersambung.'
+        }
+        disabled={busy || !st || !api}
+        label="Jalankan di latar belakang"
+        onChange={on => void set({ runInBackground: on })}
+      />
+      <ToggleRow
+        checked={Boolean(st?.startAtLogin)}
+        description="Buka Neovarch (tersembunyi di tray) setiap kali Anda masuk ke komputer."
+        disabled={busy || !st || !api || st.autostartSupported === false}
+        label="Mulai saat login"
+        onChange={on => void set({ startAtLogin: on })}
+      />
+      <ListRow
+        description={
+          st?.service
+            ? `PID ${st.service.pid} · port ${st.service.port} · ${st.agent?.running ?? 0} agen berjalan dari ${st.agent?.sessions ?? 0} sesi`
+            : 'Gateway remote belum berjalan.'
+        }
+        title={`Layanan latar: ${backgroundServiceLabel(st)}`}
+      />
+      {st?.error && (
+        <p className="my-2 rounded-[4px] bg-(--ui-bg-quaternary) px-3 py-2 text-xs text-destructive">{st.error}</p>
+      )}
     </div>
   )
 }

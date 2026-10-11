@@ -15,6 +15,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:neovarch_agent/data/gateway_client.dart' show GatewayEventFrame;
 import 'package:neovarch_agent/models/models.dart';
 import 'package:neovarch_agent/remote/appearance.dart';
 import 'package:neovarch_agent/remote/attachments.dart';
@@ -414,6 +415,66 @@ void main() {
       await settle(tester);
       expect(find.byKey(const ValueKey('image-preview')), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('agent sends a screenshot + file: inline image under its reply, zoom, download', (tester) async {
+      await phone(tester);
+      final r = controller();
+      final downloads = <Uri>[];
+      launchDownload = (u) async {
+        downloads.add(u);
+        return true;
+      };
+      addTearDown(() => launchDownload = (url) async => true);
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      r.transcript = RemoteTranscript(history: [
+        ChatMsg(id: 'u1', role: 'user', content: 'Buat landing page, screenshot, lalu kirim ke sini', ts: ts - 90000),
+      ]);
+      r.attachNotice = null;
+      await tester.pumpWidget(host(r, RemoteChatScreen(onOpenApprovals: () {})));
+      await precache(tester);
+      // live events exactly as the PC core pushes them
+      r.debugEvent(GatewayEventFrame('message.start', 'rt-1', const {}));
+      r.debugEvent(GatewayEventFrame('tool.start', 'rt-1', const {'tool_id': 't1', 'name': 'send_file', 'args': {}}));
+      r.debugEvent(GatewayEventFrame('tool.complete', 'rt-1', const {'tool_id': 't1', 'name': 'send_file', 'summary': 'sent image: screenshot.png'}));
+      const shotAtt = {'id': 'aa11bb22cc33', 'name': 'screenshot.png', 'mime': 'image/png', 'kind': 'image', 'size': 182000,
+          'url': '/api/uploads/aa11bb22cc33', 'origin': 'agent'};
+      const zipAtt = {'id': 'dd44ee55ff66', 'name': 'landing.zip', 'mime': 'application/zip', 'kind': 'file', 'size': 52000,
+          'url': '/api/uploads/dd44ee55ff66', 'origin': 'agent'};
+      r.debugEvent(GatewayEventFrame('message.attachment', 'rt-1', const {'attachment': shotAtt}));
+      r.debugEvent(GatewayEventFrame('message.delta', 'rt-1', const {'text': 'Ini screenshot landing page-nya.'}));
+      r.debugEvent(GatewayEventFrame('message.complete', 'rt-1', const {
+        'text': 'Ini screenshot landing page-nya.',
+        'attachments': [shotAtt, zipAtt], // the image again (deduped) + one more
+      }));
+      await settle(tester);
+      final agentFiles = r.transcript.messages.where((m) => m.role == 'assistant').expand((m) => m.attachments).toList();
+      expect([for (final a in agentFiles) a['id']], ['aa11bb22cc33', 'dd44ee55ff66']);
+      expect(find.byKey(const ValueKey('msg-att-aa11bb22cc33')), findsOneWidget);
+      expect(find.text('landing.zip'), findsOneWidget);
+      // agent files sit on the left (under the reply), not right-aligned like the user's
+      final img = tester.getRect(find.byKey(const ValueKey('msg-att-aa11bb22cc33')));
+      expect(img.left, lessThan(tester.view.physicalSize.width / tester.view.devicePixelRatio / 2));
+      await shot(tester, 'social_03_agent_sent_files');
+      await tester.tap(find.byKey(const ValueKey('msg-att-aa11bb22cc33')));
+      await settle(tester);
+      expect(find.byKey(const ValueKey('image-preview')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('image-preview-download')));
+      await settle(tester);
+      expect(downloads.single.path, '/api/uploads/aa11bb22cc33');
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    test('history: assistant rows keep the files the agent sent', () {
+      final rows = RemoteTranscript.fromGatewayMessages([
+        {'role': 'user', 'text': 'kirim ke sini'},
+        {'role': 'assistant', 'text': 'Ini dia', 'attachments': [
+          {'id': 'aa11bb22cc33', 'name': 'shot.png', 'mime': 'image/png', 'kind': 'image', 'size': 10, 'url': '/api/uploads/aa11bb22cc33'},
+        ]},
+      ]);
+      expect(rows.last.role, 'assistant');
+      expect(rows.last.attachments.single['name'], 'shot.png');
+      expect(isDownloadableDoc('/home/me/landing/screenshot.png'), isTrue);
     });
 
     testWidgets('profile & friends: heatmap, stack, coding-first list, detail', (tester) async {

@@ -39,8 +39,12 @@ talks to this core (the `neovarch serve` gateway). Its pages, from the left rail
   custom OpenAI-compatible endpoints, appearance, security/approvals, memory).
 Documents you can make on this PC (also when the request comes from the phone remote, since the phone only
 relays chats to this PC): Word/PDF reports with `report_search` → `report_create` → `report_export`, and
-PowerPoint decks (.pptx, "buatin PPT") with `ppt_setup` → the `ppt-master` skill → `ppt_export`. Finish by
-giving the output file's absolute path so the desktop and phone can open/download it.
+PowerPoint decks (.pptx, "buatin PPT") with `ppt_setup` → the `ppt-master` skill → `ppt_export`.
+Sending files to the user: the person may be chatting from the phone, which cannot open paths on this PC.
+When they ask you to send/kirim/share a file, screenshot, image, report or deck ("kirim ke sini", "send it
+here", "kasih screenshot-nya"), or when you finish a file they asked for, call `send_file` with its path:
+images then show inline in their chat and other files as a download card, on the phone and the desktop.
+A reply that only names a PC path does not deliver anything. Mention the path only as extra information.
 How to answer questions about the app:
 - Answer from this description directly. Call `office_status` to see the live Kantor (agents, status, tasks,
   active model); never search the filesystem, the app bundle (app.asar) or Python site-packages to learn
@@ -73,7 +77,7 @@ def system_sections(cfg: dict, cwd: Path, query: str = "", persona: str = "",
                     stable: bool = False) -> list[tuple[str, str]]:
     """The system prompt as ordered (key, text) sections; see :func:`system_prompt`.
 
-    Keys: soul, app, persona, extra, memory, vault, skills, cwd. Tempest cache v2 freezes
+    Keys: soul, app, persona, extra, memory, vault, skills, platform, cwd. Tempest cache v2 freezes
     these per session and appends a note for the ones that change later."""
     parts: list[tuple[str, str]] = [("soul", cfgmod.soul_text().strip()), ("app", APP_KNOWLEDGE)]
     if persona:
@@ -98,6 +102,7 @@ def system_sections(cfg: dict, cwd: Path, query: str = "", persona: str = "",
     if skills:
         parts.append(("skills", "# Skills (read one with the `skill` tool before using it)\n"
                       + "\n".join(f"- {s['name']}: {s['description']}" for s in skills)))
+    parts.append(("platform", platform_prompt()))
     if stable:
         parts.append(("cwd", f"Current working directory: {cwd}\n(The current date/time and notes matched to a "
                              "message are given at the end of that user message under '# Konteks saat ini'.)"))
@@ -132,6 +137,31 @@ def prompt_tail(cfg: dict, query: str) -> str:
         out.append("# Relevant vault notes (keyword match for this message)\n"
                    + "\n\n".join(f"## {n['path']}\n{n['content']}" for n in notes))
     return "\n\n".join(out)
+
+
+def platform_prompt(platform: str | None = None) -> str:
+    """Which OS/shell the `shell` tool runs on, and how to take a screenshot there.
+
+    Without it the agent wrote bash (ls, chromium, scrot) on Windows, where the
+    shell tool runs cmd.exe, and screenshots of a page it built failed."""
+    import sys
+    plat = platform or sys.platform
+    if plat == "win32":
+        return ("# This PC\nOS: Windows. The `shell` tool runs cmd.exe (not bash): use `dir`, `type`, or "
+                "`powershell -NoProfile -Command \"...\"`. Paths look like C:\\Users\\name\\...\n"
+                "Screenshot of a web page or local HTML file: headless Edge or Chrome, e.g. "
+                "`\"%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe\" --headless=new --disable-gpu "
+                "--window-size=1280,800 --screenshot=C:\\path\\shot.png file:///C:/path/index.html` "
+                "(or chrome.exe). Then deliver the PNG with `send_file`.")
+    if plat == "darwin":
+        return ("# This PC\nOS: macOS. The `shell` tool runs /bin/sh. Screenshot of a page: headless Chrome "
+                "(`\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --headless=new "
+                "--window-size=1280,800 --screenshot=/path/shot.png file:///path/index.html`); of the screen: "
+                "`screencapture -x /path/shot.png`. Then deliver it with `send_file`.")
+    return ("# This PC\nOS: Linux. The `shell` tool runs /bin/sh. Screenshot of a page or local HTML file: "
+            "`chromium --headless=new --window-size=1280,800 --screenshot=/path/shot.png file:///path/index.html` "
+            "(or google-chrome / chromium-browser); of the screen: `grim`, `gnome-screenshot -f` or `scrot`. "
+            "Then deliver the PNG with `send_file`.")
 
 
 def _vault_prompt(cfg: dict, query: str) -> list[str]:
@@ -186,6 +216,10 @@ class Agent:
         self.ctx.approvals_mode = str(cfgmod.get_path(cfg, "approvals.mode", "ask") or "ask")
         max_turns = int(cfgmod.get_path(cfg, "agent.max_turns", 30) or 30)
         self.interrupted = False
+        turn_started = time.time()
+        self.ctx.outbox = []
+        if not self.ctx.session_id:
+            self.ctx.session_id = str(self.rec.get("id") or "")
         st = tempest.for_model(tempest.settings(cfg), endpoint.get("model") or "")  # None = legacy, unchanged
         self._tempest = st
         self._changed: list[str] = []
@@ -197,6 +231,7 @@ class Agent:
         verify_cmd = tempest.detect_verify(self.ctx.cwd) if st else None
         obs_dir = cfgmod.neovarch_home() / "obs" / str(self.rec.get("id") or "session")
         messages = self.rec["messages"]
+        first_new = len(messages)
         user_msg: dict[str, Any] = {"role": "user", "content": user_text, "ts": time.time()}
         self._progress = None
         if st:
@@ -382,6 +417,7 @@ class Agent:
                         await asyncio.to_thread(self._ckpt_mark, "akhir turn", None)
                     break
                 for call in comp.tool_calls:
+                    sent_before = len(self.ctx.outbox)
                     args = call.parsed_args()
                     self.emit("tool.start", {"tool_id": call.id, "name": call.name, "args": args,
                                              "args_text": call.arguments, "preview": _preview(args)})
@@ -406,6 +442,8 @@ class Agent:
                                                 "summary": result.splitlines()[0][:160] if result else "",
                                                 "result": result[:4000], "result_text": result[:4000],
                                                 "duration_s": round(dur, 2)})
+                    for meta in self.ctx.outbox[sent_before:]:
+                        self._emit_attachment(meta)
             else:
                 error = f"stopped after {max_turns} model calls"
         except LLMError as exc:
@@ -413,6 +451,7 @@ class Agent:
         if error and error != "interrupted":
             _log.warning("turn error session=%s model=%s: %s", self.rec.get("id"), endpoint.get("model"), error)
             self.emit("error", {"message": error})
+        sent = self._finish_attachments(messages, first_new, final_text, user_text, turn_started)
         elapsed = max(time.monotonic() - started, 1e-6)
         out_tokens = int(usage.get("completion_tokens") or 0)
         ctx_len = int(cfgmod.get_path(cfg, "model.context_length", 128000) or 128000)
@@ -429,8 +468,48 @@ class Agent:
             **({"error": error} if error else {}),
             **({"model": active["model"], "model_fallback": self.fallbacks} if self.fallbacks else {}),
             **({"status": "interrupted"} if error == "interrupted" else {}),
+            **({"attachments": sent} if sent else {}),
         })
         return final_text
+
+    # ---- files the agent sends into the chat (send_file / final-answer paths) ----
+    def _emit_attachment(self, meta: dict) -> None:
+        from neovarch import uploads
+        self.emit("message.attachment", {"attachment": uploads.public(meta)})
+
+    def _finish_attachments(self, messages: list[dict], first_new: int, final_text: str,
+                            user_text: str, turn_started: float) -> list[dict]:
+        """Store this turn's outgoing files on its last assistant message.
+
+        Safety net: when the person asked for a file to be sent and the model only
+        named fresh files by path in its answer, those files are attached as well."""
+        from neovarch import outbox, uploads
+        staged = list(self.ctx.outbox)
+        if final_text and outbox.wants_file(user_text):
+            have = {m.get("source_path") for m in staged}
+            store = self.ctx.uploads or uploads.UploadStore()
+            for p in outbox.paths_in_text(final_text, self.ctx.cwd, turn_started):
+                if str(p) in have or len(staged) >= outbox.MAX_FILES_PER_TURN:
+                    continue
+                try:
+                    meta = outbox.stage(store, self.ctx.session_id, str(p), self.ctx.cwd)
+                except (outbox.SendError, OSError) as exc:
+                    _log.warning("auto attach %s failed: %s", p, exc)
+                    continue
+                meta["auto"] = True
+                staged.append(meta)
+                have.add(str(p))
+                self._emit_attachment(meta)
+        if not staged:
+            return []
+        host = next((m for m in reversed(messages[first_new:]) if m.get("role") == "assistant"), None)
+        if host is None:
+            host = {"role": "assistant", "content": "", "ts": time.time()}
+            messages.append(host)
+        host["attachments"] = [*(host.get("attachments") or []), *staged]
+        self.store.save(self.rec)
+        self.ctx.outbox = []
+        return [uploads.public(m) for m in staged]
 
 
     def _compact(self, wire: list[dict], messages: list[dict], st: dict, window: int, obs_dir: Path,
