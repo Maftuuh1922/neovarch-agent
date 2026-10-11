@@ -317,6 +317,13 @@ class MainActivity : FlutterActivity() {
             "canInstallApks" -> result.success(canInstallApks())
             "openInstallSourcesSettings" -> result.success(openInstallSourcesSettings())
             "installApk" -> result.success(installApk(call.argument<String>("path") ?: ""))
+            // "Mode ringan" suggestion (lib/remote/lite_mode.dart): total RAM + the low-RAM flag
+            "memoryInfo" -> {
+                val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                val mi = android.app.ActivityManager.MemoryInfo()
+                am.getMemoryInfo(mi)
+                result.success(mapOf("total" to mi.totalMem, "low_ram" to am.isLowRamDevice, "mem_class" to am.memoryClass))
+            }
             "wakeWord" -> {
                 NvWakeService.setEnabled(this, call.argument<Boolean>("enable") == true)
                 result.success(NvWakeService.status(this))

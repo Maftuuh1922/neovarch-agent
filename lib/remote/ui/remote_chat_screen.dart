@@ -228,6 +228,9 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
   @override
   void dispose() {
     remoteLaunchAction.removeListener(_onLaunchAction);
+    try {
+      _streamSource?.streamTick.removeListener(_onStreamTick);
+    } catch (_) {} // the controller may already be disposed
     _input.removeListener(_onInput);
     _input.dispose();
     _scroll.dispose();
@@ -407,6 +410,7 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
     final agent = r.office?.agents.where((a) => a.sessionId != null && (a.sessionId == r.storedId || a.sessionId == r.runtimeId)).firstOrNull;
     final tps = r.transcript.tokensPerSecond;
 
+    _listenStream(r);
     _track(r);
     _followNewest(r);
     final empty = msgs.isEmpty && !r.opening;
@@ -481,20 +485,8 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
                                         GlassUserMessage(msg: m, scale: s.chatScale, appear: _fresh.remove(m.id)),
                                       ],
                                     ]))
-                              : GlassAgentTurn(
-                                  label: '${agent?.name ?? 'neovarch'} · $pc',
-                                  avatar: agent == null ? null : NvAgentAvatar.of(agent, size: 18, dot: false),
-                                  live: m.streaming,
-                                  appear: _fresh.remove(m.id),
-                                  child: AssistantMessage(
-                                    msg: m,
-                                    scale: s.chatScale,
-                                    showReasoning: s.showReasoning,
-                                    isLast: i == msgs.length - 1,
-                                    onLink: (u) => launchUrl(Uri.parse(u), mode: LaunchMode.externalApplication),
-                                    onOpenFile: (p) => openPcFile(context, r.gateway, p),
-                                  ),
-                                ),
+                              : _agentTurn(context, r, m, i == msgs.length - 1, agent == null ? null : NvAgentAvatar.of(agent, size: 18, dot: false),
+                                  '${agent?.name ?? 'neovarch'} · $pc', s.chatScale, s.showReasoning),
                         );
                       },
                     ))),
@@ -542,6 +534,48 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
         ),
       ]),
     ));
+  }
+
+  /// One agent reply. While it streams, only this bubble rebuilds on
+  /// [RemoteController.streamTick] (≤ ~30 fps); the rest of the screen and
+  /// the shell rebuild when the transcript changes shape.
+  Widget _agentTurn(BuildContext context, RemoteController r, ChatMsg m, bool isLast, Widget? avatar, String label, double scale, bool showReasoning) {
+    final appear = _fresh.remove(m.id);
+    Widget turn() => GlassAgentTurn(
+          label: label,
+          avatar: avatar,
+          live: m.streaming,
+          appear: appear,
+          child: AssistantMessage(
+            msg: m,
+            scale: scale,
+            showReasoning: showReasoning,
+            isLast: isLast,
+            onLink: (u) => launchUrl(Uri.parse(u), mode: LaunchMode.externalApplication),
+            onOpenFile: (p) => openPcFile(context, r.gateway, p),
+          ),
+        );
+    if (!m.streaming) return turn();
+    return ValueListenableBuilder<int>(
+      key: ValueKey('stream-${m.id}'),
+      valueListenable: r.streamTick,
+      builder: (context, _, _) => turn(),
+    );
+  }
+
+  /// Streamed tokens arrived (no full rebuild): keep following the newest.
+  void _onStreamTick() {
+    if (!mounted) return;
+    final r = ref.read(remoteProvider);
+    _seenSig = _sig(r.transcript.messages);
+    if (_follow) _scrollToEnd();
+  }
+
+  RemoteController? _streamSource;
+  void _listenStream(RemoteController r) {
+    if (identical(_streamSource, r)) return;
+    _streamSource?.streamTick.removeListener(_onStreamTick);
+    _streamSource = r..streamTick.addListener(_onStreamTick);
   }
 
   /// Minimal start: only a time-based greeting (the composer sits below).
