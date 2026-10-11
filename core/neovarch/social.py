@@ -23,7 +23,9 @@
   while backing off.
 
 The phone needs no GitHub login: it reads ``/api/social/*`` through the paired PC,
-and every change is pushed as the realtime event ``social.changed``.
+and every change is pushed as the realtime event ``social.changed``. When the PC
+is signed out the phone can only ask the PC to start its own device flow
+(``POST /api/social/login`` / ``social.login.start``) and shows the code.
 """
 
 from __future__ import annotations
@@ -856,7 +858,18 @@ class Social:
                 "mutual": login in following and login in followers}
 
     # ---- device flow ----------------------------------------------------------
-    async def login_start(self) -> dict:
+    async def login_start(self, force: bool = False) -> dict:
+        """Start the GitHub device flow on this PC (desktop button or the paired
+        phone's "Masuk GitHub di PC"). Idempotent unless ``force``: signed in →
+        ``{state: done}``; a flow already pending → the same code, so a tap on
+        the phone never invalidates the code the desktop is showing."""
+        if not force:
+            if self.token():
+                return {"state": "done", "login": self.state().get("login")}
+            cur = self.login_state
+            if (cur.get("state") == "pending" and float(cur.get("expires_at") or 0) > time.time() + 30
+                    and self._login_task is not None and not self._login_task.done()):
+                return self.public_login()
         cid = self.client_id()
         if not cid:
             raise SocialError("Client ID OAuth App GitHub belum diatur (Pengaturan → Profil & Teman, "
@@ -959,7 +972,9 @@ class Social:
             if method == "social.publish":
                 return await self.maybe_publish(force=True)
             if method == "social.login.start":
-                return await self.login_start()
+                return await self.login_start(force=bool(p.get("force")))
+            if method == "social.login.state":
+                return self.public_login()
             if method == "social.logout":
                 return self.logout()
             if method == "social.activity":
@@ -1015,8 +1030,8 @@ class Social:
         async def publish(_):
             return await self.maybe_publish(force=True)
 
-        async def login_start(_):
-            return await self.login_start()
+        async def login_start(request):
+            return await self.login_start(force=bool((await body(request)).get("force")))
 
         async def login_get(_):
             return self.public_login()

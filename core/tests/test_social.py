@@ -447,3 +447,41 @@ async def test_client_id_build_default_and_override(gh, monkeypatch):
         assert gw.social.client_id() == "Iv1.testclientid"
     finally:
         await c.close()
+
+
+def _device_codes(gh) -> int:
+    return sum(1 for m, p in gh.calls if p == "/login/device/code")
+
+
+async def test_phone_login_reuses_pending_flow(gh, monkeypatch):
+    """The phone's "Masuk GitHub di PC" while the desktop already shows a code:
+    same pending flow, no second device code (the first stays valid)."""
+    monkeypatch.delenv("NEOVARCH_SOCIAL_FAST_POLL", raising=False)  # keep it pending
+    gw, c = await _client()
+    try:
+        await c.put("/api/social/settings", json={"github_client_id": "Iv1.testclientid"}, headers=H)
+        a = await (await c.post("/api/social/login", headers=H)).json()
+        b = await (await c.post("/api/social/login", headers=H)).json()
+        assert a["state"] == b["state"] == "pending" and a["user_code"] == b["user_code"] == "ABCD-1234"
+        assert _device_codes(gh) == 1
+        st = await (await c.get("/api/social/status", headers=H)).json()
+        assert st["login_flow"]["state"] == "pending" and st["login_flow"]["user_code"] == "ABCD-1234"
+        assert "device_code" not in json.dumps(st)
+        await (await c.post("/api/social/login", json={"force": True}, headers=H)).json()
+        assert _device_codes(gh) == 2
+    finally:
+        await c.close()
+
+
+async def test_login_start_when_signed_in_is_done_and_rpc_state(gh, home):
+    gw, c = await _client()
+    try:
+        await _login(gw, c, gh)
+        n = _device_codes(gh)
+        r = await (await c.post("/api/social/login", headers=H)).json()
+        assert r == {"state": "done", "login": "aku"}
+        assert _device_codes(gh) == n
+        assert await gw.social.rpc("social.login.start", {}) == {"state": "done", "login": "aku"}
+        assert (await gw.social.rpc("social.login.state", {}))["state"] == "done"
+    finally:
+        await c.close()
