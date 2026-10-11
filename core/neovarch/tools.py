@@ -256,6 +256,89 @@ async def tool_obsidian_links(args: dict, ctx: ToolContext) -> str:
     return f"{res['path']}\nbacklinks:\n{back}\noutgoing links:\n{out}"
 
 
+MERMAID_HTML = """<!doctype html>
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>body{{margin:0;padding:16px;font-family:system-ui,sans-serif;background:#fff;color:#111}}
+pre.mermaid{{white-space:pre}} .src{{margin-top:24px;color:#666;font-size:12px}}</style></head>
+<body><pre class="mermaid">{code}</pre>
+<details class="src"><summary>Sumber Mermaid</summary><pre>{code}</pre></details>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+mermaid.initialize({{startOnLoad: true, securityLevel: "strict"}});
+</script></body></html>
+"""
+
+SVG_HTML = """<!doctype html>
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title><style>body{{margin:0;padding:12px;background:#fff}} svg{{max-width:100%;height:auto}}</style>
+</head><body>{svg}</body></html>
+"""
+
+
+def diagrams_dir() -> Path:
+    d = neovarch_home() / "diagrams"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def save_diagram(name: str, fmt: str, content: str) -> list[Path]:
+    """Write a diagram as files any browser opens (desktop and the phone's download).
+
+    svg -> .svg + an .html wrapper; html -> .html; mermaid -> .mmd source + an .html
+    page that renders it. The first path is the one to open."""
+    fmt = (fmt or "").lower().strip()
+    if fmt not in ("svg", "html", "mermaid"):
+        raise ValueError("format must be svg, html or mermaid")
+    content = str(content or "")
+    if not content.strip():
+        raise ValueError("content is empty")
+    slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(name or "diagram")).strip("-")[:60] or "diagram"
+    base = diagrams_dir() / f"{slug}-{time.strftime('%Y%m%d-%H%M%S')}"
+    title = html.escape(str(name or slug))
+    if fmt == "html":
+        out = [base.with_suffix(".html")]
+        out[0].write_text(content, encoding="utf-8")
+    elif fmt == "svg":
+        if "<svg" not in content:
+            raise ValueError("svg content must contain an <svg> element")
+        page, svg = base.with_suffix(".html"), base.with_suffix(".svg")
+        svg.write_text(content, encoding="utf-8")
+        page.write_text(SVG_HTML.format(title=title, svg=content), encoding="utf-8")
+        out = [page, svg]
+    else:
+        page, src = base.with_suffix(".html"), base.with_suffix(".mmd")
+        src.write_text(content, encoding="utf-8")
+        page.write_text(MERMAID_HTML.format(title=title, code=html.escape(content)), encoding="utf-8")
+        out = [page, src]
+    return out
+
+
+def _open_on_desktop(path: Path) -> bool:
+    import subprocess
+    import sys
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        return False
+
+
+async def tool_diagram_save(args: dict, ctx: ToolContext) -> str:
+    paths = save_diagram(str(args.get("name") or "diagram"), str(args.get("format") or ""),
+                         str(args.get("content") or ""))
+    opened = _open_on_desktop(paths[0]) if args.get("open") else False
+    lines = [f"saved: {p}" for p in paths]
+    lines.append(("Dibuka di PC. " if opened else "")
+                 + f"Akhiri jawaban dengan jalur ini supaya desktop bisa membukanya dan HP bisa mengunduhnya: {paths[0]}")
+    return "\n".join(lines)
+
+
 BUILTIN_SKILL_NAME = "neovarch-app"
 BUILTIN_SKILL_VERSION = "1"
 BUILTIN_SKILL = f"""---
@@ -335,6 +418,23 @@ def ensure_builtin_skills(root: Path | None = None) -> None:
             target.write_text(body, encoding="utf-8")
         except OSError:
             pass
+    _install_pack(root)
+
+
+_PACK_DONE: set[str] = set()
+
+
+def _install_pack(root: Path) -> None:
+    """The default skill pack (neovarch/skillpack), once per process per skills folder."""
+    key = str(root)
+    if key in _PACK_DONE:
+        return
+    _PACK_DONE.add(key)
+    try:
+        from neovarch import skillpack
+        skillpack.install(root)
+    except Exception:  # a broken pack must never break the agent
+        pass
 
 
 def list_skills(include_disabled: bool = False) -> list[dict[str, Any]]:
@@ -343,6 +443,8 @@ def list_skills(include_disabled: bool = False) -> list[dict[str, Any]]:
     ensure_builtin_skills(root)
     from neovarch import skills_admin
     off = skills_admin.disabled()
+    from neovarch import skillpack
+    pack = skillpack.by_id()
     out = []
     if not root.exists():
         return out
@@ -359,8 +461,14 @@ def list_skills(include_disabled: bool = False) -> list[dict[str, Any]]:
             body = [ln for ln in text.splitlines() if ln.strip() and not ln.startswith(("---", "#", "name:"))]
             desc = body[0][:160] if body else ""
         enabled = skill_md.parent.name not in off
+        item = {"name": skill_md.parent.name, "description": desc, "path": str(skill_md), "enabled": enabled}
+        meta = pack.get(skill_md.parent.name)
+        if meta and (skill_md.parent / skillpack.MARKER).is_file():
+            # Pack skills: a short ID/EN summary keeps the prompt index small for every model.
+            item.update(description=meta["summary"], label=meta["label"], category=meta["category"],
+                        source=meta["source"], license=meta["license"], builtin=True)
         if enabled or include_disabled:
-            out.append({"name": skill_md.parent.name, "description": desc, "path": str(skill_md), "enabled": enabled})
+            out.append(item)
     return out
 
 
@@ -567,8 +675,18 @@ TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
             "action": {"type": "string", "enum": ["list", "read", "append", "write"]},
             "name": {"type": "string"}, "content": {"type": "string"}}, "required": ["action"]}}),
     "skill": (tool_skill, {
-        "description": "List installed skills (no name) or read one skill's instructions (name).",
+        "description": "List installed skills (no name) or read one skill's instructions (name). Read the matching "
+                       "skill BEFORE starting a task it covers (design, security, diagrams, academic writing, "
+                       "debugging, ...), then follow it.",
         "parameters": {"type": "object", "properties": {"name": {"type": "string"}}}}),
+    "diagram_save": (tool_diagram_save, {
+        "description": "Save a diagram so it opens on this PC and downloads on the phone. format: svg (inline SVG), "
+                       "html (self-contained page) or mermaid (Mermaid source; wrapped in an HTML page that renders "
+                       "it). Writes to ~/.neovarch/diagrams and returns the absolute path; end your answer with it. "
+                       "open=true also opens it in the PC's browser.",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string"}, "format": {"type": "string", "enum": ["svg", "html", "mermaid"]},
+            "content": {"type": "string"}, "open": {"type": "boolean"}}, "required": ["format", "content"]}}),
     "obsidian_search": (tool_obsidian_search, {
         "description": "Search the user's Obsidian vault (memory) by words in the text, note filename and tags "
                        "(#tag). Only works when an Obsidian vault is configured.",
