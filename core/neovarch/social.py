@@ -72,10 +72,11 @@ EXT_LANG = {
 PATH_KEYS = ("path", "file", "file_path", "filename", "target", "notebook_path")
 
 
-# Built-in GitHub OAuth App client ID (device flow). A client ID is public, so it
-# may live in the repo; leave empty to rely on the build-time default the desktop
-# passes in NEOVARCH_GITHUB_CLIENT_ID_DEFAULT (CI secret/variable).
-DEFAULT_GITHUB_CLIENT_ID = ""
+# Built-in GitHub OAuth App client ID (Neovarch Agent, device flow). A client ID
+# is public (no secret), so it lives in the repo and GitHub login works in one
+# click. A build-time NEOVARCH_GITHUB_CLIENT_ID_DEFAULT (CI variable) or the
+# user's own Client ID in Profil & Teman still takes precedence.
+DEFAULT_GITHUB_CLIENT_ID = "Ov23li1lB513P2W10ZM7"
 
 
 def resolve_client_id() -> tuple[str, str]:

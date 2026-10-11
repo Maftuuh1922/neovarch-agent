@@ -14,6 +14,7 @@ from neovarch import social as socmod
 from neovarch.server import Gateway, build_app
 
 H = {"Authorization": "Bearer tok"}
+BUILTIN_CLIENT_ID = socmod.DEFAULT_GITHUB_CLIENT_ID  # captured before the gh fixture clears it
 
 
 class FakeGitHub:
@@ -180,6 +181,10 @@ async def gh(home, monkeypatch):
     monkeypatch.setenv("NEOVARCH_SOCIAL_FAST_POLL", "1")
     monkeypatch.setenv("NEOVARCH_SESSION_TOKEN", "tok")
     monkeypatch.delenv("NEOVARCH_GITHUB_CLIENT_ID", raising=False)
+    monkeypatch.delenv("NEOVARCH_GITHUB_CLIENT_ID_DEFAULT", raising=False)
+    # Most tests exercise the "no client ID yet" path; the built-in default is
+    # covered by test_client_id_build_default_and_override.
+    monkeypatch.setattr(socmod, "DEFAULT_GITHUB_CLIENT_ID", "")
     yield fake
     await server.close()
 
@@ -419,10 +424,14 @@ def test_heatmap_shape():
 
 
 async def test_client_id_build_default_and_override(gh, monkeypatch):
-    """A build-time default client ID (passed by the desktop) works with no setup;
-    the manual field in Profil & Teman overrides it and clearing it falls back."""
-    monkeypatch.delenv("NEOVARCH_GITHUB_CLIENT_ID", raising=False)
+    """The built-in Neovarch Agent client ID works with no setup; a build-time
+    default (passed by the desktop) beats it; the manual "Pakai Client ID sendiri
+    (lanjutan)" field overrides both and clearing it falls back."""
+    assert BUILTIN_CLIENT_ID == "Ov23li1lB513P2W10ZM7"
+    monkeypatch.setattr(socmod, "DEFAULT_GITHUB_CLIENT_ID", BUILTIN_CLIENT_ID)  # the gh fixture clears it
+    assert socmod.resolve_client_id() == ("Ov23li1lB513P2W10ZM7", "default")
     monkeypatch.setenv("NEOVARCH_GITHUB_CLIENT_ID_DEFAULT", "Iv1.testclientid")
+    assert socmod.resolve_client_id() == ("Iv1.testclientid", "default")
     gw, c = await _client()
     try:
         st = await (await c.get("/api/social/status", headers=H)).json()
