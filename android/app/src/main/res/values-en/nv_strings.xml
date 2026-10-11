@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="nv_connect_pc">Connect PC</string>
+    <string name="nv_not_connected">Not connected</string>
+    <string name="nva_pair_hint">Pair a Neovarch PC to see its agents</string>
+    <string name="nva_assign">New task</string>
+    <string name="nva_no_agents">No agents yet</string>
+    <string name="nva_pc_offline">PC offline</string>
+    <string name="nva_no_agents_sub">Give a task and the agents show up here</string>
+    <string name="nva_offline_sub">The agent list comes back when the PC reconnects</string>
+    <string name="nv_wake_stopped">Hey Neo stopped</string>
+    <string name="nv_wake_killed">Hey Neo was stopped by the system</string>
+    <string name="nv_wake_tap_restart">Tap to turn it back on</string>
+    <string name="nv_wake_tap_talk">Tap to talk to the agent</string>
+</resources>

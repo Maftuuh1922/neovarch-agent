@@ -442,7 +442,7 @@ void main() {
 
   group('Glass intro', () {
     testWidgets('glass button, chips and dot lens; drag-following lens; stagger settles', (tester) async {
-      await pump(tester, const RemoteIntroScreen());
+      await pump(tester, const RemoteIntroScreen(initialPage: 1));
       expect(find.byKey(const ValueKey('nv-glass-button')), findsOneWidget);
       expect(find.byKey(const ValueKey('intro-chip-Tanpa kunci API di HP')), findsOneWidget);
       expect(find.byKey(const ValueKey('intro-numeral-1')), findsOneWidget);
@@ -450,16 +450,16 @@ void main() {
       double lensX() => tester.getRect(find.byKey(const ValueKey('intro-dot-lens'))).center.dx;
       double dotX(int i) => tester.getRect(find.byKey(ValueKey('intro-dot-$i'))).center.dx;
       await settle(tester, 10);
-      expect(lensX(), closeTo(dotX(0), 0.5));
-      // drag half a page: the lens is between dot 0 and 1 and stretched
+      expect(lensX(), closeTo(dotX(1), 0.5));
+      // drag half a page: the lens is between dot 1 and 2 and stretched
       final w = tester.getSize(find.byType(PageView)).width;
       final g = await tester.startGesture(Offset(w * 0.8, 400));
       for (var i = 0; i < 10; i++) {
         await g.moveBy(Offset(-w * 0.45 / 10, 0));
         await tester.pump(const Duration(milliseconds: 16));
       }
-      expect(lensX(), greaterThan(dotX(0) + 3));
-      expect(lensX(), lessThan(dotX(1) - 3));
+      expect(lensX(), greaterThan(dotX(1) + 3));
+      expect(lensX(), lessThan(dotX(2) - 3));
       expect(tester.getSize(find.byKey(const ValueKey('intro-dot-lens'))).width, greaterThan(IntroDots.lensW + 4));
       for (var i = 0; i < 5; i++) {
         await g.moveBy(Offset(-w * 0.2 / 5, 0));
@@ -467,12 +467,12 @@ void main() {
       }
       await g.up();
       await settle(tester, 10);
-      expect(find.text('2 / 4'), findsOneWidget);
-      expect(lensX(), closeTo(dotX(1), 0.5));
+      expect(find.text('3 / 5'), findsOneWidget);
+      expect(lensX(), closeTo(dotX(2), 0.5));
     });
 
     testWidgets('reduce motion: everything visible at once, no backdrop drift', (tester) async {
-      await pump(tester, const RemoteIntroScreen(), reduce: true);
+      await pump(tester, const RemoteIntroScreen(initialPage: 1), reduce: true);
       await tester.pump();
       final op = tester.widgetList<Opacity>(find.ancestor(of: find.text('PC = OTAK · HP = REMOTE'), matching: find.byType(Opacity)));
       for (final o in op) {

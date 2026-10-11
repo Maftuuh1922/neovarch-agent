@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Native strings (home-screen widgets, notifications). Indonesian is the
+     default; English in values-en/. Language follows Profil › Bahasa. -->
+<resources>
+    <string name="nv_connect_pc">Hubungkan PC</string>
+    <string name="nv_not_connected">Belum terhubung</string>
+    <string name="nva_pair_hint">Pasangkan PC Neovarch untuk melihat agennya</string>
+    <string name="nva_assign">Kasih tugas</string>
+    <string name="nva_no_agents">Belum ada agen</string>
+    <string name="nva_pc_offline">PC offline</string>
+    <string name="nva_no_agents_sub">Kasih tugas, agen akan muncul di sini</string>
+    <string name="nva_offline_sub">Daftar agen muncul lagi saat PC tersambung</string>
+    <string name="nv_wake_stopped">Hey Neo berhenti</string>
+    <string name="nv_wake_killed">Hey Neo dihentikan sistem</string>
+    <string name="nv_wake_tap_restart">Ketuk untuk menyalakan lagi</string>
+    <string name="nv_wake_tap_talk">Ketuk untuk bicara ke agen</string>
+</resources>

@@ -1,10 +1,12 @@
 // The phone app: a remote for the Neovarch desktop. No local agent runtime,
 // providers or keys here — every action goes to the desktop's gateway.
+import 'dart:async' show unawaited;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show kDebugMode, LicenseEntryWithLineBreaks, LicenseRegistry;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +15,7 @@ import '../../state/app_controller.dart' show settingsProvider;
 import '../../state/settings_controller.dart';
 import '../../theme/neovarch_mobile_theme.dart';
 import '../appearance.dart';
+import '../l10n/app_language.dart';
 import '../remote_controller.dart';
 import '../saved_desktops.dart';
 import '../apk_update.dart' show notifyUpdateAvailable;
@@ -55,6 +58,7 @@ Future<void> runRemoteApp(
   remote.onNewUpdate = notifyUpdateAvailable;
   final look = AppearanceController(prefs);
   final corners = CornerRadiusController(prefs);
+  final language = AppLanguageController(prefs);
   remote.onAppearance = look.applyPc;
   runApp(ProviderScope(
     overrides: [
@@ -62,9 +66,12 @@ Future<void> runRemoteApp(
       remoteProvider.overrideWith((ref) => remote),
       appearanceProvider.overrideWith((ref) => look),
       cornerRadiusProvider.overrideWith((ref) => corners),
+      appLanguageProvider.overrideWith((ref) => language),
     ],
     child: RemoteNeovarchApp(skipSplash: skipSplash),
   ));
+  // Android 13+: a language picked in the system's per-app settings wins.
+  unawaited(language.syncFromSystem());
   await remote.start();
   // Web preview: open a stored session straight away.
   if (openSession != null && remote.connected) await remote.openSession(openSession);
@@ -95,6 +102,7 @@ class RemoteNeovarchApp extends ConsumerWidget {
     final remote = ref.watch(remoteProvider);
     final look = ref.watch(appearanceProvider);
     final corners = ref.watch(cornerRadiusProvider);
+    final language = ref.watch(appLanguageProvider);
     final paired = remote.desktop != null || remote.desktops.items.isNotEmpty;
     final theme = themeFor(look);
     return MaterialApp(
@@ -107,7 +115,14 @@ class RemoteNeovarchApp extends ConsumerWidget {
       themeMode: look.dark ? ThemeMode.dark : ThemeMode.light,
       // Theme changes cross-fade (snapshot of the old look fades out).
       themeAnimationDuration: Duration.zero,
-      builder: (context, child) => AppCornerRadius(controller: corners, child: PaletteScope(revision: look.revision, look: look, child: child!)),
+      // Profil › Bahasa / the intro's first step: Bahasa Indonesia or English.
+      locale: language.locale,
+      supportedLocales: supportedAppLocales,
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      builder: (context, child) => AppCornerRadius(
+          controller: corners,
+          child: LanguageScope(
+              language: language, child: PaletteScope(revision: look.revision, look: look, child: child!))),
       // Every cold start opens on the intro in the saved theme; the first
       // launch then shows the onboarding slides.
       home: NvLaunchIntro(
@@ -210,6 +225,50 @@ class _PaletteScopeState extends State<PaletteScope> with SingleTickerProviderSt
         ),
     ]);
   }
+}
+
+/// Re-resolves "Ikuti sistem" when the phone's language changes and repaints
+/// every screen (state kept) when the app language changes, so even const
+/// widgets pick up the new strings.
+class LanguageScope extends StatefulWidget {
+  const LanguageScope({super.key, required this.language, required this.child});
+  final AppLanguageController language;
+  final Widget child;
+  @override
+  State<LanguageScope> createState() => _LanguageScopeState();
+}
+
+class _LanguageScopeState extends State<LanguageScope> with WidgetsBindingObserver {
+  late int _rev = widget.language.revision;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeLocales(List<Locale>? locales) => widget.language.systemLocalesChanged();
+
+  @override
+  void didUpdateWidget(LanguageScope old) {
+    super.didUpdateWidget(old);
+    if (widget.language.revision != _rev) {
+      _rev = widget.language.revision;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) rebuildAllChildren(context);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 /// The current palette's theme (tests / previews).

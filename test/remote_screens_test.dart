@@ -337,7 +337,7 @@ void main() {
   });
 
   testWidgets('12 intro start', (tester) async {
-    await run(tester, '12_intro_start', () => const RemoteIntroScreen(initialPage: 2), remote: _controller(prefs, demo: false));
+    await run(tester, '12_intro_start', () => const RemoteIntroScreen(initialPage: 3), remote: _controller(prefs, demo: false));
   });
 
   testWidgets('13 startup splash', (tester) async {
@@ -404,12 +404,12 @@ void main() {
   }
 
   testWidgets('19 onboarding theme step · merah', (tester) async {
-    await run(tester, '19_intro_theme_merah', () => const RemoteIntroScreen(initialPage: 3), remote: _controller(prefs, demo: false));
+    await run(tester, '19_intro_theme_merah', () => const RemoteIntroScreen(initialPage: introThemePage), remote: _controller(prefs, demo: false));
   });
 
   testWidgets('20 onboarding theme step · biru', (tester) async {
     await accent('#2563EB', 'dark');
-    await run(tester, '20_intro_theme_biru', () => const RemoteIntroScreen(initialPage: 3), remote: _controller(prefs, demo: false));
+    await run(tester, '20_intro_theme_biru', () => const RemoteIntroScreen(initialPage: introThemePage), remote: _controller(prefs, demo: false));
     NV.palette = NvPalette.red;
   });
 
@@ -540,7 +540,7 @@ void main() {
     });
   });
 
-  for (final (i, n) in [(0, 1), (1, 2), (2, 3), (3, 4)]) {
+  for (final (i, n) in [(1, 1), (2, 2), (3, 3), (4, 4)]) {
     testWidgets('39 intro page $n (glass)', (tester) async {
       await run(tester, '39_intro_page_$n', () => RemoteIntroScreen(initialPage: i), remote: _controller(prefs, demo: false));
     });
