@@ -557,9 +557,9 @@ class FailureCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final i = info;
     final structured = i != null && i['title'] != null;
-    final (layer, provider) = structured ? ('${i!['title']}', false) : _layer;
-    final shown = structured ? '${i!['message'] ?? message}' : message;
-    final action = structured ? '${i!['action'] ?? ''}' : null;
+    final (layer, provider) = structured ? ('${i['title']}', false) : _layer;
+    final shown = structured ? '${i['message'] ?? message}' : message;
+    final action = structured ? '${i['action'] ?? ''}' : null;
     final primary = structured ? _actionFor(action) : null;
     final c = context.hc.destructive;
     // On liquid glass (phone remote): neutral inset, only the icon is red.
@@ -588,7 +588,7 @@ class FailureCard extends StatelessWidget {
             TextButton.icon(onPressed: onSwitchProvider, icon: const Icon(Icons.swap_horiz, size: 16), label: const Text('Ganti penyedia')),
           TextButton.icon(
             onPressed: () {
-              Clipboard.setData(ClipboardData(text: 'layer: $layer\n$shown${structured ? '\ncode: ${i!['code']}' : ''}'));
+              Clipboard.setData(ClipboardData(text: 'layer: $layer\n$shown${structured ? '\ncode: ${i['code']}' : ''}'));
               toast(context, 'Detail galat disalin');
             },
             icon: const Icon(Icons.copy_rounded, size: 16),
