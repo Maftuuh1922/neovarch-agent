@@ -22,6 +22,7 @@ import { $autoSpeakReplies, $bargeInEnabled, $bargeInThresholdMultiplier, $voice
 
 import { useComposerScope } from '../scope'
 
+import { notifyTranscriptionError } from './transcription-error'
 import { useMicRecorder } from './use-mic-recorder'
 
 export type ConversationStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
@@ -326,7 +327,7 @@ export function useVoiceConversation({
             return
           }
 
-          notifyError(error, voiceCopy.transcriptionFailed)
+          notifyTranscriptionError(error, voiceCopy)
 
           if (enabledRef.current && !mutedRef.current && !busyRef.current) {
             pendingStartRef.current = true
@@ -344,9 +345,7 @@ export function useVoiceConversation({
       onFatalError,
       onSubmit,
       onTranscribeAudio,
-      voiceCopy.microphoneFailed,
-      voiceCopy.recordingFailed,
-      voiceCopy.transcriptionFailed
+      voiceCopy
     ]
   )
 
@@ -575,12 +574,12 @@ export function useVoiceConversation({
         }
       } catch (error) {
         if (live()) {
-          notifyError(error, voiceCopy.transcriptionFailed)
+          notifyTranscriptionError(error, voiceCopy)
           resumeListening()
         }
       }
     },
-    [consumePendingResponse, focusInput, onTranscribeAudio, parkText, voiceCopy.transcriptionFailed]
+    [consumePendingResponse, focusInput, onTranscribeAudio, parkText, voiceCopy]
   )
 
   /**

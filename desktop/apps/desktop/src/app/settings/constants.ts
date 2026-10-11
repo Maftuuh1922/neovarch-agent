@@ -436,6 +436,7 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
   },
   agent: {
     maxTurns: 'Max Agent Steps',
+    systemPrompt: 'Extra Instructions',
     imageInputMode: 'Image Attachments',
     apiMaxRetries: 'API Retries',
     serviceTier: 'Service Tier',
@@ -626,6 +627,7 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       "Local browsing uses your real logins. Neovarch copies your default browser's profile (cookies, logins, preferences) into a managed snapshot and drives it with its packaged Chromium — your live profile is never opened directly, and the copy is refreshed from it on each run. Also lets the agent open a local real-profile session on request even when a cloud browser backend is configured. Only Chromium browsers (Chrome, Edge, Brave, Brave Origin, Chromium) are supported; a non-Chromium default fails with a clear message. Off by default."
   },
   agent: {
+    systemPrompt: 'Extra instructions the agent follows in every chat, after SOUL.md.',
     imageInputMode: 'Controls how image attachments are sent to the model.',
     maxTurns: 'Upper bound for tool-calling turns before Neovarch stops a run.'
   },
@@ -719,7 +721,7 @@ export const SECTIONS: DesktopConfigSection[] = [
     id: 'chat',
     label: 'Chat',
     icon: MessageCircle,
-    keys: ['display.personality', 'timezone', 'display.show_reasoning', 'agent.image_input_mode']
+    keys: ['display.personality', 'timezone', 'display.show_reasoning', 'agent.system_prompt', 'agent.image_input_mode']
   },
   {
     id: 'agent',
@@ -743,6 +745,7 @@ export const SECTIONS: DesktopConfigSection[] = [
       'desktop.repo_scan_roots',
       'desktop.repo_scan_exclude_paths',
       'code_execution.mode',
+      'terminal.timeout',
       'terminal.persistent_shell',
       'terminal.env_passthrough',
       'file_read_max_chars'
@@ -849,7 +852,6 @@ export const SECTIONS: DesktopConfigSection[] = [
     keys: [
       'toolsets',
       'terminal.backend',
-      'terminal.timeout',
       'terminal.docker_image',
       'terminal.singularity_image',
       'terminal.modal_image',

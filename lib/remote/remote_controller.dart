@@ -82,6 +82,30 @@ class RemoteController extends ChangeNotifier {
   bool socialLoading = false;
   String? socialError;
 
+  /// True once the PC answered `/api/social/status` for this connection.
+  bool socialChecked = false;
+
+  /// The PC's GitHub device flow (`login_flow` / `POST /api/social/login`):
+  /// `{state: idle|pending|done|error, user_code, verification_uri, error}`.
+  /// The phone never holds a GitHub login; it can only ask the PC to sign in.
+  Map<String, dynamic> socialLogin = const {};
+  bool socialLoginStarting = false;
+  String? socialLoginError;
+
+  /// Tests: start the PC sign-in without a gateway.
+  @visibleForTesting
+  Future<Map<String, dynamic>> Function()? debugSocialLoginStart;
+
+  void _clearSocial() {
+    socialProfile = null;
+    socialFriends = null;
+    socialSignedIn = false;
+    socialChecked = false;
+    socialError = null;
+    socialLogin = const {};
+    socialLoginError = null;
+  }
+
   // composer attachments (uploaded to the PC as soon as they are picked)
   final List<PendingAttachment> pendingAttachments = [];
 
@@ -246,6 +270,8 @@ class RemoteController extends ChangeNotifier {
   }
 
   Future<void> connectTo(SavedDesktop d) async {
+    // Another PC = another GitHub account: never show the previous one's profile.
+    if (desktop != null && desktop!.id != d.id) _clearSocial();
     await _teardown();
     desktop = d;
     desktops.touch(d);
@@ -301,6 +327,7 @@ class RemoteController extends ChangeNotifier {
   Future<void> disconnect() async {
     await _teardown();
     desktop = null;
+    _clearSocial();
     notifyListeners();
   }
 
@@ -355,7 +382,7 @@ class RemoteController extends ChangeNotifier {
   /// pushes again. A dropped socket reconnects (and resyncs on connect).
   Future<void> resyncOnResume() async {
     if (!connected) return reconnect();
-    await Future.wait([refreshOffice(), refreshBoard(), refreshStatus()]);
+    await Future.wait([refreshOffice(), refreshBoard(), refreshStatus(), refreshSocial()]);
   }
 
   void _onEvent(GatewayEventFrame f) {
@@ -374,7 +401,14 @@ class RemoteController extends ChangeNotifier {
         companySupported = true;
         notifyListeners();
       case 'social.changed':
-        if (socialProfile != null || socialFriends != null || socialError != null) unawaited(refreshSocial());
+        // The PC signed in / out, published, or a follow changed: follow it
+        // (the phone's profile is always the PC's GitHub account).
+        final st = f.payload['state'];
+        if (f.payload['what'] == 'login' && st is String) {
+          socialLogin = {...socialLogin, 'state': st};
+          notifyListeners();
+        }
+        unawaited(refreshSocial());
       case 'attachment.notice':
         if (f.sessionId == null || f.sessionId == runtimeId) {
           attachNotice = '${f.payload['message'] ?? ''}';
@@ -443,7 +477,7 @@ class RemoteController extends ChangeNotifier {
 
   /// Snapshots after (re)connecting; from here on the PC pushes changes.
   Future<void> refreshAll() async {
-    await Future.wait([loadSessions(), refreshStatus(), refreshBoard(), refreshOffice(), _loadAppearance(), refreshComposer(), refreshModels(), probeCompany()]);
+    await Future.wait([loadSessions(), refreshStatus(), refreshBoard(), refreshOffice(), _loadAppearance(), refreshComposer(), refreshModels(), probeCompany(), refreshSocial()]);
   }
 
   // ------------------------------------------------------------- composer --
@@ -758,7 +792,15 @@ class RemoteController extends ChangeNotifier {
     notifyListeners();
     try {
       final st = await g.socialStatus();
+      if (gateway != g) {
+        socialLoading = false;
+        return;
+      }
       socialSignedIn = st['signed_in'] == true;
+      socialChecked = true;
+      final flow = st['login_flow'];
+      socialLogin = socialSignedIn ? const {} : (flow is Map ? Map<String, dynamic>.from(flow) : const {});
+      if (socialSignedIn) socialLoginError = null;
       if (socialSignedIn) {
         final res = await Future.wait([g.socialProfile(), g.socialFriends()]);
         socialProfile = res[0] as SocialProfile;
@@ -773,6 +815,32 @@ class RemoteController extends ChangeNotifier {
     }
     socialLoading = false;
     notifyListeners();
+  }
+
+  /// "Masuk GitHub di PC": the PC starts its own device flow; the phone only
+  /// shows the code (open github.com/login/device here or on the PC). When the
+  /// PC finishes it pushes `social.changed` and the profile appears by itself.
+  /// Returns an error to show, or null.
+  bool get canStartPcGithubLogin => debugSocialLoginStart != null || (gateway != null && connected);
+
+  Future<String?> startPcGithubLogin() async {
+    final g = gateway;
+    final start = debugSocialLoginStart ?? (g != null && connected ? g.socialLoginStart : null);
+    if (start == null) return socialLoginError = 'Belum terhubung ke PC.';
+    socialLoginStarting = true;
+    socialLoginError = null;
+    notifyListeners();
+    try {
+      socialLogin = await start();
+      if (socialLogin['state'] == 'done') unawaited(refreshSocial());
+    } on RemoteRestError catch (e) {
+      socialLoginError = e.status == 404 ? 'Perbarui Neovarch di PC untuk masuk GitHub dari HP.' : e.message;
+    } catch (e) {
+      socialLoginError = _friendly('$e');
+    }
+    socialLoginStarting = false;
+    notifyListeners();
+    return socialLoginError;
   }
 
   Future<FriendDetail> friendDetail(String login) async {

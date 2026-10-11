@@ -344,6 +344,7 @@ class MainActivity : FlutterActivity() {
             "voskDictate" -> voskStart(result)
             "voskStop" -> { voskStop(); result.success(true) }
             "wakeTest" -> { NvWakeService.startTest(this); result.success(NvWakeService.status(this)) }
+            "wakeHoldMic" -> result.success(NvWakeService.holdMic(call.argument<Boolean>("hold") == true))
             "wakeBackground" -> result.success(openBackgroundSettings(call.argument<String>("kind") ?: "autostart"))
             "wakeBackgroundStatus" -> result.success(backgroundStatus())
             "updateWidget" -> {

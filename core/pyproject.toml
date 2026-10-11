@@ -13,6 +13,8 @@ requires-python = ">=3.11"
 dependencies = [
   "aiohttp>=3.9,<4",
   "PyYAML>=6,<7",
+  "rich>=13,<15",
+  "prompt_toolkit>=3.0.36,<4",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +28,10 @@ version = { attr = "neovarch.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["neovarch*"]
+
+[tool.setuptools.package-data]
+neovarch = ["tui/assets/*"]
+"neovarch.skillpack" = ["*.json", "*.md", "*/*", "*/*/*", "*/*/*/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -46,6 +46,8 @@ class NvWakeService : Service(), RecognitionListener {
     private val main = Handler(Looper.getMainLooper())
     private var lastHit = 0L
     @Volatile private var stopped = false
+    /** The app's own dictation holds the microphone (see [holdMic]). */
+    @Volatile private var held = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -71,6 +73,7 @@ class NvWakeService : Service(), RecognitionListener {
             stopSelf()
             return START_NOT_STICKY
         }
+        current = this
         if (speech == null) Thread { prepareAndListen() }.start()
         return START_STICKY
     }
@@ -173,7 +176,7 @@ class NvWakeService : Service(), RecognitionListener {
         lastHit = now
         // Let the app's dictation have the microphone for a while.
         speech?.setPause(true)
-        main.postDelayed({ speech?.setPause(false) }, 20000)
+        main.postDelayed({ if (!held) speech?.setPause(false) }, 20000)
         val open = Intent(this, MainActivity::class.java)
             .putExtra(EXTRA_ROUTE, "voice")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -210,6 +213,7 @@ class NvWakeService : Service(), RecognitionListener {
 
     override fun onDestroy() {
         stopped = true
+        if (current === this) current = null
         main.removeCallbacksAndMessages(null)
         speech?.stop()
         speech?.shutdown()
@@ -259,6 +263,26 @@ class NvWakeService : Service(), RecognitionListener {
         /** "Tes Hey Neo": log what is heard for the next 60 s (also shown in the panel). */
         fun startTest(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putLong("testUntil", System.currentTimeMillis() + 60000).remove("heard").remove("heardAt").apply()
+
+        @Volatile private var current: NvWakeService? = null
+
+        /**
+         * Give the microphone to the app's dictation (or take it back). Two
+         * recognisers on one mic made dictation fail with an audio error
+         * while "Hey Neo" was listening. No-op when the service is not running.
+         */
+        fun holdMic(on: Boolean): Boolean {
+            val s = current ?: return false
+            s.main.post {
+                s.held = on
+                try {
+                    s.speech?.setPause(on)
+                } catch (e: Exception) {
+                    // the recogniser is shutting down
+                }
+            }
+            return true
+        }
 
         fun modelDir(c: Context) = File(c.filesDir, "vosk-model-en")
         fun enabled(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("enabled", false)

@@ -80,3 +80,9 @@ Trademarks
 are names of Nous Research projects and services. They are used here only to
 give credit and to describe protocol compatibility. Neovarch Agent is not
 affiliated with or endorsed by Nous Research.
+
+Default skill pack (core/neovarch/skillpack): skills from obra/superpowers (MIT, Copyright (c) 2025 Jesse Vincent),
+addyosmani/agent-skills (MIT, Copyright (c) 2025 Addy Osmani), anthropics/skills frontend-design (Apache-2.0),
+cathrynlavery/diagram-design (MIT, Copyright (c) 2025 Cathryn Lavery), tt-a1i/archify (MIT, Copyright (c) 2026 tt-a1i
+(Archify), Copyright (c) 2025 Cocoon AI) and morluto/rea (MIT, Copyright (c) 2026 morluto). See
+core/neovarch/skillpack/THIRD_PARTY_SKILLS.md and the LICENSE file in each skill folder.
