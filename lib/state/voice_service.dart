@@ -8,7 +8,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
-import '../data/device_tools.dart' show deviceCall, ensurePermissions;
+import '../data/device_tools.dart' show checkPermissions, deviceCall, ensurePermissions;
 import '../data/platform_caps.dart';
 
 /// The speech recogniser behind dictation (Android SpeechRecognizer through
@@ -111,6 +111,16 @@ const noSpeechServiceText = 'HP ini tidak punya layanan pengenal suara. Pasang "
 const voskModelMissingText = 'HP ini tidak punya layanan pengenal suara. Untuk dikte offline (English), nyalakan Hey Neo sekali di Profil '
     'supaya model suara terunduh, atau pasang "Speech Services by Google".';
 
+/// The speech service (Google app / the phone's recogniser) refused the mic
+/// although Neovarch itself has the microphone permission (v1.4.7 bug: the
+/// chat said "Izin mikrofon ditolak" while the permission was granted).
+const recognizerMicDeniedText = 'Izin mikrofon Neovarch sudah aktif, tapi layanan pengenal suara HP (aplikasi Google) '
+    'tidak punya izin mikrofon. Buka Pengaturan → Aplikasi → Google → Izin → Mikrofon → Izinkan, '
+    'atau tekan lama tombol mik untuk dikte English offline.';
+
+/// SpeechRecognizer `ERROR_INSUFFICIENT_PERMISSIONS` (speech_to_text: `error_permission`).
+bool sttPermissionError(String code) => code == 'error_permission' || code == 'error_insufficient_permissions';
+
 /// SpeechRecognizer errors that mean "this recogniser can't work here" →
 /// try the fallbacks instead of failing.
 bool sttUnavailableError(String code) => const {
@@ -188,6 +198,7 @@ class VoiceService extends ChangeNotifier {
   void Function(String error)? _onError;
   bool _gotText = false;
   bool _fellBack = false;
+  bool _recognizerDenied = false;
   String _locale = 'id_ID';
 
   @visibleForTesting
@@ -198,6 +209,37 @@ class VoiceService extends ChangeNotifier {
     listening = false;
     error = null;
     engine = null;
+  }
+
+  /// Does Neovarch itself hold RECORD_AUDIO right now (no prompt)?
+  Future<bool> _micGranted() async {
+    final f = debugMicPermission;
+    if (f != null) return f();
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return true;
+    try {
+      final r = await checkPermissions(const ['android.permission.RECORD_AUDIO']);
+      return r['android.permission.RECORD_AUDIO'] ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// The recogniser said "insufficient permissions". When our own permission is
+  /// granted, the speech SERVICE lacks the mic: use the fallbacks (the system
+  /// speech dialog runs in Google's own activity), and name the real fix.
+  Future<void> _onRecognizerPermission(String code) async {
+    if (!await _micGranted()) {
+      _fail(sttErrorText(code));
+      return;
+    }
+    _recognizerDenied = true;
+    if (!_fellBack && _fb != null) {
+      _fellBack = true;
+      _sttReady = false;
+      await _startFallback();
+      return;
+    }
+    _fail(recognizerMicDeniedText);
   }
 
   Future<bool> _micPermission() async {
@@ -226,6 +268,10 @@ class VoiceService extends ChangeNotifier {
       _sttReady = await _e.initialize(
         onError: (code) {
           debugPrint('dictation: recognizer error $code');
+          if (!_gotText && sttPermissionError(code)) {
+            unawaited(_onRecognizerPermission(code));
+            return;
+          }
           // A recogniser that can't run here: try the other ways once.
           if (!_gotText && !_fellBack && sttUnavailableError(code) && _fb != null) {
             _fellBack = true;
@@ -278,6 +324,7 @@ class VoiceService extends ChangeNotifier {
     engine = null;
     _gotText = false;
     _fellBack = false;
+    _recognizerDenied = false;
     _locale = locale;
     _onText = (t, fin) {
       if (t.trim().isNotEmpty) _gotText = true;
@@ -402,7 +449,7 @@ class VoiceService extends ChangeNotifier {
         return;
       }
     }
-    _fail(english ? voskModelMissingText : noSpeechServiceText);
+    _fail(_recognizerDenied ? recognizerMicDeniedText : (english ? voskModelMissingText : noSpeechServiceText));
   }
 
   static String _readable(Object e) {

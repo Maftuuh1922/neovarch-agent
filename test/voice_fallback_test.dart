@@ -143,4 +143,43 @@ void main() {
     await v.startDictation(locale: 'id_ID', onText: (_, _) {});
     expect(v.error, contains('Izin mikrofon ditolak'));
   });
+
+  test('recognizer says error_permission while the app HAS the mic → fallback, not "izin ditolak" (v1.4.7)', () async {
+    final fb = _Fallback({'recognizer': true, 'intent': true, 'vosk': false}, intentText: 'halo');
+    VoiceService.debugFallback = fb;
+    final got = <(String, bool)>[];
+    final errors = <String>[];
+    await v.startDictation(locale: 'id_ID', onText: (t, f) => got.add((t, f)), onError: errors.add);
+    engine.onError!('error_permission');
+    for (var i = 0; i < 5; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(fb.calls, ['intent:id_ID']);
+    expect(got, [('halo', true)]);
+    expect(errors, isEmpty);
+  });
+
+  test('recognizer mic denied and no fallback → names the speech service, not Neovarch', () async {
+    VoiceService.debugFallback = _Fallback({'recognizer': true, 'intent': false, 'vosk': false});
+    final errors = <String>[];
+    await v.startDictation(locale: 'id_ID', onText: (_, _) {}, onError: errors.add);
+    engine.onError!('error_permission');
+    for (var i = 0; i < 5; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(errors.single, recognizerMicDeniedText);
+    expect(errors.single, isNot(contains('Izin mikrofon ditolak')));
+  });
+
+  test('app really lacks the mic → the Neovarch permission message', () async {
+    VoiceService.debugFallback = _Fallback({'recognizer': true, 'intent': true, 'vosk': false});
+    final errors = <String>[];
+    await v.startDictation(locale: 'id_ID', onText: (_, _) {}, onError: errors.add);
+    VoiceService.debugMicPermission = () async => false;
+    engine.onError!('error_permission');
+    for (var i = 0; i < 5; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(errors.single, contains('Izin mikrofon ditolak'));
+  });
 }
