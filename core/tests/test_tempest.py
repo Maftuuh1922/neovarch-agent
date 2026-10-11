@@ -112,14 +112,17 @@ async def test_agent_legacy_wire_unchanged_and_tempest_gate(home, tmp_path, monk
     def w(cid, content):
         return ToolCall(id=cid, name="write_file", arguments=json.dumps({"path": "m.py", "content": content}))
 
-    # legacy: writes the wrong value, says done, no verification
-    script[:] = [("", [w("a", "def f():\n    return 1\n")]), ("done", [])]
+    # legacy: writes the wrong value, says done; no Tempest tail or verify gate. The scaffold
+    # self-check (PR #7) nudges at most MAX_VERIFY_RETRIES times, then the answer goes out.
+    from neovarch import scaffold
+    script[:] = [("", [w("a", "def f():\n    return 1\n")])] + [("done", [])] * (1 + scaffold.MAX_VERIFY_RETRIES)
     store = SessionStore()
     rec = store.create(cwd=str(tmp_path))
     agent = Agent(rec, store, ToolContext(cwd=tmp_path, approve=None), lambda k, p: None)
     assert await agent.run_turn("buat f") == "done"
     assert "Date:" in seen[0][0]["content"] and "Konteks saat ini" not in seen[0][-1]["content"]
-    assert len(seen) == 2
+    assert len(seen) == 2 + scaffold.MAX_VERIFY_RETRIES and not script
+    assert not any("[verifikasi otomatis gagal" in str(m.get("content")) for m in seen[-1])
 
     # tempest: broken syntax rejected, then wrong value caught by the gate, then fixed
     cfg = cfgmod.load_config()
@@ -369,7 +372,7 @@ async def test_agent_compacts_at_threshold_only(home, tmp_path, monkeypatch):
 
     cfg = cfgmod.load_config()
     cfg["model"] = {"provider": "custom", "default": "m", "base_url": "http://127.0.0.1:9/v1",
-                    "context_length": 16000}
+                    "context_length": 24000}  # 16000 before v1.4.7; skill index + more tools grew the fixed prefix
     cfg["approvals"] = {"mode": "off"}
     cfg.setdefault("agent", {}).update({"harness_mode": "tempest", "tempest_compact": True, "tempest_cache_v2": True,
                                         "tempest_offload_tokens": 100000})
@@ -393,7 +396,7 @@ async def test_agent_compacts_at_threshold_only(home, tmp_path, monkeypatch):
     assert await agent.run_turn("baca semua file") == "selesai"
     compactions = [p for k, p in events if k == "status.update" and p.get("kind") == "compact"]
     assert 1 <= len(compactions) <= 4
-    assert all(tempest.wire_tokens(w) < 16000 for w in seen)
+    assert all(tempest.wire_tokens(w) < 24000 for w in seen)
     breaks = [i for i, (a, b) in enumerate(zip(seen, seen[1:])) if tempest.prefix_violation(a, b) is not None]
     assert len(breaks) == len(compactions)  # the cache breaks once per compaction, never in between
     assert rec["tempest_compact"]["masked"]

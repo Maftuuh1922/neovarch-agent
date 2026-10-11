@@ -164,7 +164,9 @@ async def test_safety_net_attaches_fresh_files_named_in_answer(home, tmp_path, m
     os.utime(old, (past, past))
     agent, rec, store, events = _agent(home, tmp_path, [
         _Comp(tool_calls=[_Call("c1", "write_file", {"path": str(tmp_path / "landing" / "screenshot.png"), "content": "x"})]),
-        _Comp(text=f"Sudah, screenshot ada di `{tmp_path / 'landing' / 'screenshot.png'}` dan juga {old}."),
+        # A report with Temuan/Bukti, so the scaffold self-check (PR #7) lets it go out as is.
+        _Comp(text=f"**Temuan**\nSudah, screenshot ada di `{tmp_path / 'landing' / 'screenshot.png'}` dan juga {old}."
+                   "\n\n**Bukti**\n- `screenshot.png` ditulis (write_file)\n\n**Batasan**\n- -"),
     ])
     await agent.run_turn("ambil screenshot lalu kirim ke sini ya")
     done = next(p for k, p in events if k == "message.complete")
@@ -176,7 +178,7 @@ async def test_safety_net_off_when_not_asked(home, tmp_path, monkeypatch):
     _patch_endpoint(monkeypatch)
     agent, rec, store, events = _agent(home, tmp_path, [
         _Comp(tool_calls=[_Call("c1", "write_file", {"path": str(tmp_path / "a.png"), "content": "x"})]),
-        _Comp(text=f"Dibuat: {tmp_path / 'a.png'}"),
+        _Comp(text=f"**Temuan**\nDibuat: {tmp_path / 'a.png'}\n\n**Bukti**\n- `a.png` ditulis (write_file)"),
     ])
     await agent.run_turn("buat gambar a.png")
     done = next(p for k, p in events if k == "message.complete")

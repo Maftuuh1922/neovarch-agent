@@ -145,7 +145,9 @@ class OpenedSession {
   final String title;
   final List<ChatMsg> messages;
   final bool running;
-  const OpenedSession({required this.storedId, required this.runtimeId, required this.title, required this.messages, this.running = false});
+  /// The chat's own reasoning level on the PC ('' = the PC default).
+  final String reasoningEffort;
+  const OpenedSession({required this.storedId, required this.runtimeId, required this.title, required this.messages, this.running = false, this.reasoningEffort = ''});
 }
 
 class ActiveSession {
@@ -814,8 +816,16 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
       title: '${info['title'] ?? ''}',
       messages: RemoteTranscript.fromGatewayMessages(r['messages'] as List? ?? const []),
       running: r['running'] == true || info['running'] == true,
+      reasoningEffort: '${info['reasoning_effort'] ?? ''}',
     );
   }
+
+  /// Save the open chat's reasoning level on the PC — the same per-session
+  /// setting the desktop's "Penalaran" writes (`PATCH /api/sessions/{id}`
+  /// `{reasoning_effort}`; the PC broadcasts `session.info` so the desktop
+  /// follows). 'default' clears the chat's own pick.
+  Future<void> setSessionReasoning(String sessionId, String level) =>
+      _json('PATCH', '/api/sessions/${Uri.encodeComponent(sessionId)}', body: {'reasoning_effort': level});
 
   Future<OpenedSession> create() async {
     final r = Map<String, dynamic>.from(await client.call('session.create', {..._p, 'source': 'mobile'}) as Map);
@@ -998,9 +1008,10 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
   /// `GET /api/composer/catalog`: the desktop composer's controls. Null on an
   /// older PC (404, `{available:false}`, or any error) — the phone then shows
   /// the plain composer. Never throws.
-  Future<ComposerCatalog?> composerCatalog() async {
+  Future<ComposerCatalog?> composerCatalog({String? sessionId}) async {
     try {
-      return ComposerCatalog.tryParse(await _json('GET', '/api/composer/catalog'));
+      return ComposerCatalog.tryParse(await _json('GET', '/api/composer/catalog',
+          query: sessionId != null && sessionId.isNotEmpty ? {'session_id': sessionId} : null));
     } catch (_) {
       return null;
     }

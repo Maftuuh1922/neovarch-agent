@@ -15,6 +15,8 @@ dependencies = [
   "PyYAML>=6,<7",
   # Remote dari mana saja: X25519 / ChaCha20-Poly1305 for the relay link
   "cryptography>=42",
+  "rich>=13,<15",
+  "prompt_toolkit>=3.0.36,<4",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +30,10 @@ version = { attr = "neovarch.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["neovarch*"]
+
+[tool.setuptools.package-data]
+neovarch = ["tui/assets/*"]
+"neovarch.skillpack" = ["*.json", "*.md", "*/*", "*/*/*", "*/*/*/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
