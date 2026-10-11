@@ -157,7 +157,8 @@ class LiveSession:
         company = getattr(gw, "company", None)
         self.ctx = ToolContext(cwd=Path(rec.get("cwd") or default_cwd()), approve=self.approve,
                                office=getattr(gw, "office_status", None),
-                               kantor=getattr(company, "main_tool", None))
+                               kantor=getattr(company, "main_tool", None),
+                               session_id=self.id, uploads=getattr(gw, "uploads", None))
         self.agent = Agent(rec, gw.store, self.ctx, self.emit)
         self.last_text = ""
         # Desktop composers stage images with image.attach* before prompt.submit;
@@ -267,7 +268,9 @@ def to_ui_messages(rec: dict) -> list[dict]:
             item["name"] = m.get("name")
         if m.get("reasoning"):
             item["reasoning"] = m["reasoning"]
-        if role == "user" and m.get("attachments"):
+        # Same schema both ways: files the person sent (user) and files the agent
+        # sent with send_file (assistant); the bytes come from GET /api/uploads/<id>.
+        if role in ("user", "assistant") and m.get("attachments"):
             item["attachments"] = [upmod.public(a) for a in m["attachments"] if isinstance(a, dict) and a.get("id")]
         out.append(item)
     return out

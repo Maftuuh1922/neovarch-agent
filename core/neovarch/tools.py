@@ -40,6 +40,11 @@ class ToolContext:
     persona: Callable[[], str] | None = None
     # The main agent's Kantor control (CompanyRuntime.main_tool); None outside the gateway.
     kantor: Callable[[dict], str] | None = None
+    # The chat this context serves, and the files send_file staged during the current
+    # turn (upload metadata, origin "agent"); the agent stores them on its reply.
+    session_id: str = ""
+    uploads: Any = None
+    outbox: list = field(default_factory=list)
 
 
 DANGEROUS = [
@@ -511,7 +516,53 @@ async def tool_kantor(args: dict, ctx: ToolContext) -> str:
 KANTOR_ACTIONS = ["overview", "create_org", "create_agency", "rename_unit", "delete_unit", "hire", "fire", "move",
                   "set_employee", "assign_task"]
 
+async def tool_send_file(args: dict, ctx: ToolContext) -> str:
+    """Attach PC files to the agent's reply so they appear in the chat (phone + desktop)."""
+    from neovarch import outbox
+    from neovarch import uploads as upmod
+    raw = args.get("paths")
+    if isinstance(raw, str):
+        raw = [raw]
+    paths = [str(p) for p in (raw or []) if str(p or "").strip()]
+    if args.get("path"):
+        paths.insert(0, str(args["path"]))
+    if not paths:
+        return "error: berikan `paths` (daftar path berkas di PC ini)"
+    store = ctx.uploads or upmod.UploadStore()
+    lines = []
+    for raw_path in paths:
+        if len(ctx.outbox) >= outbox.MAX_FILES_PER_TURN:
+            lines.append(f"skipped {raw_path}: maks {outbox.MAX_FILES_PER_TURN} berkas per balasan")
+            continue
+        src = str(outbox.resolve(raw_path, ctx.cwd)) if raw_path else raw_path
+        if any(m.get("source_path") == src for m in ctx.outbox):
+            lines.append(f"already sent: {src}")
+            continue
+        try:
+            meta = outbox.stage(store, ctx.session_id, raw_path, ctx.cwd)
+        except (outbox.SendError, OSError) as exc:
+            lines.append(f"error {raw_path}: {exc}")
+            continue
+        ctx.outbox.append(meta)
+        lines.append(f"sent {meta['kind']}: {meta['name']} ({meta['size']} B, id {meta['id']})")
+    ok = any(line.startswith("sent") for line in lines)
+    tail = ("\nThe file(s) now show in the user's chat (inline image / download card on phone and desktop); "
+            "do not repeat the PC path as the way to get them.") if ok else ""
+    return "\n".join(lines) + tail
+
+
 TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
+    "send_file": (tool_send_file, {
+        "description": "Send files from this PC into the chat so the user gets them where they are chatting "
+                       "(phone remote or desktop): images/screenshots show inline, other files (pdf, docx, pptx, "
+                       "zip, …) as download cards. Use it whenever the user asks to send/kirim/share/kasih a file, "
+                       "screenshot, image, report or deck 'here' / 'ke sini' / 'ke HP', and after you create a file "
+                       "the user asked for. Replying with only a PC path does NOT deliver the file. Max 25 MB per "
+                       "file, 10 per reply; folders must be zipped first; keys/credentials are refused.",
+        "parameters": {"type": "object", "properties": {
+            "paths": {"type": "array", "items": {"type": "string"},
+                      "description": "absolute paths (or relative to the working directory) of files to send"},
+            "path": {"type": "string", "description": "a single file to send (same as paths=[path])"}}}}),
     "kantor": (tool_kantor, {
         "description": "Run the user's Kantor (office) ONLY when the user asks for it. Structure: Organisasi → Agency "
                        "→ Orang (pegawai), nested without limit. action: overview (show the org) | create_org "
@@ -642,7 +693,7 @@ def _allowed_builtin(ctx: "ToolContext | None") -> set[str]:
     names.discard("kantor")  # employees never run the Kantor; the main agent does
     allowed = company.allowed_tools() if hasattr(company, "allowed_tools") else None
     if allowed:
-        names &= set(allowed) | {"office_status"}
+        names &= set(allowed) | {"office_status", "send_file"}
     return names
 
 
