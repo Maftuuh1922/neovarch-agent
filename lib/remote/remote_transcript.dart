@@ -20,6 +20,13 @@ class RemoteTranscript {
   double? tokensPerSecond;
   int? contextPercent;
 
+  /// Live step counter of the running turn (`turn.progress`, core ≥ 1.4.7).
+  int? step;
+  int? stepLimit;
+
+  /// "langkah 27/150" while a long turn runs, else null.
+  String? get stepLabel => running && step != null && stepLimit != null && step! > 1 ? 'langkah $step/$stepLimit' : null;
+
   ChatMsg _assistant() {
     final m = ChatMsg(
         id: 'a${DateTime.now().microsecondsSinceEpoch}', role: 'assistant', ts: DateTime.now().millisecondsSinceEpoch, streaming: true);
@@ -59,9 +66,15 @@ class RemoteTranscript {
   bool apply(GatewayEventFrame f) {
     final p = f.payload;
     switch (f.type) {
+      case 'turn.progress':
+        step = (p['step'] as num?)?.toInt() ?? step;
+        stepLimit = (p['limit'] as num?)?.toInt() ?? stepLimit;
+        running = true;
       case 'message.start':
         running = true;
         error = null;
+        step = null;
+        stepLimit = null;
         _close();
         _assistant();
       case 'message.delta':
@@ -117,9 +130,15 @@ class RemoteTranscript {
         } else if (text.isNotEmpty && _afterTool) {
           _assistant().content = text;
         }
-        if (err != null && err.isNotEmpty) {
+        final info = p['error_info'];
+        if (err != null && err.isNotEmpty && err != error) {
+          // Not shown yet by an `error` event of this turn.
           error = err;
           _open.error = err;
+          if (info is Map) _open.errorInfo = Map<String, dynamic>.from(info);
+        } else if (info is Map) {
+          final host = _lastWithError();
+          if (host != null) host.errorInfo ??= Map<String, dynamic>.from(info);
         }
         final sent = [for (final a in (p['attachments'] as List? ?? const []).whereType<Map>()) Map<String, dynamic>.from(a)];
         if (sent.isNotEmpty) _addAgentAttachments(sent, _cur ?? _lastAssistant() ?? _open);
@@ -135,12 +154,21 @@ class RemoteTranscript {
         final m = '${p['message'] ?? 'galat gateway'}';
         error = m;
         _open.error = m;
+        if (p['code'] != null) _open.errorInfo = Map<String, dynamic>.from(p);
         running = false;
         _close();
       default:
         return false;
     }
     return true;
+  }
+
+  ChatMsg? _lastWithError() {
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role == 'user') return null;
+      if (messages[i].error != null) return messages[i];
+    }
+    return null;
   }
 
   ChatMsg? _lastAssistant() {

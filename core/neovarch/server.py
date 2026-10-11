@@ -2471,7 +2471,10 @@ def config_schema_payload() -> dict:
         "model_context_length": {"category": "model", "type": "number", "description": "Panjang konteks model (token)."},
         "approvals.mode": {"category": "safety", "type": "select", "options": ["ask", "off"],
                            "description": "ask = tanya sebelum perintah berbahaya; off = jalankan tanpa bertanya."},
-        "agent.max_turns": {"category": "advanced", "type": "number", "description": "Batas panggilan model per giliran."},
+        "agent.max_turns": {"category": "advanced", "type": "number", "description": "Titik periksa langkah: giliran yang masih ada kemajuan lanjut otomatis."},
+        "agent.max_turn_steps": {"category": "advanced", "type": "number", "description": "Batas langkah maksimum per giliran."},
+        "agent.max_turn_minutes": {"category": "advanced", "type": "number", "description": "Batas waktu per giliran (menit)."},
+        "agent.max_turn_tokens": {"category": "advanced", "type": "number", "description": "Batas token per giliran."},
         "agent.system_prompt": {"category": "chat", "type": "text", "description": "Instruksi tambahan setelah SOUL.md."},
         # Settings › Obrolan › Perilaku
         "timezone": {"category": "chat", "type": "string", "clearable": True,

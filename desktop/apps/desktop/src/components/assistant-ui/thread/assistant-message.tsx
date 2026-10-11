@@ -742,6 +742,32 @@ const CompressConversationAction: FC<{ label: string }> = ({ label }) => {
   )
 }
 
+// Neovarch "Lanjutkan" for a stopped long job (core turn_budget.py): sends the
+// word as a normal user turn; the core recognises it after a coded stop and
+// continues the same job from where it stopped. Same button on the phone.
+const ContinueTurnAction: FC<{ label: string }> = ({ label }) => {
+  const threadRuntime = useThreadRuntime()
+  const stale = useAuiState(s => s.thread.isRunning || !s.message.isLast)
+
+  if (stale) {
+    return null
+  }
+
+  return (
+    <button
+      className="aui-error-action"
+      data-testid="error-continue"
+      onClick={() => {
+        triggerHaptic('submit')
+        threadRuntime.append({ content: [{ text: 'Lanjutkan', type: 'text' }], role: 'user' })
+      }}
+      type="button"
+    >
+      {label}
+    </button>
+  )
+}
+
 // One client-side retry of THIS turn at the provider's own reset moment (#98852,
 // option B): arm → visible countdown + Cancel → fires `message().reload()` — the
 // exact call behind the Retry button — exactly once. Nothing persists: closing
@@ -936,6 +962,10 @@ const ErrorRecoveryActions: FC = () => {
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
+      {plan.continueTurn && <ContinueTurnAction label={surface?.actionLabel || 'Lanjutkan'} />}
+      {plan.openSettings && inRouter && (
+        <SettingsLinkAction label={surface?.actionLabel || 'Buka pengaturan'} to={`${SETTINGS_ROUTE}?tab=config:model`} />
+      )}
       {plan.editMessage && <EditPreviousMessageAction label={copy.editMessage} />}
       {plan.compress && <CompressConversationAction label={copy.errorCompressConversation} />}
       {plan.chooseModel && (

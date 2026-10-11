@@ -738,6 +738,10 @@ class ChatMsg {
   bool streaming;
   String? error;
 
+  /// Structured stop/error from the PC core (v1.4.7 `error` event / `error_info`):
+  /// `{code, title, message, action, action_label}`. Same wording on desktop.
+  Map<String, dynamic>? errorInfo;
+
   ChatMsg({
     required this.id,
     required this.role,

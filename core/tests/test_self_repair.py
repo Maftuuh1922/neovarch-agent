@@ -79,7 +79,7 @@ def test_settings_change_log_and_undo(home):
     selfedit.undo()
     selfedit.undo()
     cfg = cfgmod.load_config()
-    assert cfgmod.get_path(cfg, "agent.max_turns") == 30 and not cfgmod.get_path(cfg, "agent.escalate_on_stuck")
+    assert cfgmod.get_path(cfg, "agent.max_turns") == 150 and not cfgmod.get_path(cfg, "agent.escalate_on_stuck")
 
 
 def test_settings_whitelist_and_protected_tools(home):
