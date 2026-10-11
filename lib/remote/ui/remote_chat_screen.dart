@@ -736,7 +736,10 @@ class _MinimalTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
         padding: EdgeInsets.fromLTRB(16, MediaQuery.paddingOf(context).top + 10, 12, 0),
-        child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+        child: Row(children: [
+          // left: the PC's model, switchable from here (greyed "—" with no PC)
+          const Flexible(child: Align(alignment: Alignment.centerLeft, child: ModelSwitcherPill())),
+          const SizedBox(width: 8),
           NvIconButton(tooltip: 'Riwayat sesi di PC', icon: CupertinoIcons.clock, onPressed: onHistory),
           const SizedBox(width: 6),
           NvIconButton(tooltip: 'Sesi baru', icon: CupertinoIcons.add, onPressed: onNew),
