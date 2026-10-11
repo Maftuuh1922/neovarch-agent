@@ -23,6 +23,10 @@ def home(tmp_path, monkeypatch):
     for k in ("OPENAI_API_KEY", "NEOVARCH_API_KEY", "HERMES_DASHBOARD_SESSION_TOKEN",
               "HERMES_DASHBOARD_BASIC_AUTH_SECRET", "NEOVARCH_SESSION_TOKEN", "NEOVARCH_REMOTE_SECRET"):
         monkeypatch.delenv(k, raising=False)
+    # Tempest's verify gate runs the project's tests with the PATH python3. On a machine where
+    # that interpreter has no pytest (only the venv running this suite does), every gated turn
+    # would fail verification for a reason unrelated to the code under test. Pin it to ours.
+    monkeypatch.setattr("neovarch.tempest._python", lambda: sys.executable)
     from neovarch.paths import ensure_home
     ensure_home()
     return h
