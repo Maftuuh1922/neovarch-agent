@@ -717,6 +717,7 @@ export const en: Translations = {
       workspaceProjects: 'Projects & discovery',
       workspaceShell: 'Shell environment',
       workspaceFiles: 'Files & execution',
+      agentEscalation: 'Escalation',
       safetyApprovals: 'Approvals',
       safetyPrivacy: 'Privacy & network',
       safetyCheckpoints: 'Checkpoints',
@@ -975,6 +976,7 @@ export const en: Translations = {
     sections: {
       model: 'Model',
       chat: 'Chat',
+      agent: 'Agent',
       appearance: 'Appearance',
       workspace: 'Workspace',
       safety: 'Safety',

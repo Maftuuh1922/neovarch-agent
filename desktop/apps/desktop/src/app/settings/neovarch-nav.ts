@@ -9,7 +9,7 @@ import type { OverlayNavGroup, OverlayNavLink } from '../overlays/overlay-split-
  * these groups (its own sub-pages show under it while it is open).
  */
 const GROUPS: { icon: IconComponent; id: string; label: string; members: string[] }[] = [
-  { icon: Cpu, id: 'nv:model', label: 'Model', members: ['config:model', 'providers', 'config:chat'] },
+  { icon: Cpu, id: 'nv:model', label: 'Model', members: ['config:model', 'providers', 'config:chat', 'config:agent'] },
   {
     icon: Palette,
     id: 'nv:appearance',
@@ -28,6 +28,7 @@ export const NV_SETTINGS_LABELS: Record<string, string> = {
   'config:model': 'Pilihan model',
   providers: 'Penyedia',
   'config:chat': 'Obrolan',
+  'config:agent': 'Agen',
   'config:appearance': 'Tampilan',
   'config:workspace': 'Ruang kerja',
   notifications: 'Notifikasi',
@@ -57,6 +58,7 @@ export const NV_SETTINGS_LABELS: Record<string, string> = {
   'pview:local': 'Model lokal',
   'config:chat:behavior': 'Perilaku',
   'config:chat:attachments': 'Lampiran',
+  'config:agent:escalation': 'Naik model saat buntu',
   'config:appearance:general': 'Umum',
   'config:appearance:theme': 'Tema',
   'config:appearance:typography': 'Huruf',

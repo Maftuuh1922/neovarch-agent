@@ -1235,6 +1235,7 @@ export const NEOVARCH_ID = {
       "workspaceProjects": "Proyek & penemuan",
       "workspaceShell": "Lingkungan shell",
       "workspaceFiles": "File & eksekusi",
+      "agentEscalation": "Naik model saat buntu",
       "safetyApprovals": "Persetujuan",
       "safetyPrivacy": "Privasi & jaringan",
       "safetyCheckpoints": "Checkpoint",
@@ -1476,6 +1477,7 @@ export const NEOVARCH_ID = {
     "sections": {
       "model": "Model",
       "chat": "Obrolan",
+      "agent": "Agen",
       "appearance": "Tampilan",
       "workspace": "Ruang kerja",
       "safety": "Keamanan",

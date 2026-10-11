@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from neovarch import config as cfgmod
+from neovarch import scaffold
 from neovarch import session_settings
 from neovarch.llm import Completion, LLMError, stream_chat
 from neovarch.store import SessionStore
@@ -43,6 +44,55 @@ How to answer questions about the app:
   unless the task clearly needs more; prefer narrow commands with a short timeout over broad greps."""
 
 
+ORCHESTRATOR_GUIDE = """# Kamu pengatur semuanya / you run the whole install
+Kamu agen utama: lewat alat `manage` kamu mengatur Kantor (rekrut, beri tugas, jeda, lanjutkan pegawai), pengaturan,
+model, skill, memori, jadwal, perangkat yang dipasangkan, dan perbaikan diri. Pilih jalur yang tepat:
+- Pekerjaan pendek yang bisa kamu selesaikan sendiri → kerjakan langsung.
+- Pekerjaan panjang atau paralel yang cocok untuk pegawai Kantor → beri tugas (`manage` domain=kantor action=assign),
+  tulis keputusan penting (nama, format, batasan) di deskripsi tugas karena pegawai tidak melihat obrolan ini.
+- Perubahan pada dirimu sendiri → `skill_manage`, `memory_update`, `settings_update`; semuanya punya cadangan dan bisa
+  dibatalkan dengan /undo. Setelah mengubah sesuatu, `core_reload` (soft) supaya langsung berlaku.
+- Ada yang rusak (error, alat gagal terus, model tidak menjawab) → `self_diagnose` (sama dengan /perbaiki). Perbaikan
+  kode hanya disiapkan di branch git lokal baru, dites, lalu diterapkan setelah pengguna menekan Setujui.
+Aksi berisiko (menghapus data, mengubah kode, perintah di luar folder kerja, mematikan persetujuan, restart) selalu
+meminta persetujuan pengguna. Jangan pernah menampilkan API key, token, atau isi .env."""
+
+
+def context_files(cwd: Path, limit: int = 12000) -> str:
+    """Project instructions from AGENTS.md / NEOVARCH.md, git root down to the working folder."""
+    try:
+        cwd = Path(cwd).resolve()
+        root = next((p for p in (cwd, *cwd.parents) if (p / ".git").exists()), None)
+        chain = [cwd] if root is None else [root] + [root.joinpath(*cwd.relative_to(root).parts[:i + 1])
+                                                      for i in range(len(cwd.relative_to(root).parts))]
+    except (OSError, ValueError):
+        return ""
+    parts, seen, used = [], set(), 0
+    for d in chain:
+        for name in ("NEOVARCH.md", "AGENTS.md"):
+            p = d / name
+            try:
+                if not p.is_file():
+                    continue
+                text = p.read_text(encoding="utf-8", errors="replace").strip()
+            except OSError:
+                continue
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            room = limit - used
+            if room <= 200:
+                break
+            clip = text if len(text) <= room else text[:room] + f"\n…[dipotong; baca lengkap dengan read_file {p}]"
+            parts.append(f"## {p}\n{clip}")
+            used += len(clip)
+            break
+    if not parts:
+        return ""
+    return ("# Konteks proyek (AGENTS.md)\nIkuti instruksi proyek ini; instruksi pengguna di obrolan tetap yang utama.\n\n"
+            + "\n\n".join(parts))
+
+
 def persona_prompt(session_id: str | None, office: dict | None) -> str:
     """Who answers a normal chat: always the main Neovarch Agent.
 
@@ -56,7 +106,8 @@ def persona_prompt(session_id: str | None, office: dict | None) -> str:
              "pengguna di obrolan ini; jangan mengaku sebagai pegawai Kantor.",
              "Kantor (Organisasi → Agency → Orang) kosong sampai pengguna memintamu mengisinya. Saat pengguna "
              "meminta membuat organisasi/agency, merekrut, memindah, memberhentikan pegawai, mengatur skill/alat/"
-             "model/persona pegawai, atau memberi tugas, pakai alat `kantor`. Jangan merekrut pegawai tanpa diminta."]
+             "model/persona pegawai, atau memberi tugas, pakai alat `kantor`. Jangan merekrut pegawai tanpa diminta.",
+             ORCHESTRATOR_GUIDE]
     agents = [a for a in ((office or {}).get("agents") or []) if isinstance(a, dict)]
     if agents:
         lines.append(f"Pegawai Kantor saat ini: {len(agents)} orang; lihat detail dengan `kantor` aksi overview.")
@@ -64,7 +115,10 @@ def persona_prompt(session_id: str | None, office: dict | None) -> str:
 
 
 def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "") -> str:
-    parts = [cfgmod.soul_text().strip(), APP_KNOWLEDGE]
+    parts = [cfgmod.soul_text().strip(), APP_KNOWLEDGE, scaffold.WORKING_METHOD]
+    project = context_files(cwd)
+    if project:
+        parts.append(project)
     if persona:
         parts.append(persona)
     extra = str(cfgmod.get_path(cfg, "agent.system_prompt", "") or "").strip()
@@ -84,7 +138,12 @@ def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "") -> s
     skills = list_skills()
     if skills:
         parts.append("# Skills (read one with the `skill` tool before using it)\n"
+                     "Kalau ada skill yang cocok, walau sebagian, baca dulu dan ikuti caranya. Skill yang salah atau "
+                     "kurang langkah perbaiki dengan `skill_manage` action=patch.\n"
                      + "\n".join(f"- {s['name']}: {s['description']}" for s in skills))
+        hint = scaffold.skills_hint(query, skills)
+        if hint:
+            parts.append(hint)
     parts.append(f"Current working directory: {cwd}\nDate: {time.strftime('%Y-%m-%d %H:%M %Z')}")
     return "\n\n".join(parts)
 
@@ -158,6 +217,21 @@ class Agent:
         self.rec["model"] = endpoint["model"]
         self.store.save(self.rec)
 
+        command = self._command(user_text)
+        if command is not None:
+            kind, text, follow = command
+            self.emit("message.start", {})
+            self.emit("message.delta", {"text": text})
+            messages.append({"role": "assistant", "content": text, "ts": time.time(), "command": kind})
+            self.store.save(self.rec)
+            if not follow:
+                self.emit("message.complete", {"text": text, "command": kind})
+                return text
+            self.emit("message.complete", {"text": text, "command": kind})
+            messages.append({"role": "user", "content": follow, "ts": time.time(), "hidden": True,
+                             "scaffold": kind})
+            self.store.save(self.rec)
+
         self.emit("message.start", {})
         started = time.monotonic()
         final_text = ""
@@ -197,17 +271,39 @@ class Agent:
             if alt:
                 self._announce_fallback(endpoint["model"], alt, "cooldown", None)
                 active["model"] = alt
+        ledger = scaffold.TurnLedger()
+        self.ledger = ledger
+        ctx_len = int(cfgmod.get_path(cfg, "model.context_length", 128000) or 128000)
+        escalation = _escalation_endpoint(cfg)
+        stuck_notified = False
+        schemas = tool_schemas(self.ctx)
         try:
             for _ in range(max_turns):
                 if self.interrupted:
                     error = "interrupted"
                     break
                 wire = [{"role": "system", "content": sys_prompt}] + wire_messages(messages, vision, self.ctx.cwd)
-                comp: Completion = await self._complete(active, wire, pinned)
+                wire = scaffold.compact_wire(wire, ctx_len)
+                use = active
+                if ledger.stuck and not ledger.escalated:
+                    if escalation and escalation.get("model") and escalation.get("model") != active.get("model"):
+                        ledger.escalated = True  # this one call only, then back to the default
+                        use = escalation
+                        self.emit("status.update", {"kind": "escalation", "text": (
+                            f"\u2b06\ufe0f Buntu setelah {ledger.consecutive_failures} percobaan gagal; langkah ini "
+                            f"memakai {escalation['model']}, lalu kembali ke {active['model']}.")})
+                    elif not stuck_notified:
+                        stuck_notified = True
+                        self.emit("status", {"kind": "notice", "text": (
+                            "Agen buntu di langkah ini. Kamu bisa menyalakan \"Naik ke model lebih kuat saat buntu\" di "
+                            "Pengaturan \u25b8 Agen.")})
+                comp: Completion = await self._complete(use, wire, pinned and use is active)
                 usage = comp.usage or usage
                 assistant: dict[str, Any] = {"role": "assistant", "content": comp.text, "ts": time.time()}
                 if comp.reasoning:
                     assistant["reasoning"] = comp.reasoning
+                if use is not active:
+                    assistant["model"] = use["model"]
                 if comp.tool_calls:
                     assistant["tool_calls"] = [{"id": c.id, "type": "function",
                                                 "function": {"name": c.name, "arguments": c.arguments or "{}"}}
@@ -215,20 +311,39 @@ class Agent:
                 messages.append(assistant)
                 self.store.save(self.rec)
                 if not comp.tool_calls:
+                    exists = (lambda p: self._resolve_path(p).exists())
+                    correction = scaffold.self_check(comp.text, ledger, exists)
+                    if correction and not self.interrupted:
+                        # One hidden nudge; the user sees only the corrected answer.
+                        self.emit("status.update", {"kind": "verify", "text": "\U0001f50e Memeriksa ulang jawaban\u2026"})
+                        messages.append({"role": "user", "content": correction, "ts": time.time(), "hidden": True,
+                                         "scaffold": "verify"})
+                        self.store.save(self.rec)
+                        continue
                     final_text = comp.text
                     break
                 for call in comp.tool_calls:
-                    args = call.parsed_args()
-                    self.emit("tool.start", {"tool_id": call.id, "name": call.name, "args": args,
+                    prep = scaffold.prepare_call(call.name, call.arguments, schemas)
+                    if prep.note:
+                        _log.info("tool-call repair session=%s: %s", self.rec.get("id"), prep.note)
+                    args = prep.args
+                    self.emit("tool.start", {"tool_id": call.id, "name": prep.name, "args": args,
                                              "args_text": call.arguments, "preview": _preview(args)})
                     t0 = time.monotonic()
-                    result = await run_tool(call.name, args, self.ctx) if not self.interrupted else "interrupted"
+                    if self.interrupted:
+                        result = "interrupted"
+                    elif prep.error:
+                        result = prep.error
+                    else:
+                        result = await run_tool(prep.name, args, self.ctx)
                     dur = time.monotonic() - t0
-                    _log.info("tool %s session=%s %.2fs", call.name, self.rec.get("id"), dur)
+                    ledger.record(prep.name, args, result)
+                    _log.info("tool %s session=%s %.2fs%s", prep.name, self.rec.get("id"), dur,
+                              "" if ledger.tools[-1]["ok"] else " FAILED")
                     messages.append({"role": "tool", "tool_call_id": call.id, "name": call.name,
                                      "content": result, "ts": time.time()})
                     self.store.save(self.rec)
-                    self.emit("tool.complete", {"tool_id": call.id, "name": call.name,
+                    self.emit("tool.complete", {"tool_id": call.id, "name": prep.name,
                                                 "summary": result.splitlines()[0][:160] if result else "",
                                                 "result": result[:4000], "result_text": result[:4000],
                                                 "duration_s": round(dur, 2)})
@@ -236,14 +351,21 @@ class Agent:
                 error = f"stopped after {max_turns} model calls"
         except LLMError as exc:
             error = _explain(str(exc), active, self.tried)
+        evidence = scaffold.parse_evidence(final_text) if final_text else None
+        if evidence and messages and messages[-1].get("role") == "assistant":
+            messages[-1]["evidence"] = evidence
+            if ledger.files_changed():
+                messages[-1]["files_changed"] = ledger.files_changed()
+            self.store.save(self.rec)
         if error and error != "interrupted":
             _log.warning("turn error session=%s model=%s: %s", self.rec.get("id"), endpoint.get("model"), error)
             self.emit("error", {"message": error})
         elapsed = max(time.monotonic() - started, 1e-6)
         out_tokens = int(usage.get("completion_tokens") or 0)
-        ctx_len = int(cfgmod.get_path(cfg, "model.context_length", 128000) or 128000)
         self.emit("message.complete", {
             "text": final_text,
+            **({"evidence": evidence} if evidence else {}),
+            **({"files_changed": ledger.files_changed()} if ledger.files_changed() else {}),
             "usage": {**usage, "avg_tps": round(out_tokens / elapsed, 1) if out_tokens else None,
                       "context_percent": round(100 * int(usage.get("prompt_tokens") or 0) / ctx_len, 1)},
             **({"error": error} if error else {}),
@@ -252,6 +374,38 @@ class Agent:
         })
         return final_text
 
+
+    def _command(self, user_text: str) -> tuple[str, str, str] | None:
+        """Chat commands answered without the model: /undo (and "Pulihkan versi sebelumnya"), /perbaiki, /fix.
+
+        Returns (kind, reply, follow_up_for_the_model_or_empty)."""
+        from neovarch import selfedit
+        if getattr(self.ctx, "company", None) is not None:
+            return None  # employees' chats are not the place to repair the install
+        if selfedit.UNDO_PHRASES.match(user_text or ""):
+            res = selfedit.undo(session_id=str(self.rec.get("id") or ""))
+            text = res["message"]
+            if res.get("ok") and res.get("kind") in ("skill", "config", "persona"):
+                text += " Perubahan langsung berlaku di giliran berikutnya."
+            return "undo", text, ""
+        m = selfedit.FIX_COMMAND.match(user_text or "")
+        if m:
+            from neovarch import diagnose
+            res = diagnose.run(self.store, str(self.rec.get("id") or ""))
+            symptom = m.group(2).strip()
+            follow = ""
+            if symptom:
+                follow = ("[Perintah /perbaiki — bukan pesan baru] Gejala dari pengguna: " + symptom
+                          + "\nBerdasarkan diagnosis di atas, cari penyebabnya dengan alat (log, file, pengaturan), "
+                            "jelaskan dalam bahasa Indonesia, lalu perbaiki: pengaturan/skill langsung (bisa /undo), "
+                            "kode lewat self_diagnose prepare_patch → apply_patch (minta Setujui). Tutup dengan "
+                            "Temuan → Bukti → Batasan → Langkah berikutnya.")
+            return "perbaiki", res["report"], follow
+        return None
+
+    def _resolve_path(self, raw: str) -> Path:
+        p = Path(os.path.expanduser(str(raw)))
+        return p if p.is_absolute() else Path(self.ctx.cwd) / p
 
     async def _stream(self, endpoint: dict, wire: list[dict], started: list[bool],
                       on_first: Callable[[], None] | None = None) -> Completion:
@@ -330,6 +484,7 @@ class Agent:
     def _note_reasoning_skipped(self, comp: Completion) -> None:
         if getattr(comp, "reasoning_skipped", False):
             self._effort = None  # the model rejected it; do not resend this turn
+            session_settings.mark_no_reasoning(str(self.rec.get("model") or ""))
             if not getattr(self, "_skipped_notice", False):
                 self._skipped_notice = True
                 self.emit("status", {"kind": "notice", "text": "Model ini tidak mendukung tingkat penalaran; "
@@ -344,6 +499,20 @@ class Agent:
         self.emit("model.fallback", info)
         # Desktop paints status.update kind=fallback as a line in the transcript.
         self.emit("status.update", {"kind": "fallback", "text": "\u26a0\ufe0f " + text})
+
+
+def _escalation_endpoint(cfg: dict) -> dict | None:
+    """The stronger model for "naik ke model lebih kuat saat buntu" (off by default)."""
+    if not cfgmod.get_path(cfg, "agent.escalate_on_stuck", False):
+        return None
+    model = str(cfgmod.get_path(cfg, "agent.escalation_model", "") or "")
+    if not model:
+        return None
+    try:
+        return session_settings.effective_endpoint(cfg, {"model_override": {
+            "model": model, "provider": str(cfgmod.get_path(cfg, "agent.escalation_provider", "") or "")}})
+    except Exception:  # a removed provider: stay on the default model
+        return None
 
 
 def _explain(error: str, endpoint: dict, tried: list[str] | None = None) -> str:

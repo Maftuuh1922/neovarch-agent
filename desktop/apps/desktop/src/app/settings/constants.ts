@@ -3,6 +3,7 @@ import { REASONING_EFFORTS } from '@hermes/shared'
 import {
   Box,
   Brain,
+  Cpu,
   Globe,
   type IconComponent,
   Lock,
@@ -719,6 +720,12 @@ export const SECTIONS: DesktopConfigSection[] = [
     label: 'Chat',
     icon: MessageCircle,
     keys: ['display.personality', 'timezone', 'display.show_reasoning', 'agent.image_input_mode']
+  },
+  {
+    id: 'agent',
+    label: 'Agent',
+    icon: Cpu,
+    keys: ['agent.escalate_on_stuck', 'agent.escalation_model', 'agent.escalation_provider']
   },
   {
     id: 'appearance',

@@ -40,6 +40,11 @@ class ToolContext:
     persona: Callable[[], str] | None = None
     # The main agent's Kantor control (CompanyRuntime.main_tool); None outside the gateway.
     kantor: Callable[[dict], str] | None = None
+    # The gateway and session this context serves (orchestrator tools); None in the terminal CLI.
+    gateway: Any = None
+    session_id: str = ""
+    # Receives the plan_update checklist (the gateway publishes it to the chat).
+    set_plan: Callable[[list[dict]], None] | None = None
 
 
 DANGEROUS = [
@@ -75,6 +80,14 @@ def _clip(text: str) -> str:
     return text[:half] + f"\n… [{len(text) - MAX_OUTPUT} characters omitted] …\n" + text[-half:]
 
 
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(Path(root).resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
 def _resolve(ctx: ToolContext, raw: str) -> Path:
     if not raw:
         raise ValueError("path is required")
@@ -103,6 +116,13 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
         if choice in ("session", "always"):
             ctx.session_allow.add(command)
     workdir = _resolve(ctx, args["workdir"]) if args.get("workdir") else ctx.cwd
+    if not _inside(workdir, ctx.cwd) and ("@outside:" + str(workdir)) not in ctx.session_allow:
+        # Commands outside the chat's workspace always ask, even with approvals off.
+        choice = await ctx.approve(command, f"Perintah ini berjalan di luar folder kerja ({workdir}).", "shell")
+        if choice in ("deny", "", None):
+            return "denied: the user did not approve running outside the workspace."
+        if choice in ("session", "always"):
+            ctx.session_allow.add("@outside:" + str(workdir))
     started = time.monotonic()
     proc = await asyncio.create_subprocess_shell(
         command, cwd=str(workdir), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
@@ -191,13 +211,11 @@ async def tool_memory(args: dict, ctx: ToolContext) -> str:
         return "\n".join(sorted(p.name for p in mem.glob("*.md"))) or "(no memory notes yet)"
     if action == "read":
         return target.read_text(encoding="utf-8") if target.exists() else f"(no note named {target.name})"
-    if action == "append":
-        with target.open("a", encoding="utf-8") as fh:
-            fh.write(str(args.get("content") or "").rstrip() + "\n")
-        return f"appended to memory/{target.name}"
-    if action == "write":
-        target.write_text(str(args.get("content") or ""), encoding="utf-8")
-        return f"wrote memory/{target.name}"
+    if action in ("append", "write"):  # versioned, so /undo can restore the previous note
+        from neovarch import selfedit
+        selfedit.memory_update(action, target.name, content=str(args.get("content") or ""),
+                               session_id=getattr(ctx, "session_id", "") or "")
+        return f"{'appended to' if action == 'append' else 'wrote'} memory/{target.name}"
     return "error: action must be list, read, append or write"
 
 
@@ -312,9 +330,59 @@ Use when the user asks for a PPT, slides, a presentation or a deck. Permintaan d
 PPT Master: https://github.com/hugohe3/ppt-master (MIT, Copyright (c) 2025-2026 Hugo He).
 """
 
+SELF_SKILL_NAME = "neovarch-diri"
+SELF_SKILL_VERSION = "1"
+SELF_SKILL = f"""---
+name: {SELF_SKILL_NAME}
+description: Cara agen utama memperbaiki dan meningkatkan dirinya sendiri (skill, memori, pengaturan, /perbaiki, /undo) dan mengatur seluruh aplikasi / How the main agent improves and repairs itself and runs the install.
+builtin: true
+version: {SELF_SKILL_VERSION}
+---
+# Memperbaiki & meningkatkan diri
+
+Pakai saat pengguna minta "perbaiki dirimu", "ingat cara ini", "ubah pengaturanmu", "kenapa kamu error",
+atau saat kamu menemukan cara kerja yang layak disimpan. Permintaan dari HP sama saja: semuanya jalan di PC ini.
+
+## Simpan pelajaran di tempat yang benar
+- **Skill** (`skill_manage`): prosedur, perintah yang terbukti jalan, jebakan, preferensi pengguna untuk jenis tugas
+  tertentu. Satu skill per jenis pekerjaan; perbarui skill lama daripada membuat duplikat.
+  Format SKILL.md: frontmatter `name`, `description` (satu kalimat: kapan dipakai), lalu langkah bernomor,
+  bagian "Jebakan" dan "Verifikasi".
+- **Memori** (`memory_update`): hanya fakta yang berlaku di setiap sesi (siapa pengguna, lingkungan PC, konvensi
+  tetap). Tulis sebagai fakta, bukan perintah. Ganti/rangkum catatan basi, jangan menumpuk.
+- Jangan simpan rahasia, token, atau hal yang basi dalam seminggu.
+
+## Kapan menyimpan
+- Setelah tugas sulit atau berulang (banyak langkah, banyak percobaan): tawarkan menyimpannya sebagai skill.
+- Skill yang kamu pakai ternyata salah/kurang langkah: perbaiki dengan `skill_manage` action=patch sebelum selesai.
+- Pengguna mengoreksimu: catat koreksinya di skill terkait (atau memori kalau berlaku umum).
+
+## Mengubah pengaturanmu
+- `settings_update` (model bawaan, instruksi tambahan, persona, alat yang dimatikan, tingkat penalaran, naik ke model
+  lebih kuat saat buntu). Setiap perubahan tercatat; sebutkan nilai lama → baru ke pengguna.
+- Setelah berubah, `core_reload` action=soft supaya langsung berlaku tanpa memutus obrolan.
+
+## Memperbaiki diri (/perbaiki)
+1. `self_diagnose` action=diagnose — baca laporan (log core & desktop, alat yang gagal, pengaturan; rahasia disamarkan).
+2. Perbaikan pengaturan/skill diterapkan otomatis dan bisa dibatalkan dengan /undo.
+3. Masalah di kode aplikasi: hanya kalau instalasi dari git checkout. Buat diff sekecil mungkin →
+   `self_diagnose` action=prepare_patch (branch lokal baru + tes) → tunjukkan ringkasan & hasil tes →
+   action=apply_patch (pengguna menekan Setujui) → `core_reload` action=restart.
+4. Laporkan dengan Temuan → Bukti → Batasan → Langkah berikutnya.
+
+## Mengatur aplikasi (`manage`)
+Kantor (rekrut/beri tugas/jeda/lanjutkan), pengaturan, model, skill, memori, jadwal, perangkat, perbaikan diri.
+Pekerjaan panjang untuk pegawai: tulis keputusan dan batasan di deskripsi tugas, karena pegawai tidak melihat obrolan.
+
+## Pulihkan
+- "/undo" atau "Pulihkan versi sebelumnya" membatalkan perubahan terakhir (skill, memori, pengaturan, persona, patch).
+- `self_undo` action=log menampilkan riwayat perubahan.
+"""
+
 BUILTINS = [
     (BUILTIN_SKILL_NAME, BUILTIN_SKILL_VERSION, BUILTIN_SKILL),
     (PPT_SKILL_NAME, PPT_SKILL_VERSION, PPT_SKILL),
+    (SELF_SKILL_NAME, SELF_SKILL_VERSION, SELF_SKILL),
 ]
 
 
@@ -632,14 +700,30 @@ TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
 }
 
 
+from neovarch import orchestrator as _orch  # noqa: E402  (registers the main agent's self/orchestrator tools)
+
+TOOLS.update(_orch.TOOLS)
+
+
+def _disabled_tools() -> set[str]:
+    try:
+        from neovarch import config as cfgmod
+        from neovarch.selfedit import PROTECTED_TOOLS
+        raw = cfgmod.get_path(cfgmod.load_config(), "tools.disabled", []) or []
+        return {str(x) for x in raw} - PROTECTED_TOOLS if isinstance(raw, list) else set()
+    except Exception:  # a broken config must never hide every tool
+        return set()
+
+
 def _allowed_builtin(ctx: "ToolContext | None") -> set[str]:
-    names = set(TOOLS)
+    names = set(TOOLS) - _disabled_tools()
     company = getattr(ctx, "company", None) if ctx is not None else None
     if company is None:
         if ctx is None or getattr(ctx, "kantor", None) is None:
             names.discard("kantor")
         return names
     names.discard("kantor")  # employees never run the Kantor; the main agent does
+    names -= set(_orch.TOOLS) - _orch.EMPLOYEE_ALLOWED  # nor change the install
     allowed = company.allowed_tools() if hasattr(company, "allowed_tools") else None
     if allowed:
         names &= set(allowed) | {"office_status"}

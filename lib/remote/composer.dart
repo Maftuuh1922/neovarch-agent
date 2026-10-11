@@ -166,6 +166,16 @@ Map<String, dynamic> composerSubmitFields(ComposerCatalog? c, {List<String> skil
         'reasoning_effort': reasoningEffort,
     };
 
+/// A chat's reasoning level as the PC reports it (`session.info` /
+/// `session.resume` → `reasoning_effort`) mapped onto the phone's pick: null =
+/// Bawaan, and a level the current model does not offer falls back to Bawaan.
+String? sessionEffort(Object? raw, ComposerCatalog? c) {
+  final v = '${raw ?? ''}'.trim().toLowerCase();
+  if (v.isEmpty || v == 'default' || v == 'null') return null;
+  if (c != null && c.reasoningLevels.isNotEmpty && !c.reasoningLevels.contains(v)) return null;
+  return v;
+}
+
 /// A "/" or "@" token being typed at the cursor.
 class ComposerTrigger {
   const ComposerTrigger(this.kind, this.query, this.start, this.end);

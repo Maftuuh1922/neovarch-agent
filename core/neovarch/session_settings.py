@@ -26,6 +26,48 @@ _WIRE = {"minimal": "minimal", "low": "low", "medium": "medium", "high": "high",
          "xhigh": "high", "max": "high", "ultra": "high"}
 
 
+# What the phone/desktop pickers offer, with Indonesian labels (wire value per level in _WIRE).
+PICKER_LEVELS = ("none", "low", "medium", "high", "ultra")
+REASONING_LABELS = {"none": "Mati", "minimal": "Minimal", "low": "Rendah", "medium": "Sedang", "high": "Tinggi",
+                    "xhigh": "Sangat tinggi", "max": "Maks", "ultra": "Ultra"}
+_NO_REASONING: set[str] = set()
+
+
+def _no_reasoning_path():
+    from neovarch.paths import neovarch_home
+    return neovarch_home() / "state" / "no-reasoning-models.json"
+
+
+def mark_no_reasoning(model: str) -> None:
+    """Remember a model that rejected ``reasoning_effort`` (the pickers then hide the levels)."""
+    import json
+    if not model or model in _NO_REASONING:
+        return
+    _NO_REASONING.add(model)
+    try:
+        p = _no_reasoning_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        known = set(json.loads(p.read_text(encoding="utf-8"))) if p.exists() else set()
+        p.write_text(json.dumps(sorted(known | {model})), encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+
+
+def reasoning_caps(model: str) -> dict:
+    """Levels a model can take: none when it is known to reject the parameter."""
+    import json
+    rejected = set(_NO_REASONING)
+    try:
+        p = _no_reasoning_path()
+        if p.exists():
+            rejected |= set(json.loads(p.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        pass
+    if model and model in rejected:
+        return {"supported": False, "levels": []}
+    return {"supported": True, "levels": list(PICKER_LEVELS)}
+
+
 def normalize_effort(value: Any) -> str | None:
     level = str(value or "").strip().lower()
     if level in ("off", "disabled", "false", "0"):
