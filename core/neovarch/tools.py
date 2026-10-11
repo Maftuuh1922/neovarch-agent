@@ -906,3 +906,12 @@ def _account_env() -> dict[str, str]:
         return account.shell_env()
     except Exception:  # a broken .env must never stop a command
         return {}
+
+
+def _register_vision_tools() -> None:
+    """image_ask lives in neovarch.vision (the vision fallback); registered here with the rest."""
+    from neovarch import vision
+    TOOLS.setdefault("image_ask", (vision.tool_image_ask, vision.IMAGE_ASK_SCHEMA))
+
+
+_register_vision_tools()

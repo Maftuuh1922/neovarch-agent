@@ -220,7 +220,8 @@ class Agent:
         if attachments:
             user_msg["attachments"] = [dict(a) for a in attachments]
             if not vision and any(a.get("kind") == "image" for a in attachments):
-                self.emit("attachment.notice", {"level": "warning", "message": uploads.VISION_NOTICE})
+                from neovarch import vision as visionmod  # describe images with a vision fallback model
+                await visionmod.prepare_attachments(cfg, endpoint, user_msg["attachments"], self.emit)
         messages.append(user_msg)
         if not self.rec.get("title"):
             first = user_text.strip().splitlines()[0][:60] if user_text.strip() else ""
@@ -561,6 +562,7 @@ def wire_messages(messages: list[dict], vision: bool, cwd: Path) -> list[dict]:
     parts (images as data URLs for the last few turns when the model sees images);
     ``@file:`` refs of the newest user turn get the file text appended."""
     from neovarch import uploads
+    from neovarch import vision as vision_hook
     image_turns = [i for i, m in enumerate(messages) if m.get("role") == "user"
                    and any(isinstance(a, dict) and a.get("kind") == "image" for a in m.get("attachments") or [])]
     recent = set(image_turns[-uploads.IMAGE_HISTORY:])
@@ -568,7 +570,7 @@ def wire_messages(messages: list[dict], vision: bool, cwd: Path) -> list[dict]:
     out = []
     for i, m in enumerate(messages):
         if m.get("role") == "user" and m.get("attachments"):
-            w = uploads.user_wire(m, vision, i in recent)
+            w = vision_hook.augment_wire(uploads.user_wire(m, vision, i in recent), m, vision)
         else:
             w = _wire(m)
         if i == last_user and "@file:" in str(m.get("content") or ""):

@@ -782,7 +782,8 @@ class Gateway:
                 cfg = cfgmod.load_config()
                 ep = session_settings.effective_endpoint(cfg, live.rec)
                 if any(a["kind"] == "image" for a in atts) and not upmod.supports_vision(cfg, ep):
-                    res["notice"] = upmod.VISION_NOTICE
+                    from neovarch import vision as visionmod
+                    res["notice"] = visionmod.submit_notice(cfg)
             return res
         if method in ("image.attach", "image.attach_bytes", "file.attach", "image.detach",
                       "attachment.list", "attachment.upload", "attachment.upload_chunk"):
