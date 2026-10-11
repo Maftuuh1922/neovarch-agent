@@ -24,8 +24,8 @@
 #   -Manifest | -Stage <name> [-NonInteractive] [-Json] [-Branch <b>] [-Commit <sha>]
 # Environment:
 #   NEOVARCH_HOME      data home (default %LOCALAPPDATA%\neovarch)
-#   NEOVARCH_VERSION   desktop release tag (e.g. v1.4.5). Default: latest.
-#   NEOVARCH_REF       git ref of this repo for the core. Default: NEOVARCH_VERSION or v1.4.5.
+#   NEOVARCH_VERSION   desktop release tag (e.g. v1.4.6). Default: latest.
+#   NEOVARCH_REF       git ref of this repo for the core. Default: NEOVARCH_VERSION or v1.4.6.
 #   NEOVARCH_CORE_SRC  local checkout of this repo (or its core\) to install the core from.
 
 param(
@@ -59,7 +59,7 @@ $AppName      = 'Neovarch Agent'
 $ExeName      = 'Neovarch Agent.exe'
 $ProcName     = 'Neovarch Agent'
 $PyVersion    = '3.14'
-$DefaultCoreRef = 'v1.4.5'   # core ref when nothing else is asked for: this installer's release tag
+$DefaultCoreRef = 'v1.4.6'   # core ref when nothing else is asked for: this installer's release tag
 $ReceiptName  = '.neovarch-bootstrap-complete'
 
 $LocalAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $HOME 'AppData\Local' }

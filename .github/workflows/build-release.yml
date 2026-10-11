@@ -15,7 +15,7 @@ permissions:
 env:
   FLUTTER_VERSION: '3.47.6'
   # Fallback for workflow_dispatch; a v* tag push uses the tag's version.
-  APP_VERSION: '1.4.5'
+  APP_VERSION: '1.4.6'
 
 jobs:
   android:

@@ -28,8 +28,35 @@ class ChangelogEntry {
 const changelog = <ChangelogEntry>[
   ChangelogEntry(
     version: '1.4.6',
-    summary: 'Pembaruan langsung dari aplikasi, PowerPoint dari HP, mic dan Hey Neo yang lebih andal di Xiaomi, dan aplikasi yang lebih ringan.',
+    date: '2026-10-11',
+    summary: 'Pemasangan HP yang lebih aman, remote dari mana saja lewat relay terenkripsi, pilihan bahasa di Android, agen bisa mengirim berkas ke obrolan, Tempest Fase 1 (opsional), pembaruan langsung dari aplikasi, dan PowerPoint dari HP.',
     sections: [
+      ChangelogSection('Penting saat memperbarui', [
+        'Perbarui aplikasi desktop dan aplikasi HP bersamaan.',
+        'Setelah memperbarui, tekan Buat token baru sekali di Pengaturan › Remote di PC agar QR dan token akses lama tidak berlaku lagi.',
+      ]),
+      ChangelogSection('Keamanan pemasangan HP', [
+        'QR pemasangan sekarang sekali pakai dan berlaku 10 menit; QR baru muncul otomatis setelah dipindai. Kode pemasangan relay juga 10 menit dan sekali pakai.',
+        'Setiap HP mendapat token sesi sendiri. Memasangkan ulang mengganti token lama, dan HP yang sudah terpasang otomatis pindah ke token sesi.',
+        'HP yang tidak aktif 30 hari dilepas otomatis dengan pesan "Sesi kedaluwarsa, pasangkan ulang".',
+        'Daftar perangkat terpasang di desktop menampilkan Terakhir aktif dan kapan perangkat kedaluwarsa. Tombol Cabut tetap ada.',
+      ]),
+      ChangelogSection('Remote dari mana saja', [
+        'HP tersambung ke PC lewat relay cloud terenkripsi ujung-ke-ujung saat tidak satu jaringan: LAN dulu, lalu otomatis lewat relay, dan kembali ke LAN saat terjangkau lagi.',
+        'Jalankan di latar belakang: gateway PC dan relay tetap jalan setelah jendela ditutup.',
+      ]),
+      ChangelogSection('Bahasa', [
+        'Pilihan bahasa di Profil › Bahasa: Bahasa Indonesia, English, atau Ikuti sistem. Bahasa langsung berganti tanpa restart.',
+        'Langkah "Pilih bahasa" jadi layar pertama di intro.',
+        'Sebagian layar (Chat, Kantor, PC, Tugas, Vault, dll.) masih berbahasa Indonesia.',
+      ]),
+      ChangelogSection('Lampiran dari agen', [
+        'Agen bisa mengirim berkas dan screenshot ke obrolan; lampiran tampil di HP dan desktop dan bisa diunduh.',
+        'Windows: QR tidak lagi memilih adaptor virtual, aturan Firewall untuk port HP lewat UAC, dan pesan jelas bila HP terblokir.',
+      ]),
+      ChangelogSection('Tempest Fase 1 (opsional)', [
+        'Harness agen baru lewat agent.harness_mode: tempest di config.yaml: cache prompt v2, compaction di 50% konteks, gerbang lint delta, checkpoint dengan rollback, dan neovarch rewind. Harness legacy tetap bawaan.',
+      ]),
       ChangelogSection('Pembaruan & aplikasi', [
         'Perbarui langsung dari aplikasi: APK diunduh di dalam aplikasi dengan progres dan tombol Batal, dicek ukurannya (dan checksum bila ada), lalu penginstal Android terbuka. Kalau gagal, halaman unduhan dibuka di browser.',
         'Catatan rilis tampil di dialog pembaruan, "Apa yang baru" muncul sekali setelah memperbarui, dan ada layar Riwayat perubahan.',
@@ -43,6 +70,7 @@ const changelog = <ChangelogEntry>[
         'Di Xiaomi, pintasan "Tampil di atas aplikasi lain" dan "Izinkan jalan di latar" membuka halaman Pengaturan yang benar.',
         'Pill model di chat HP menampilkan model yang dipakai PC; ketuk sekali untuk mengganti.',
         'Chat di HP dan desktop selalu sinkron.',
+        'Profil & Teman di HP sinkron otomatis dari akun GitHub di PC.',
       ]),
       ChangelogSection('Agen & dokumen', [
         'PowerPoint dengan PPT Master: minta "buatin PPT dari …" dari desktop atau HP. Berkas .pptx, .docx, dan .pdf hasil agen punya tombol Unduh di HP.',
