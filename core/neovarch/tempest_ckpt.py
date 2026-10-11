@@ -47,6 +47,7 @@ def _count_files(root: Path, limit: int) -> int:
 class ShadowRepo:
     def __init__(self, work: Path, home: Path, max_files: int = 5000):
         self.work = Path(work).resolve()
+        self.home = Path(home).resolve()
         key = hashlib.sha1(str(self.work).encode("utf-8")).hexdigest()[:16]
         self.dir = Path(home) / "checkpoints" / key
         self.max_files = max_files
@@ -87,7 +88,10 @@ class ShadowRepo:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.git("init", "-q")
         (self.dir / "info").mkdir(exist_ok=True)
-        (self.dir / "info" / "exclude").write_text("\n".join(EXCLUDES) + "\n", encoding="utf-8")
+        extra = []
+        if self.home.is_relative_to(self.work):  # never snapshot Neovarch's own data (or this repo)
+            extra.append("/" + self.home.relative_to(self.work).as_posix() + "/")
+        (self.dir / "info" / "exclude").write_text("\n".join(EXCLUDES + extra) + "\n", encoding="utf-8")
         (self.dir / "tempest-workdir").write_text(str(self.work) + "\n", encoding="utf-8")
 
     # --------------------------------------------------------------- status --

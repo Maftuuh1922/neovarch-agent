@@ -141,3 +141,14 @@ async def test_checkpoints_off_by_default(home, tmp_path, monkeypatch):
     await _run(home, tmp_path, monkeypatch, script, TEST_OK, "def f():\n    return 0\n",
                {"harness_mode": "tempest"})
     assert not (home / "checkpoints").exists()
+
+
+def test_neovarch_home_inside_project_is_excluded(tmp_path):
+    work = tmp_path / "p"
+    home = work / "nvhome"
+    (home / "sessions").mkdir(parents=True)
+    (home / "sessions" / "s.json").write_text("{}")
+    (work / "a.py").write_text("x = 1\n")
+    repo = tc.ShadowRepo(work, home)
+    sha = repo.checkpoint("awal")
+    assert repo.git("ls-tree", "-r", "--name-only", sha).split() == ["a.py"]
