@@ -584,3 +584,15 @@ async def test_bridge_enroll_is_limited_to_its_own_device(home, monkeypatch):
         assert gw.link.store.devices()[0]["via"] == "relay"
     finally:
         await client.close()
+
+
+def test_relay_errors_are_indonesian_and_name_dns_failure():
+    import socket as _s
+    from neovarch.remote_link.relay_client import _short
+
+    dns = _short(_s.gaierror(-2, "Name or service not known"))
+    assert "Alamat relay tidak ditemukan" in dns and "Tailscale" in dns
+    wrapped = OSError("Cannot connect to host relay.x:443 ssl:default [Name or service not known]")
+    assert _short(wrapped).startswith("Alamat relay tidak ditemukan")
+    assert _short(asyncio.TimeoutError()).startswith("Relay tidak menjawab")
+    assert _short(ConnectionError("relay closed (1006)")) == "relay closed (1006)"

@@ -152,7 +152,7 @@ void main() {
       const raw = "ClientException with SocketException: Failed host lookup: 'pc.tailfd5434.ts.net' (OS Error: No address associated with hostname, errno = 7), uri=http://pc.tailfd5434.ts.net:9319/api/models/default";
       expect(isNetworkError(raw), isTrue);
       final msg = friendlyRemoteError(raw, relayAvailable: true);
-      expect(msg, 'PC tidak terjangkau. Mencoba lewat relay…');
+      expect(msg, startsWith('PC tidak terjangkau lewat Wi-Fi maupun relay.'));
       expect(msg, isNot(contains('Exception')));
       expect(friendlyRemoteError(raw), contains('PC tidak terjangkau'));
     });

@@ -26,7 +26,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { DEFAULT_RELAY_URL, normalizeRelayUrl } from './relay-defaults'
-import { ensureFirewallRule, firewallHelp } from './windows-firewall'
+import { ensureFirewallRule, firewallHelp, linuxFirewallHelp } from './windows-firewall'
 
 export const REMOTE_DEFAULT_PORT = 9319
 /** core/neovarch/background.py RESTART_EXIT_CODE: the gateway asks to be started again. */
@@ -1144,9 +1144,14 @@ export function createRemoteController(deps: RemoteControllerDeps) {
         startLinkPoll()
       }
 
+      if (running && process.platform === 'linux' && !firewallAsked) {
+        firewallAsked = true
+        deps.log(`[remote] ${linuxFirewallHelp(settings.port)}`)
+      }
+
       if (running && process.platform === 'win32' && !firewallAsked) {
         firewallAsked = true
-        void ensureFirewallRule(settings.port)
+        void ensureFirewallRule(settings.port, { program: spec.command })
           .then(result => {
             deps.log(`[remote] windows firewall rule for port ${settings.port}: ${result}`)
 
