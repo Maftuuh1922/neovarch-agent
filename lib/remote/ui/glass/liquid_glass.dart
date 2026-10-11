@@ -231,7 +231,7 @@ class _LiquidGlassState extends State<LiquidGlass> with SingleTickerProviderStat
   GlassTone _resolve(BuildContext context, Rect? rect) {
     if (widget.tone != null) return widget.tone!;
     final scope = GlassScope.maybeOf(context);
-    final style = widget.style ?? scope?.style ?? GlassStyle.reguler;
+    final style = NV.liteMode ? GlassStyle.tanpa : (widget.style ?? scope?.style ?? GlassStyle.reguler);
     final map = scope?.backdrop;
     final sample = map == null
         ? BackdropSample.solid(NV.bg)
@@ -246,7 +246,8 @@ class _LiquidGlassState extends State<LiquidGlass> with SingleTickerProviderStat
   @override
   Widget build(BuildContext context) {
     _schedule();
-    final style = widget.style ?? GlassScope.styleOf(context);
+    // "Mode ringan": no backdrop filter, the near-solid "tanpa" surface.
+    final style = NV.liteMode ? GlassStyle.tanpa : (widget.style ?? GlassScope.styleOf(context));
     final tone = _resolve(context, _rect);
     _lastLight = tone.lightText;
     final br = widget.borderRadius;

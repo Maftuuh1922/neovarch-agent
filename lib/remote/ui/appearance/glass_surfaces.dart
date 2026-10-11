@@ -54,7 +54,8 @@ class NvGlassSurface extends StatelessWidget {
         child: child,
       ),
     );
-    if (tone.reduced) return ClipRRect(borderRadius: br, child: body);
+    // reduce transparency or "Mode ringan": no backdrop blur
+    if (tone.reduced || NV.liteMode) return ClipRRect(borderRadius: br, child: body);
     return ClipRRect(
       borderRadius: br,
       child: ValueListenableBuilder<double>(

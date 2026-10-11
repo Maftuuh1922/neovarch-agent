@@ -21,7 +21,7 @@ import sys
 from aiohttp import web
 
 STATE = web.AppKey("state", dict)
-FREE_IDS = ["big-pickle", "nemotron-3-ultra-free", "ling-3.1-flash-free"]
+FREE_IDS = ["mimo-v2.6-flash-free", "nemotron-3-ultra-free", "ling-3.1-flash-free"]
 STATIC = ["oc/muse-spark-1.3-contributor-free", "kr/claude-sonnet-4.5", "kr/glm-5"]
 
 

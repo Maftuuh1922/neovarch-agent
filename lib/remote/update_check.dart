@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../state/settings_controller.dart';
+import 'changelog.dart' show phoneReleaseNotes;
 
 const githubRepo = 'Maftuuh1922/neovrach_Agent';
 const releasesPage = 'https://github.com/$githubRepo/releases/latest';
@@ -62,7 +63,9 @@ Map<String, dynamic>? parseGithubRelease(Map j, String current) {
   final url = '${j['html_url'] ?? releasesPage}';
   final assets = j['assets'] as List? ?? const [];
   final apk = pickApkAsset(assets);
+  final notes = phoneReleaseNotes(j['body'] is String ? j['body'] as String : null);
   return {
+    if (notes.isNotEmpty) 'notes': notes,
     'current': current,
     'latest': latest,
     'available': isNewerVersion(latest, current),

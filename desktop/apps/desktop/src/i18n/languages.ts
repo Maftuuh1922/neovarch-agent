@@ -23,6 +23,12 @@ export const LOCALE_OPTIONS = [
     configValue: 'en'
   },
   {
+    id: 'en-us',
+    name: 'English',
+    englishName: 'English',
+    configValue: 'en-US'
+  },
+  {
     id: 'zh',
     name: LOCALE_ENDONYMS.zh,
     englishName: 'Simplified Chinese',
@@ -132,9 +138,20 @@ export function languageOptions(): LanguageOption[] {
 }
 
 const LOCALE_ALIASES: Record<string, BundledLocale> = {
+  // `en` is Neovarch's Indonesian base (the saved value of every older desktop);
+  // an explicit regional English tag picks the English catalog.
   en: 'en',
-  'en-us': 'en',
-  en_us: 'en',
+  id: 'en',
+  'id-id': 'en',
+  id_id: 'en',
+  in: 'en',
+  indonesian: 'en',
+  'bahasa indonesia': 'en',
+  'en-us': 'en-us',
+  en_us: 'en-us',
+  'en-gb': 'en-us',
+  en_gb: 'en-us',
+  english: 'en-us',
   zh: 'zh',
   'zh-cn': 'zh',
   zh_cn: 'zh',
@@ -264,7 +281,11 @@ export function resolveInitialLocale(saved: string | null | undefined, osLocale:
     return normalizeLocale(saved)
   }
 
-  return osPreferredLocale(osLocale) ?? DEFAULT_LOCALE
+  // Indonesian is Neovarch's default: an English OS does not switch the app to
+  // English on its own; the user picks English in Settings (ID/EN).
+  const os = osPreferredLocale(osLocale)
+
+  return os && os !== 'en-us' ? os : DEFAULT_LOCALE
 }
 
 /** The `display.language` value for a picker choice — the bundled option's

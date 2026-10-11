@@ -192,6 +192,10 @@ abstract final class NV {
   /// "Gaya kaca" applied app-wide (set by AppearanceController).
   static NvGlassStyle glassStyle = NvGlassStyle.reguler;
 
+  /// "Mode ringan" (set by AppearanceController): glass widgets skip their
+  /// BackdropFilter and paint a solid surface instead.
+  static bool liteMode = false;
+
   /// Liquid glass: translucent, accent-tinted fill over a strong backdrop
   /// blur; the bright rim / specular edge is painted by `NvGlass`.
   /// Every tint is derived from the accent (wallpaper-derived when that is

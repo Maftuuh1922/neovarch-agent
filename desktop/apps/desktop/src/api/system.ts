@@ -178,9 +178,48 @@ export function getActionStatus(name: string, lines = 200, profile?: ProfileScop
   })
 }
 
+/** The backend has no speech-to-text engine (the Neovarch core answers
+ *  `{ ok: false, code: 'stt_unavailable' }`). Callers show a "not available"
+ *  notice instead of a failure. */
+export class SttUnavailableError extends Error {
+  readonly code = 'stt_unavailable'
+
+  constructor(message: string) {
+    super(message)
+    this.name = 'SttUnavailableError'
+  }
+}
+
+export function isSttUnavailable(error: unknown): error is SttUnavailableError {
+  return error instanceof SttUnavailableError || (error as { code?: unknown } | null)?.code === 'stt_unavailable'
+}
+
+/** A transcription answer the composer can trust: `transcript` is always a
+ *  string. An answer without one (an older core's quiet fallback, a refusal)
+ *  throws instead; before this the composer crashed on `undefined.trim()`. */
+export function checkedTranscription(result: unknown): AudioTranscriptionResponse {
+  const r = (result ?? {}) as Partial<AudioTranscriptionResponse> & {
+    code?: unknown
+    error?: unknown
+    message?: unknown
+  }
+
+  if (r.ok !== false && typeof r.transcript === 'string') {
+    return r as AudioTranscriptionResponse
+  }
+
+  const message = [r.error, r.message].find(m => typeof m === 'string' && m.trim()) as string | undefined
+
+  if (r.code === 'stt_unavailable' || r.ok === false || typeof r.transcript !== 'string') {
+    throw new SttUnavailableError(message || 'Speech-to-text is not available on this backend.')
+  }
+
+  return r as AudioTranscriptionResponse
+}
+
 /** `owner` = the recording's owner, resolved when the mic opened: the audio is
  *  decoded on the backend its STT warm-up targeted. Omitted → the active scope. */
-export function transcribeAudio(
+export async function transcribeAudio(
   dataUrl: string,
   mimeType?: string,
   owner?: ResolvedOwner
@@ -198,9 +237,11 @@ export function transcribeAudio(
     timeoutMs: audioTranscribeRequestTimeoutMs(dataUrl)
   }
 
-  return owner
-    ? hermesApiAs<AudioTranscriptionResponse>(owner, request)
-    : hermesApi<AudioTranscriptionResponse>({ ...profileScoped(), ...request })
+  return checkedTranscription(
+    await (owner
+      ? hermesApiAs<AudioTranscriptionResponse>(owner, request)
+      : hermesApi<AudioTranscriptionResponse>({ ...profileScoped(), ...request }))
+  )
 }
 
 // `owner` = the speaking session's (connection, profile) — a Bot's own TTS
