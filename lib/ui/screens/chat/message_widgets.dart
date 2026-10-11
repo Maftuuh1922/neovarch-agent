@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../models/models.dart';
+import '../../../remote/evidence.dart';
 import '../../../remote/ui/glass/liquid_glass.dart' show GlassForeground;
 import '../../../theme/app_theme.dart';
 import '../../widgets/common.dart';
@@ -90,13 +91,17 @@ class AssistantMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A finished report folds its evidence into a compact "Bukti" section.
+    final ({String main, String? evidence}) parts =
+        msg.streaming ? (main: msg.content, evidence: null) : splitEvidence(msg.content);
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       if (showReasoning && msg.reasoning.trim().isNotEmpty)
         ReasoningBlock(text: msg.reasoning, streaming: msg.streaming && msg.content.isEmpty, autoCollapse: autoCollapse),
       for (final t in msg.tools) ToolRow(tool: t, onOpenFile: onOpenFile, onLink: onLink),
       if (msg.content.isNotEmpty) ...[
         if (msg.tools.isNotEmpty) const SizedBox(height: 6),
-        MarkdownView(msg.content, onLink: onLink, scale: scale),
+        MarkdownView(parts.main, onLink: onLink, scale: scale),
+        if (parts.evidence != null) EvidenceBlock(text: parts.evidence!, onLink: onLink, scale: scale),
         if (msg.streaming) Padding(padding: const EdgeInsets.only(top: 2), child: Align(alignment: Alignment.centerLeft, child: BlinkingCaret(height: 15 * scale))),
       ],
       if (msg.streaming && msg.content.isEmpty && msg.tools.every((t) => !t.running) && msg.reasoning.isEmpty)
@@ -144,6 +149,65 @@ class _MiniAction extends StatelessWidget {
         color: context.hc.mutedForeground,
         icon: Icon(icon),
       );
+}
+
+/// "Bukti": the evidence, limitations and next step of a report, folded by default.
+class EvidenceBlock extends StatefulWidget {
+  const EvidenceBlock({super.key, required this.text, required this.onLink, required this.scale});
+  final String text;
+  final void Function(String url) onLink;
+  final double scale;
+  @override
+  State<EvidenceBlock> createState() => _EvidenceBlockState();
+}
+
+class _EvidenceBlockState extends State<EvidenceBlock> {
+  bool open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        InkWell(
+          key: const ValueKey('evidence-toggle'),
+          onTap: () => setState(() => open = !open),
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              border: Border.all(color: context.hc.border),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.fact_check_outlined, size: 15, color: context.hc.mutedForeground),
+              const SizedBox(width: 6),
+              Text('Bukti', style: context.tt.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
+              AnimatedRotation(
+                turns: open ? 0.5 : 0,
+                duration: motionFast,
+                child: Icon(Icons.expand_more, size: 16, color: context.hc.mutedForeground),
+              ),
+            ]),
+          ),
+        ),
+        AnimatedSize(
+          duration: reduceMotion(context) ? Duration.zero : motionBase,
+          curve: motionCurve,
+          alignment: Alignment.topLeft,
+          child: open
+              ? Container(
+                  key: const ValueKey('evidence-body'),
+                  margin: const EdgeInsets.only(top: 6),
+                  padding: const EdgeInsets.only(left: 10),
+                  decoration: BoxDecoration(border: Border(left: BorderSide(color: context.hc.border, width: 2))),
+                  child: MarkdownView(widget.text, onLink: widget.onLink, scale: widget.scale * 0.94),
+                )
+              : const SizedBox(width: double.infinity),
+        ),
+      ]),
+    );
+  }
 }
 
 class ReasoningBlock extends StatefulWidget {

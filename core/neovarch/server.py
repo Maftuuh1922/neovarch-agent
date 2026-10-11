@@ -160,7 +160,8 @@ class LiveSession:
         company = getattr(gw, "company", None)
         self.ctx = ToolContext(cwd=Path(rec.get("cwd") or default_cwd()), approve=self.approve,
                                office=getattr(gw, "office_status", None),
-                               kantor=getattr(company, "main_tool", None))
+                               kantor=getattr(company, "main_tool", None),
+                               gateway=gw, session_id=rec["id"], set_plan=self.set_plan)
         self.agent = Agent(rec, gw.store, self.ctx, self.emit)
         self.last_text = ""
         # Desktop composers stage images with image.attach* before prompt.submit;
@@ -171,6 +172,15 @@ class LiveSession:
         if kind == "message.complete":
             self.last_text = payload.get("text", "")
         self.gw.broadcast_event(kind, self.id, payload)
+
+    def set_plan(self, steps: list[dict]) -> None:
+        """plan_update → the chat shows the checklist (desktop paints status.update; phone reads plan.update)."""
+        self.rec["plan"] = steps
+        self.gw.store.save(self.rec)
+        self.gw.broadcast_event("plan.update", self.id, {"steps": steps})
+        mark = {"todo": "\u2610", "doing": "\u25d1", "done": "\u2611", "blocked": "\u26a0"}
+        self.gw.broadcast_event("status.update", self.id, {
+            "kind": "plan", "text": "Rencana: " + " · ".join(f"{mark.get(s['status'], '')} {s['title']}" for s in steps)})
 
     async def approve(self, command: str, description: str, tool: str) -> str:
         rid = "apr-" + secrets.token_hex(4)
@@ -255,8 +265,8 @@ def to_ui_messages(rec: dict) -> list[dict]:
     out = []
     for i, m in enumerate(rec.get("messages", [])):
         role = m.get("role")
-        if role not in ("user", "assistant", "tool"):
-            continue
+        if role not in ("user", "assistant", "tool") or m.get("hidden"):
+            continue  # hidden = the agent's own self-check notes, never shown as user turns
         # row_id: the message's durable 1-based position in the stored
         # transcript (messages are append-only), used by the timeline and
         # the around-window history reads.
@@ -270,6 +280,10 @@ def to_ui_messages(rec: dict) -> list[dict]:
             item["name"] = m.get("name")
         if m.get("reasoning"):
             item["reasoning"] = m["reasoning"]
+        if m.get("evidence"):
+            item["evidence"] = m["evidence"]
+        if m.get("files_changed"):
+            item["files_changed"] = m["files_changed"]
         if role == "user" and m.get("attachments"):
             item["attachments"] = [upmod.public(a) for a in m["attachments"] if isinstance(a, dict) and a.get("id")]
         out.append(item)
@@ -327,6 +341,100 @@ class Gateway:
         live.emit = emit  # type: ignore[method-assign]
         live.agent.emit = emit
         return rec["id"], (errors[-1] if errors else None)
+
+    def set_session_effort(self, sid: str, value: Any) -> dict:
+        """One chat's reasoning level ('default'/'' = follow the PC default). Shared by the
+        desktop composer (config.set), the phone (PATCH /api/sessions/{id}, prompt.submit)."""
+        word = str(value or "").strip().lower()
+        rec = self.live[sid].rec if sid in self.live else self.store.find(sid)
+        if not rec:
+            raise ValueError(f"session not found: {sid}")
+        if word in ("", "default", "bawaan", "null"):
+            rec.pop("reasoning_effort", None)
+        else:
+            level = session_settings.normalize_effort(word)
+            if level is None:
+                raise ValueError(f"unknown reasoning level: {value}")
+            rec["reasoning_effort"] = level
+        self.store.save(rec)
+        if rec["id"] in self.live:
+            self.broadcast_event("session.info", rec["id"], self.live[rec["id"]].info())
+        return rec
+
+    def composer_catalog(self, sid: str = "") -> dict:
+        """``GET /api/composer/catalog`` for the phone composer: commands, skills, models, reasoning."""
+        from neovarch import providers
+        cfg = cfgmod.load_config()
+        rec = (self.live[sid].rec if sid in self.live else self.store.find(sid)) if sid else None
+        ep = session_settings.effective_endpoint(cfg, rec)
+        try:
+            opts = providers.model_options(cfg, False, ep if (rec or {}).get("model_override") else None)
+            provs = [{"slug": p["slug"], "name": p.get("name") or p["slug"], "models": p.get("models") or [],
+                      "is_current": bool(p.get("is_current"))} for p in opts.get("providers", [])]
+        except Exception:  # an unreachable endpoint must not hide the composer
+            provs = []
+        caps = session_settings.reasoning_caps(ep.get("model") or "")
+        return {"version": 1,
+                "skills": [{"name": s["name"], "description": s["description"]} for s in list_skills()],
+                "commands": [{"name": "new", "description": "Mulai percakapan baru"},
+                             {"name": "perbaiki", "description": "Diagnosis & perbaikan diri"},
+                             {"name": "undo", "description": "Pulihkan versi sebelumnya"}],
+                "snippets": [], "mentions": [],
+                "models": {"model": ep.get("model") or "", "provider": ep.get("provider") or "", "providers": provs},
+                "reasoning": {"supported": caps["supported"], "levels": caps["levels"],
+                              "labels": session_settings.REASONING_LABELS, "default": "default",
+                              "current": session_settings.effective_effort(cfg, rec) if rec else "",
+                              "pc_default": session_settings.normalize_effort(
+                                  cfgmod.get_path(cfg, "agent.reasoning_effort")) or ""},
+                "features": {"prompt_fields": ["reasoning_effort"]}}
+
+    # ---- self-repair restart -------------------------------------------------
+    def request_restart(self, session_id: str = "") -> None:
+        """Restart this core process once every running turn has finished.
+
+        Chats are already on disk; the new process reports back into ``session_id``."""
+        from neovarch import selfedit
+        notice = {"session_id": session_id, "requested_at": time.time(), "version": __version__}
+        (selfedit.self_dir() / "restart.json").write_text(json.dumps(notice), encoding="utf-8")
+        if getattr(self, "_restart_task", None) is None:
+            self._restart_task = asyncio.get_running_loop().create_task(self._restart_when_idle())
+
+    async def _restart_when_idle(self) -> None:
+        from neovarch.logs import log
+        deadline = time.monotonic() + 600
+        await asyncio.sleep(0.5)
+        while time.monotonic() < deadline and any(l.status == "running" for l in self.live.values()):
+            await asyncio.sleep(0.5)
+        for live in list(self.live.values()):
+            self.store.save(live.rec)
+        self.broadcast_event("core.restarting", None, {"port": self.port})
+        await asyncio.sleep(0.3)  # let the event reach the clients
+        log.info("self-repair restart: re-executing the core on port %s", self.port)
+        argv = ([sys.executable, *sys.argv[1:]] if getattr(sys, "frozen", False)
+                else [sys.executable, "-m", "neovarch", *sys.argv[1:]])
+        os.environ["NEOVARCH_RESTART_PORT"] = str(self.port)
+        os.execv(argv[0], argv)
+
+    def consume_restart_notice(self) -> None:
+        """First boot after a restart: tell the chat that asked for it how it went."""
+        from neovarch import selfedit
+        path = selfedit.self_dir() / "restart.json"
+        try:
+            notice = json.loads(path.read_text(encoding="utf-8"))
+            path.unlink()
+        except (OSError, ValueError):
+            return
+        sid = str(notice.get("session_id") or "")
+        rec = self.store.find(sid) if sid else None
+        if not rec:
+            return
+        took = time.time() - float(notice.get("requested_at") or time.time())
+        rec.setdefault("messages", []).append({
+            "role": "assistant", "ts": time.time(), "command": "restart",
+            "content": (f"\u2705 Core Neovarch sudah dimulai ulang ({took:.0f} dtk, versi {__version__}). "
+                        "Perubahan sudah aktif; obrolan ini tetap tersimpan. Kalau ada yang aneh, ketik /undo "
+                        "untuk memulihkan perubahan terakhir atau /perbaiki untuk diagnosis.")})
+        self.store.save(rec)
 
     # ---- plumbing --------------------------------------------------------
     def conns_for(self, sid: str | None) -> list[Conn]:
@@ -661,6 +769,11 @@ class Gateway:
             if live.status == "running":
                 raise RpcError(-32010, "a turn is already running in this session")
             conn.attached.add(live.id)
+            if p.get("reasoning_effort"):  # the phone's pick rides on the prompt; it sticks to the chat
+                try:
+                    self.set_session_effort(live.id, p.get("reasoning_effort"))
+                except ValueError as exc:
+                    raise RpcError(-32602, str(exc)) from None
             live.pending_attachments = []
             live.submit(text, atts)
             res: dict[str, Any] = {"ok": True, "session_id": live.id, "status": "running"}
@@ -727,7 +840,21 @@ class Gateway:
                 raise RpcError(COMPANY_RPC_CODES.get(exc.code, -32602), str(exc)) from None
         if method == "commands.catalog":
             return {"commands": [{"name": "new", "description": "Start a new chat"},
-                                 {"name": "model", "description": "Show the configured model"}], "skills": list_skills()}
+                                 {"name": "model", "description": "Show the configured model"},
+                                 {"name": "perbaiki", "description": "Diagnosis & perbaikan diri / self-diagnose and fix"},
+                                 {"name": "fix", "description": "Self-diagnose and fix (sama dengan /perbaiki)"},
+                                 {"name": "undo", "description": "Pulihkan versi sebelumnya / undo the agent's last change"}],
+                    "skills": list_skills()}
+        if method == "self.changes":
+            from neovarch import selfedit
+            return {"changes": selfedit.entries(int(p.get("limit") or 50))}
+        if method == "self.undo":
+            from neovarch import selfedit
+            return selfedit.undo(p.get("change_id") or None, session_id=str(p.get("session_id") or ""))
+        if method == "self.diagnose":
+            from neovarch import diagnose
+            res = diagnose.run(self.store, str(p.get("session_id") or ""), apply=bool(p.get("apply", True)))
+            return {"report": res["report"], "findings": res["findings"], "applied": res["applied"]}
         if method == "profiles.list":
             return {"profiles": [{"name": "default", "active": True, "path": str(neovarch_home())}], "active": "default"}
         if method == "process.list":
@@ -843,13 +970,15 @@ class Gateway:
                 cfgmod.set_path(cfg, "display.show_reasoning", session_settings.DISPLAY_WORDS[word])
                 cfgmod.save_config(cfg)
                 return {"ok": True, "value": word}
+            if live is not None and str(p.get("scope") or "") != "global":
+                try:
+                    level = self.set_session_effort(live.id, word).get("reasoning_effort") or "default"
+                except ValueError:
+                    raise RpcError(-32602, f"unknown reasoning level: {value}") from None
+                return {"ok": True, "value": level}
             level = session_settings.normalize_effort(word)
             if level is None:
                 raise RpcError(-32602, f"unknown reasoning level: {value}")
-            if live is not None and str(p.get("scope") or "") != "global":
-                live.rec["reasoning_effort"] = level
-                self.store.save(live.rec)
-                self.broadcast_event("session.info", live.id, live.info())
             else:
                 cfgmod.set_path(cfg, "agent.reasoning_effort", level)
                 cfgmod.save_config(cfg)
@@ -1277,7 +1406,13 @@ def build_app(gw: Gateway) -> web.Application:
         if "title" in body:
             rec["title"] = str(body["title"] or "")
             gw.store.save(rec)
-        return web.json_response({"ok": True, **summarize(rec)})
+        if "reasoning_effort" in body:  # the phone's "Penalaran" for this chat
+            try:
+                rec = gw.set_session_effort(rec["id"], body.get("reasoning_effort"))
+            except ValueError as exc:
+                return web.json_response({"detail": str(exc)}, status=422)
+        return web.json_response({"ok": True, **summarize(rec),
+                                  "reasoning_effort": session_settings.effective_effort(cfgmod.load_config(), rec)})
 
     async def config_get(_):
         return web.json_response(cfgmod.load_config())
@@ -2043,6 +2178,32 @@ def build_app(gw: Gateway) -> web.Application:
     r.add_get("/api/memory", memory_get)
     r.add_post("/api/memory/reset", memory_reset)
     r.add_get("/api/logs", logs_get)
+
+    # ---- self-repair: change log, undo, diagnosis (docs/self-repair.md) --------
+    async def self_changes(request):
+        from neovarch import selfedit
+        return web.json_response({"changes": selfedit.entries(int(request.query.get("limit") or 50))})
+
+    async def self_undo(request):
+        from neovarch import selfedit
+        body = await _json(request)
+        return web.json_response(selfedit.undo(body.get("change_id") or None, session_id=str(body.get("session_id") or "")))
+
+    async def self_diagnose(request):
+        from neovarch import diagnose
+        body = await _json(request) if request.method == "POST" else {}
+        res = await asyncio.to_thread(diagnose.run, gw.store, str(body.get("session_id") or ""),
+                                      request.method == "POST" and body.get("apply", True) is not False)
+        return web.json_response({"report": res["report"], "findings": res["findings"], "applied": res["applied"]})
+
+    async def composer_catalog(request):
+        return web.json_response(gw.composer_catalog(request.query.get("session_id") or ""))
+
+    r.add_get("/api/composer/catalog", composer_catalog)
+    r.add_get("/api/self/changes", self_changes)
+    r.add_post("/api/self/undo", self_undo)
+    r.add_get("/api/self/diagnose", self_diagnose)
+    r.add_post("/api/self/diagnose", self_diagnose)
     r.add_get("/api/account/github", account_get)
     r.add_post("/api/account/github", account_connect)
     r.add_delete("/api/account/github", account_disconnect)
@@ -2203,7 +2364,16 @@ def config_schema_payload() -> dict:
         prov_opts += [f"custom:{e['id']}" for e in providers.endpoints_response(cfgmod.load_config())["endpoints"]]
     except Exception:
         pass
-    return {"category_order": ["model", "chat", "workspace", "safety", "advanced"], "fields": {
+    return {"category_order": ["model", "chat", "agent", "workspace", "safety", "advanced"], "fields": {
+        "agent.escalate_on_stuck": {"category": "agent", "type": "boolean", "label": "Naik ke model lebih kuat saat buntu",
+                                    "description": "Kalau agen gagal 2 kali berturut-turut di satu langkah, langkah itu "
+                                                   "saja memakai model kuat di bawah, lalu kembali ke model bawaan."},
+        "agent.escalation_model": {"category": "agent", "type": "string", "clearable": True,
+                                   "label": "Model kuat untuk saat buntu",
+                                   "description": "ID model yang lebih kuat (mis. dari 9Router atau endpoint kustom)."},
+        "agent.escalation_provider": {"category": "agent", "type": "select", "options": prov_opts,
+                                      "label": "Penyedia model kuat",
+                                      "description": "Penyedia untuk model kuat (kosong = penyedia bawaan)."},
         "model.default": {"category": "model", "type": "string", "description": "ID model yang dipakai obrolan baru."},
         "model.provider": {"category": "model", "type": "select", "options": prov_opts,
                            "description": "Penyedia model (preset, custom, atau custom:<endpoint>)."},
@@ -2265,6 +2435,12 @@ async def _dispatch(gw: Gateway, conn: Conn, frame: dict) -> None:
 
 
 def serve(host: str, port: int, *, isolated: bool = False) -> int:
+    # After a self-repair restart the new process takes the same port, so the
+    # desktop and phone reconnect to the address they already know.
+    restart_port = os.environ.pop("NEOVARCH_RESTART_PORT", "")
+    if restart_port.isdigit() and not port:
+        port = int(restart_port)
+
     async def main() -> None:
         gw = Gateway(isolated)
         runner = web.AppRunner(build_app(gw), access_log=None)
@@ -2279,6 +2455,7 @@ def serve(host: str, port: int, *, isolated: bool = False) -> int:
         gw.port = sockets[0].getsockname()[1] if sockets else port
         from neovarch import logs as logmod
         logmod.setup().info("gateway listening on %s:%s (version %s)", host, gw.port, __version__)
+        gw.consume_restart_notice()
         # The desktop waits for this exact sentinel (legacy wire name, kept for compatibility).
         print(f"HERMES_BACKEND_READY port={gw.port}", flush=True)
         print(f"Neovarch gateway listening on {host}:{gw.port} (home {neovarch_home()})", flush=True)
