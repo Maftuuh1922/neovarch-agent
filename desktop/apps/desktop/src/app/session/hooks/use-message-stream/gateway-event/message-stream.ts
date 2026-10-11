@@ -395,7 +395,11 @@ export function handleMessageStreamEvent(ctx: GatewayEventContext): boolean {
     // Keyed by session so only one window beeps when several are open.
     playCompletionSound(sessionId)
 
-    const finalText = coerceGatewayText(payload?.text) || coerceGatewayText(payload?.rendered)
+    // Files the agent sent with send_file show under its reply (MEDIA: rendering).
+    const finalText = withAgentAttachments(
+      coerceGatewayText(payload?.text) || coerceGatewayText(payload?.rendered),
+      payload?.attachments
+    )
 
     completeAssistantMessage(
       sessionId,
