@@ -12,6 +12,7 @@ import 'package:highlight/languages/all.dart' show allLanguages;
 
 import '../../theme/app_theme.dart';
 import '../../remote/ui/glass/liquid_glass.dart' show GlassCode, GlassForeground;
+import 'markdown_table_normalize.dart';
 
 typedef LinkTap = void Function(String url);
 
@@ -107,9 +108,14 @@ class MarkdownView extends StatelessWidget {
                   for (var c = 0; c < cols; c++)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      child: Text.rich(TextSpan(
+                      // Long cells wrap instead of making one very wide column;
+                      // the table itself scrolls sideways.
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: 280 * scale),
+                        child: Text.rich(TextSpan(
                           children: inline(context, c < rows[r].length ? rows[r][c] : '',
                               r == 0 ? base.copyWith(fontWeight: FontWeight.w600, fontSize: 13.5 * scale) : base.copyWith(fontSize: 13.5 * scale)))),
+                      ),
                     ),
                 ],
               ),
@@ -325,7 +331,9 @@ class _Block {
 }
 
 List<_Block> _parse(String src) {
-  final lines = src.replaceAll('\r\n', '\n').split('\n');
+  // One-line tables (common with some models while streaming) are put back
+  // on separate lines first, so they render as a scrollable table.
+  final lines = normalizeMarkdownTables(src.replaceAll('\r\n', '\n')).split('\n');
   final out = <_Block>[];
   var i = 0;
   final listRe = RegExp(r'^(\s*)([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?(.*)$');

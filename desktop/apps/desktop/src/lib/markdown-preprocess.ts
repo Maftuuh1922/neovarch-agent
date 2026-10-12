@@ -6,6 +6,7 @@ import { mediaKind, mediaMarkdownHref } from '@/lib/media'
 import { previewMarkdownHref } from '@/lib/preview-targets'
 import { stripPreviewTargets } from '@/lib/preview-targets'
 import { linkifySessionRefs } from '@/lib/session-refs'
+import { normalizeMarkdownTables } from './markdown-table-normalize'
 
 // Same tag set as agent/think_scrubber.py THINK_TAG_NAMES, plus desktop-only
 // `scratchpad`/`analysis`.
@@ -1135,7 +1136,9 @@ export function preprocessMarkdown(text: string): string {
   const cleaned = stripReasoningBlocks(text).replace(PREVIEW_MARKER_RE, '')
   const scrubbed = scrubBacktickNoise(cleaned)
   const normalizedFences = normalizeFenceBlocks(scrubbed)
-  const strippedEmptyFences = stripEmptyFenceBlocks(normalizedFences)
+  // One-line tables (header, delimiter and rows streamed onto a single line)
+  // are put back on separate lines so GFM sees a table.
+  const strippedEmptyFences = normalizeMarkdownTables(stripEmptyFenceBlocks(normalizedFences))
   // Anchors come from the response's `Sources` section only: a marker
   // survives the orphan strip exactly when this response lists a matching
   // `[n] url` entry there (see collectSourceListIds).
