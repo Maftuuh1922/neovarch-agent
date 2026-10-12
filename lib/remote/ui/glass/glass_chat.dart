@@ -14,6 +14,7 @@ import '../../../ui/widgets/motion.dart' show reduceMotion;
 import 'glass_style.dart';
 import 'glass_tone.dart';
 import 'liquid_glass.dart';
+import '../nv_mascot_avatar.dart';
 
 const _rBubble = BorderRadius.all(Radius.circular(20));
 
@@ -138,7 +139,8 @@ class GlassSenderLabel extends StatelessWidget {
   const GlassSenderLabel(this.label, {super.key, this.live = false, this.avatar});
   final String label;
   final bool live;
-  /// The agent's avatar (agent-identity-spec, 18 dp); null = the Neovarch mark.
+  /// The agent's avatar (agent-identity-spec, 18 dp); null = the Neovarch
+  /// mascot, animated while [live] (the turn is running), static otherwise.
   final Widget? avatar;
   @override
   Widget build(BuildContext context) => Padding(
@@ -153,14 +155,7 @@ class GlassSenderLabel extends StatelessWidget {
             child: Builder(builder: (context) {
               final t = GlassForeground.maybeOf(context)!.tone;
               return Row(mainAxisSize: MainAxisSize.min, children: [
-                avatar ??
-                    Container(
-                      width: 18,
-                      height: 18,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(color: NV.red, shape: BoxShape.circle),
-                      child: Text('N', style: TextStyle(fontFamily: NV.serif, fontSize: 12, height: 1.1, color: NV.onRed, fontWeight: FontWeight.w700)),
-                    ),
+                avatar ?? NvMascotAvatar(size: 18, animated: live),
                 const SizedBox(width: 7),
                 Flexible(child: Text(label.toUpperCase(), maxLines: 1, overflow: TextOverflow.ellipsis, style: NV.monoLabel(size: 9.5, color: t.secondary))),
                 if (live) ...[const SizedBox(width: 7), _LiveDot(color: t.accent)],

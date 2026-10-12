@@ -6,6 +6,8 @@
  */
 import { useStore } from '@nanostores/react'
 
+import mascotAnimated from '@/assets/neovarch/neovarch-avatar-128.webp'
+import mascotStatic from '@/assets/neovarch/neovarch-avatar-128-static.png'
 import { cn } from '@/lib/utils'
 
 import { coatFor, OFFICE3D_STATUS, type SceneStatus, sceneStatusOf } from './office3d-model'
@@ -133,7 +135,7 @@ export function OfficeAgentAvatar({
 }
 
 /** Glass pill above an agent turn: avatar 18 + "NAME · PC" + a pulse while it streams.
- *  Without an office agent for the session: the Neovarch mark + "NEOVARCH · PC". */
+ *  Without an office agent for the session: the Neovarch mascot + "NEOVARCH · PC". */
 export function AgentSenderPill({ live = false, sessionIds }: { live?: boolean; sessionIds: (null | string)[] }) {
   const office = useStore($office)
   const agent = agentForSession(office, ...sessionIds)
@@ -144,12 +146,38 @@ export function AgentSenderPill({ live = false, sessionIds }: { live?: boolean; 
       {agent ? (
         <AgentAvatar id={agent.id} name={agent.name} size={18} />
       ) : (
-        <span aria-hidden="true" className="nv-sender-mark">
-          N
-        </span>
+        <NeovarchMascot live={live} size={18} />
       )}
       <span className="nv-sender-label">{`${agent?.name ?? 'Neovarch'}${pc}`}</span>
       {live && <i aria-hidden="true" className="nv-sender-live" />}
     </div>
+  )
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    : false
+}
+
+/** The Neovarch mascot (v1.4.7, replaces the orange "N"): the animated
+ *  thinking loop only while the agent's turn runs, the still frame when idle,
+ *  done or failed — and always still under prefers-reduced-motion. Same assets
+ *  as the phone (assets/brand/neovarch_avatar_128*.{webp,png}). */
+export function NeovarchMascot({ live = false, size = 18 }: { live?: boolean; size?: number }) {
+  const animate = live && !prefersReducedMotion()
+
+  return (
+    <img
+      alt=""
+      aria-hidden="true"
+      className="nv-sender-mark nv-sender-mascot"
+      data-animated={animate || undefined}
+      draggable={false}
+      height={size}
+      src={animate ? mascotAnimated : mascotStatic}
+      style={{ height: size, width: size }}
+      width={size}
+    />
   )
 }

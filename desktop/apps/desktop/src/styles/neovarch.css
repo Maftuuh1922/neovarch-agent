@@ -2748,6 +2748,13 @@
   font-weight: 700;
   line-height: 1;
 }
+.nv-sender-mascot {
+  display: block;
+  padding: 0;
+  background: transparent;
+  object-fit: cover;
+  user-select: none;
+}
 .nv-sender-label {
   overflow: hidden;
   text-overflow: ellipsis;

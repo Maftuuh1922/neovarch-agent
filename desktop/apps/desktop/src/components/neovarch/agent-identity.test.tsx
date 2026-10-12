@@ -95,6 +95,15 @@ describe('agent identity (agent-identity-spec.md)', () => {
     rerender(<AgentSenderPill sessionIds={['other']} />)
     expect(screen.getByText('Neovarch · pc-rumah')).toBeTruthy()
     expect(document.querySelector('.nv-sender-live')).toBeNull()
+    // No office agent: the mascot (static when idle), never the old "N" mark.
+    const still = document.querySelector('img.nv-sender-mascot') as HTMLImageElement
+    expect(still).not.toBeNull()
+    expect(still.getAttribute('src')).toMatch(/neovarch-avatar-128-static\.png/)
+    expect(still.dataset.animated).toBeUndefined()
+    rerender(<AgentSenderPill live sessionIds={['other']} />)
+    const running = document.querySelector('img.nv-sender-mascot') as HTMLImageElement
+    expect(running.getAttribute('src')).toMatch(/neovarch-avatar-128\.webp/)
+    expect(running.dataset.animated).toBe('true')
   })
 
   it('pill shows once per turn: only on the assistant message that opens it', () => {
