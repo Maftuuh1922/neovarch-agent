@@ -29,10 +29,49 @@ enum AttachSource { gallery, camera, file }
 ImageProvider Function(Uri url, Map<String, String> headers) remoteImageProvider =
     (url, headers) => NetworkImage(url.toString(), headers: headers);
 
-/// Test seam: picking from the platform (gallery/camera/file).
-Future<({String name, Uint8List bytes, String? mime})?> Function(AttachSource src) attachPicker = _platformPick;
+typedef PickedFile = ({String name, Uint8List bytes, String? mime});
 
-Future<({String name, Uint8List bytes, String? mime})?> _platformPick(AttachSource src) async {
+/// Test seam: picking ONE file from the platform (gallery/camera/file).
+Future<PickedFile?> Function(AttachSource src) attachPicker = _platformPick;
+
+/// Test seam: picking SEVERAL files at once (gallery multi-select, file picker
+/// multi-select; the camera is always one shot). [max] is how many still fit in
+/// the message. Null = the platform pickers, or the single-file [attachPicker]
+/// when a test replaced it.
+Future<List<PickedFile>> Function(AttachSource src, int max)? attachManyPicker;
+
+Future<List<PickedFile>> _pickMany(AttachSource src, int max) async {
+  if (attachManyPicker != null) return attachManyPicker!(src, max);
+  if (src == AttachSource.camera || attachPicker != _platformPick) {
+    final one = await attachPicker(src);
+    return one == null ? const [] : [one];
+  }
+  if (src == AttachSource.file) {
+    final m = await deviceCall<Map>('pickFilesForUpload', {'mime': '*/*', 'max': max});
+    final out = <PickedFile>[];
+    final tooBig = <String>[];
+    for (final e in (m?['files'] as List? ?? const [])) {
+      if (e is! Map) continue;
+      if (e['error'] == 'too_big') {
+        tooBig.add('${e['name'] ?? 'File'}');
+        continue;
+      }
+      if (e['path'] == null) continue;
+      final f = File('${e['path']}');
+      out.add((name: '${e['name'] ?? 'berkas'}', bytes: await f.readAsBytes(), mime: e['mime'] as String?));
+      unawaited(f.delete().then((_) {}, onError: (_) {}));
+    }
+    if (out.isEmpty && tooBig.isNotEmpty) throw AttachError('${tooBig.join(', ')} terlalu besar (maks 25 MB).');
+    if (tooBig.isNotEmpty) _lastSkipped = '${tooBig.join(', ')} terlalu besar (maks 25 MB), dilewati.';
+    return out;
+  }
+  final xs = await ImagePicker().pickMultiImage(maxWidth: 2400, maxHeight: 2400, imageQuality: 88, limit: max < 2 ? null : max);
+  return [for (final x in xs.take(max)) (name: x.name, bytes: await x.readAsBytes(), mime: x.mimeType)];
+}
+
+String? _lastSkipped;
+
+Future<PickedFile?> _platformPick(AttachSource src) async {
   if (src == AttachSource.file) {
     final m = await deviceCall<Map>('pickFileForUpload', {'mime': '*/*'});
     if (m == null) return null;
@@ -67,10 +106,17 @@ class AttachError implements Exception {
 
 Future<void> attachFrom(BuildContext context, RemoteController r, AttachSource src) async {
   try {
-    final picked = await attachPicker(src);
-    if (picked == null) return;
-    final err = await r.addAttachment(picked.name, picked.bytes, mime: picked.mime);
-    if (err != null && context.mounted) toast(context, err);
+    final room = kMaxAttachmentsPerMessage - r.pendingAttachments.length;
+    if (room <= 0) {
+      if (context.mounted) toast(context, kTooManyAttachments);
+      return;
+    }
+    _lastSkipped = null;
+    final picked = await _pickMany(src, room);
+    if (picked.isEmpty) return;
+    final err = await r.addAttachments(picked);
+    final note = [if (err != null) err, if (_lastSkipped != null) _lastSkipped!].join('\n');
+    if (note.isNotEmpty && context.mounted) toast(context, note);
   } catch (e) {
     if (context.mounted) toast(context, friendlyRemoteError(e));
   }
@@ -110,12 +156,12 @@ Future<void> showAttachSheet(BuildContext context, RemoteController r) => showPa
         child: Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Padding(padding: EdgeInsets.fromLTRB(20, 0, 16, 12), child: NvSheetTitle(kicker: 'lampiran · maks 25 MB', title: 'Lampirkan')),
+            const Padding(padding: EdgeInsets.fromLTRB(20, 0, 16, 12), child: NvSheetTitle(kicker: 'lampiran · maks $kMaxAttachmentsPerMessage file · 25 MB per file', title: 'Lampirkan')),
             NvList(children: [
               for (final (src, icon, label, sub) in const [
-                (AttachSource.gallery, CupertinoIcons.photo_on_rectangle, 'Foto / Galeri', 'Pilih gambar dari galeri'),
+                (AttachSource.gallery, CupertinoIcons.photo_on_rectangle, 'Foto / Galeri', 'Pilih satu atau beberapa gambar'),
                 (AttachSource.camera, CupertinoIcons.camera, 'Kamera', 'Ambil foto sekarang'),
-                (AttachSource.file, CupertinoIcons.doc, 'File', 'PDF, kode, teks, dan lainnya'),
+                (AttachSource.file, CupertinoIcons.doc, 'File', 'Satu atau beberapa file: PDF, kode, teks'),
               ])
                 NvRow(
                   key: ValueKey('attach-${src.name}'),

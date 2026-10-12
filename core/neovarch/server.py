@@ -899,6 +899,8 @@ class Gateway:
             atts = live.pending_attachments + [a for a in atts if a["id"] not in {x["id"] for x in live.pending_attachments}]
             if not text.strip() and not atts:
                 raise RpcError(-32602, "text is required")
+            if len(atts) > upmod.MAX_PER_MESSAGE:
+                raise RpcError(-32602, upmod.TOO_MANY)
             conn.attached.add(live.id)
             if live.status == "running":
                 # v1.4.7: never refuse — the message waits in the session's queue and is
@@ -1207,6 +1209,10 @@ class Gateway:
             self.uploads.delete(meta["id"])
             return {"attached": False, "message": f"{meta['name']} bukan gambar."}
         if live:
+            if len(live.pending_attachments) >= upmod.MAX_PER_MESSAGE:
+                self.uploads.delete(meta["id"])
+                return {"attached": False, "ok": False, "message": upmod.TOO_MANY,
+                        "count": len(live.pending_attachments)}
             live.pending_attachments.append(meta)
         return {"attached": True, "path": meta["path"], "name": meta["name"], "bytes": meta["size"],
                 "count": len(live.pending_attachments) if live else 1, "id": meta["id"],

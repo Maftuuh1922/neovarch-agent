@@ -48,6 +48,9 @@ class MainActivity : FlutterActivity() {
     private val permRequests = HashMap<Int, MethodChannel.Result>()
     private val docRequests = HashMap<Int, MethodChannel.Result>()
     private val uploadRequests = HashMap<Int, MethodChannel.Result>()
+    // Multi-select pickers (v1.4.7 multi-lampiran): request code -> (result, max files).
+    private val multiUploadRequests = HashMap<Int, Pair<MethodChannel.Result, Int>>()
+    private var uploadSeq = 0
     private var nextCode = 4100
     /** Where a tapped notification wants the app to go ("approvals"); taken once by Dart. */
     private var pendingRoute: String? = null
@@ -287,6 +290,19 @@ class MainActivity : FlutterActivity() {
                 @Suppress("DEPRECATION")
                 startActivityForResult(i, code)
             }
+            // Several documents/images at once (multi-lampiran): returns {files: [...]},
+            // each entry like pickFileForUpload's (path/name/mime or error too_big).
+            "pickFilesForUpload" -> {
+                val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = call.argument<String>("mime") ?: "*/*"
+                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                }
+                val code = nextCode++
+                multiUploadRequests[code] = Pair(result, (call.argument<Int>("max") ?: 10).coerceAtLeast(1))
+                @Suppress("DEPRECATION")
+                startActivityForResult(i, code)
+            }
             // An image on the clipboard (copied from a browser / gallery / screenshot).
             "clipboardImage" -> Thread {
                 val out = try { clipboardImage() } catch (e: Exception) { null }
@@ -401,7 +417,7 @@ class MainActivity : FlutterActivity() {
         if (size > uploadLimit) return mapOf("error" to "too_big", "size" to size, "name" to name)
         val dir = java.io.File(cacheDir, "uploads").apply { mkdirs() }
         val safe = name.replace(Regex("[^A-Za-z0-9._ -]"), "_").ifEmpty { fallbackName }
-        val f = java.io.File(dir, "${System.currentTimeMillis()}-$safe")
+        val f = java.io.File(dir, "${System.currentTimeMillis()}-${uploadSeq++}-$safe")
         var copied = 0L
         contentResolver.openInputStream(uri)?.use { input ->
             f.outputStream().use { out ->
@@ -521,6 +537,26 @@ class MainActivity : FlutterActivity() {
             val text = if (resultCode == Activity.RESULT_OK)
                 data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull() else null
             sp.success(text)
+            return
+        }
+        val multi = multiUploadRequests.remove(requestCode)
+        if (multi != null) {
+            val (res, max) = multi
+            val uris = ArrayList<Uri>()
+            if (resultCode == Activity.RESULT_OK) {
+                val clip = data?.clipData
+                if (clip != null) for (k in 0 until clip.itemCount) clip.getItemAt(k)?.uri?.let { uris.add(it) }
+                else data?.data?.let { uris.add(it) }
+            }
+            if (uris.isEmpty()) { res.success(null); return }
+            Thread {
+                val files = ArrayList<Map<String, Any?>>()
+                for (u in uris.take(max)) {
+                    files.add(try { copyForUpload(u, "berkas") } catch (e: Exception) { mapOf("error" to "failed", "name" to (u.lastPathSegment ?: "berkas")) })
+                }
+                val out = hashMapOf<String, Any?>("files" to files, "skipped" to (uris.size - files.size).coerceAtLeast(0))
+                Handler(Looper.getMainLooper()).post { res.success(out) }
+            }.start()
             return
         }
         val up = uploadRequests.remove(requestCode)
