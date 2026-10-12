@@ -115,7 +115,7 @@ Future<void> attachFrom(BuildContext context, RemoteController r, AttachSource s
     final picked = await _pickMany(src, room);
     if (picked.isEmpty) return;
     final err = await r.addAttachments(picked);
-    final note = [if (err != null) err, if (_lastSkipped != null) _lastSkipped!].join('\n');
+    final note = [?err, ?_lastSkipped].join('\n');
     if (note.isNotEmpty && context.mounted) toast(context, note);
   } catch (e) {
     if (context.mounted) toast(context, friendlyRemoteError(e));
