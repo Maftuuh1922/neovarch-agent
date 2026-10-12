@@ -435,6 +435,7 @@ export const FIELD_LABELS: Record<string, string> = defineFieldCopy({
     repoScanExcludePaths: 'Excluded Repository Paths'
   },
   agent: {
+    harnessMode: 'Agent brain',
     maxTurns: 'Max Agent Steps',
     systemPrompt: 'Extra Instructions',
     imageInputMode: 'Image Attachments',
@@ -627,6 +628,8 @@ export const FIELD_DESCRIPTIONS: Record<string, string> = defineFieldCopy({
       "Local browsing uses your real logins. Neovarch copies your default browser's profile (cookies, logins, preferences) into a managed snapshot and drives it with its packaged Chromium — your live profile is never opened directly, and the copy is refreshed from it on each run. Also lets the agent open a local real-profile session on request even when a cloud browser backend is configured. Only Chromium browsers (Chrome, Edge, Brave, Brave Origin, Chromium) are supported; a non-Chromium default fails with a clear message. Off by default."
   },
   agent: {
+    harnessMode:
+      'Tempest = Neovarch Tempest, the new brain (default): lean prompt, lint/test check before finishing, restorable checkpoints. Legacy = the old loop, if you need to switch back.',
     systemPrompt: 'Extra instructions the agent follows in every chat, after SOUL.md.',
     imageInputMode: 'Controls how image attachments are sent to the model.',
     maxTurns: 'Upper bound for tool-calling turns before Neovarch stops a run.'
@@ -727,7 +730,7 @@ export const SECTIONS: DesktopConfigSection[] = [
     id: 'agent',
     label: 'Agent',
     icon: Cpu,
-    keys: ['agent.escalate_on_stuck', 'agent.escalation_model', 'agent.escalation_provider']
+    keys: ['agent.harness_mode', 'agent.escalate_on_stuck', 'agent.escalation_model', 'agent.escalation_provider']
   },
   {
     id: 'appearance',

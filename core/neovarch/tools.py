@@ -139,11 +139,24 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
         if choice in ("session", "always"):
             ctx.session_allow.add("@outside:" + str(workdir))
     started = time.monotonic()
-    proc = await asyncio.create_subprocess_shell(
+    spawn = asyncio.ensure_future(asyncio.create_subprocess_shell(
         command, cwd=str(workdir), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
         env={**os.environ, **_account_env(), "NEOVARCH_CORE": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
         start_new_session=os.name != "nt",
-    )
+    ))
+    try:
+        proc = await asyncio.shield(spawn)
+    except asyncio.CancelledError:
+        # Stop landed while the command was still being started: the process already runs (and
+        # may have started children), so finish getting its handle and kill the whole group.
+        # Without this, asyncio only SIGKILLs the shell and a `sleep 120 &` child lives on.
+        try:
+            proc = await asyncio.wait_for(asyncio.shield(spawn), 5)
+        except BaseException:
+            proc = None
+        if proc is not None:
+            await asyncio.shield(kill_process_tree(proc))
+        raise
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
@@ -160,6 +173,15 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
 async def kill_process_tree(proc) -> None:
     """Kill a command started with start_new_session=True together with every process
     it spawned (its process group); on Windows, taskkill /T kills the tree."""
+    if os.name != "nt" and proc.returncode is not None:
+        # The shell itself is already gone (asyncio's transport can SIGKILL just the leader when
+        # the cancelled communicate() is torn down first), but a background child it started
+        # (``sleep 120 &``) still sits in its process group: kill the group anyway. The pgid
+        # cannot be reused while any member is alive, so this never hits a stranger.
+        try:
+            os.killpg(proc.pid, 9)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
     if proc.returncode is None:
         try:
             if os.name == "nt":

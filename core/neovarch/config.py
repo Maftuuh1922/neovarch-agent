@@ -17,8 +17,8 @@ Shape (all keys optional)::
     agent:
       max_turns: 150                # checkpoint: a turn still making progress continues past it (see turn_budget.py)
       system_prompt: ""             # extra instructions appended to SOUL.md
-      harness_mode: legacy          # legacy (default) | tempest  (opt-in prototype, see tempest.py; "tempa" = old alias)
-      tempest_profile: ringan       # ringan | tinggi | otomatis   (only with harness_mode: tempest)
+      harness_mode: tempest         # tempest (default when unset) | legacy  (old loop, kept; see tempest.py; "tempa" = old alias)
+      tempest_profile: ringan       # ringan | tinggi | otomatis   (only when Tempest runs)
     memory:
       obsidian_vault: ""            # folder of an Obsidian vault used as long-term memory
       obsidian_enabled: true        # false = keep the path but stop using the vault

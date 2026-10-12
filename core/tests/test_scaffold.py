@@ -186,7 +186,8 @@ async def test_weak_model_unparseable_args_get_the_schema(home, tmp_path, monkey
 
 
 async def test_failing_first_attempt_then_verify_then_retry_succeeds(home, tmp_path, monkeypatch):
-    _weak(home)
+    # the scaffold self-check runs on the legacy loop; Tempest has its own claim/verify gates
+    _weak(home, {"agent.harness_mode": "legacy"})
     py = sys.executable
     calls = _script(monkeypatch, [
         _tool("write_file", '{"path": "calc.py", "content": "def add(a, b)\\n    return a + b\\n"}'),

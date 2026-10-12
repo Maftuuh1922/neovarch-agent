@@ -42,6 +42,8 @@ SETTINGS: dict[str, dict[str, Any]] = {
     "agent.max_turn_minutes": {"type": "int", "label": "Batas waktu per giliran (menit)", "min": 1, "max": 1440},
     "agent.max_turn_tokens": {"type": "int", "label": "Batas token per giliran", "min": 10000, "max": 100000000},
     "agent.reasoning_effort": {"type": "str", "label": "Tingkat penalaran bawaan"},
+    "agent.harness_mode": {"type": "str", "label": "Otak agen (tempest = bawaan, legacy = loop lama)",
+                           "choices": ["tempest", "legacy"]},
     "agent.escalate_on_stuck": {"type": "bool", "label": "Naik ke model lebih kuat saat buntu"},
     "agent.escalation_model": {"type": "str", "label": "Model kuat untuk saat buntu"},
     "agent.escalation_provider": {"type": "str", "label": "Penyedia model kuat"},

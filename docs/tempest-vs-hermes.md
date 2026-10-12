@@ -2,7 +2,7 @@
 
 Dokumen perbandingan internal untuk pengembang. Hermes Agent (NousResearch/hermes-agent, MIT) hanya dipakai sebagai acuan desain dan pembanding benchmark. **Tidak ada kode Hermes yang disalin ke Neovarch**, dan aplikasi (UI, runtime, path, port) tidak punya koneksi apa pun ke Hermes. Nama Hermes hanya muncul di dokumen ini.
 
-Ditulis 2026-10-12. Tempest = `harness_mode: tempest` (opt-in; `legacy` tetap default aplikasi).
+Ditulis 2026-10-12. Tempest = `harness_mode: tempest`. Sejak 1.4.7 Tempest adalah otak bawaan (nilai kosong = Tempest); `harness_mode: legacy` mengembalikan loop lama.
 
 ## 1. Hermes terbaru: fitur "learning loop" (riset web, 12 Okt 2026)
 
@@ -101,7 +101,7 @@ Yang **belum** ada (bukan stub; memang tidak dibuat di Fase 2):
 
 ### 6a. Apa yang diubah (`core/neovarch/tempest_diet.py`, saklar `agent.tempest_prompt_diet`)
 
-Hanya berlaku di mode Tempest (tetap opt-in; `legacy` tetap default aplikasi). Default `true` di dalam Tempest; `tempest_prompt_diet: false` mengembalikan prompt Fase 2 persis.
+Hanya berlaku di mode Tempest (bawaan sejak 1.4.7; `harness_mode: legacy` mematikannya). Default `true` di dalam Tempest; `tempest_prompt_diet: false` mengembalikan prompt Fase 2 persis.
 
 | Bagian prompt pertama | Fase 2 (main) | Diet |
 |---|---|---|

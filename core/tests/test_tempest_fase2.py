@@ -55,7 +55,8 @@ def _call(cid, tool, **args):
 
 
 def test_fase2_defaults_only_in_tempest():
-    assert tempest.settings({}) is None  # legacy stays the default
+    assert tempest.settings({})["claim_gate"] is True  # Tempest is the default since 1.4.7
+    assert tempest.settings({"agent": {"harness_mode": "legacy"}}) is None
     st = tempest.settings({"agent": {"harness_mode": "tempest"}})
     assert st["session_search"] and st["memory_nudge"] and st["memory_dedup"] and st["claim_gate"]
     assert st["skill_learn"] == "offer" and st["memory_nudge_every"] == 6 and st["skill_min_steps"] == 5

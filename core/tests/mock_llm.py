@@ -55,6 +55,18 @@ def _user_text(content) -> str:
     return " ".join(out)
 
 
+TEMPEST_TAIL = "\n\n# Konteks saat ini"
+
+
+def _strip_tail(text: str) -> str:
+    head, sep, rest = text.partition(TEMPEST_TAIL)
+    if not sep:
+        return text
+    # image parts are rendered after the text part: keep them
+    imgs = [ln for ln in rest.split(" [gambar ")[1:]]
+    return head + "".join(" [gambar " + i for i in imgs)
+
+
 def _decide(messages: list[dict]) -> dict:
     last = messages[-1] if messages else {}
     if last.get("role") == "tool":
@@ -66,6 +78,9 @@ def _decide(messages: list[dict]) -> dict:
         if m.get("role") == "user":
             text = _user_text(m.get("content"))
             break
+    # Tempest (the default harness) appends the per-message context ("# Konteks saat ini": clock,
+    # skill hint, vault notes) to the user turn; the mock reacts to and echoes what the user typed.
+    text = _strip_tail(text)
     low = text.lower()
     if "danger" in low:
         return {"tool": ("shell", {"command": "rm -rf /tmp/neovarch-approval-probe"})}
