@@ -58,6 +58,21 @@ Fase 1 additions (each behind its own ``agent.tempest_*`` switch, see :data:`FEA
    project (outside the repo); a new chat with an unfinished plan gets it recited on its first
    message, long sessions get it recited as a trailing note on every call, and the verify gate
    marks done items verified/unverified (see tempest_progress.py).
+
+Fase 2 additions (the learning loop and the claim gate, all zero extra LLM calls):
+
+11. session search (``tempest_session_search``) - a ``session_search`` tool over a local SQLite
+   FTS5 index of every saved chat (tempest_search.py).
+12. auto-memory (``tempest_memory_nudge``, ``tempest_memory_dedup``) - a reminder rides on the
+   next user message every N turns / after a finished task; duplicate memory lines are dropped
+   before they are written (tempest_memory.py).
+13. skills from experience (``tempest_skill_learn``) - a verified multi-step task becomes a skill
+   offer (or a draft skill in ``auto``); a skill read in a failed turn gets a fail count and a
+   repair hint (tempest_skills.py).
+14. claim gate (``tempest_claim_gate``) - "done/fixed/tests pass" without an execution after
+   the last edit gets one correction, then an explicit "belum terverifikasi" note; every turn
+   reports ``verification`` (verified/unverified/failed/none) in message.complete
+   (tempest_claims.py). ``/rewind`` in a Tempest chat restores the last green checkpoint.
 """
 
 from __future__ import annotations
@@ -99,6 +114,15 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "checkpoint_max_files": 5000,
     "progress": False,             # opt-in: bench showed no pass gain and +3% cost (tempest_progress.py)
     "recite_after": 10,            # tool results in a session before the plan is recited every call
+    # Fase 2 (learning loop + claim gate); see tempest_search / tempest_memory / tempest_skills / tempest_claims
+    "session_search": True,        # session_search tool over an FTS5 index of every saved chat
+    "memory_nudge": True,          # reminder (on the next user message) to persist durable facts
+    "memory_nudge_every": 6,       # user turns without a memory write before a reminder
+    "memory_dedup": True,          # drop memory lines that are already stored (exact / near-identical)
+    "skill_learn": "offer",        # offer | auto | off: skill from a verified multi-step task
+    "skill_min_steps": 5,          # tool calls a verified task needs before it is skill material
+    "claim_gate": True,            # "done" claims need execution evidence after the last edit
+    "claim_retries": 1,            # hidden corrections before the answer is marked unverified
 }
 
 HEAD_LINES = 30

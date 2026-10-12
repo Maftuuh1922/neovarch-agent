@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -15,8 +16,12 @@ from neovarch import scaffold
 from neovarch import session_settings
 from neovarch import tempest
 from neovarch import tempest_ckpt
+from neovarch import tempest_claims
 from neovarch import tempest_lint
+from neovarch import tempest_memory
 from neovarch import tempest_progress
+from neovarch import tempest_search
+from neovarch import tempest_skills
 from neovarch import turn_budget
 from neovarch.llm import Completion, LLMError, stream_chat
 from neovarch.store import SessionStore
@@ -310,10 +315,15 @@ class Agent:
             self.ctx.session_id = str(self.rec.get("id") or "")
         st = tempest.for_model(tempest.settings(cfg), endpoint.get("model") or "")  # None = legacy, unchanged
         self._tempest = st
+        self._verify_summary = ""
         self._changed: list[str] = []
         self._before: dict[str, bytes | None] = {}  # content of each changed file before this turn
         verify_attempts = 0
         lint_attempts = 0
+        claim_attempts = 0
+        harness_verified = False
+        verify_failed = False
+        claim_left = ""
         self._ckpt = None       # ShadowRepo once the first modifying tool of this turn runs
         self._ckpt_base = None  # checkpoint sha taken before that tool
         verify_cmd = tempest.detect_verify(self.ctx.cwd) if st else None
@@ -330,6 +340,8 @@ class Agent:
                     note = tempest_progress.session_start_note(self._progress)
                     if note:  # a fresh chat continues an unfinished plan instead of redoing it
                         user_msg["wire_tail"] += "\n\n" + note
+            for note in self._tempest_notes(st):  # memory reminder / skill offer / skill repair (cache-safe tail)
+                user_msg["wire_tail"] += "\n\n" + note
         if attachments:
             user_msg["attachments"] = [dict(a) for a in attachments]
             if not vision and any(a.get("kind") == "image" for a in attachments):
@@ -544,6 +556,7 @@ class Agent:
                     if st and self._changed and verify_cmd and not self.interrupted:
                         self.emit("status.update", {"kind": "verify", "text": "Memverifikasi: " + " ".join(verify_cmd)})
                         ok, out = await asyncio.to_thread(tempest.run_verify, verify_cmd, self.ctx.cwd)
+                        harness_verified = bool(ok)
                         if ok and self._ckpt:
                             await asyncio.to_thread(self._ckpt_mark, "akhir turn: verifikasi lulus", "green")
                         if ok and self._progress is not None:
@@ -552,20 +565,39 @@ class Agent:
                             summary = tempest.failure_summary(out)
                             if verify_attempts < st["verify_retries"]:
                                 verify_attempts += 1
+                                used = tempest_skills.skills_read(ledger.tools)
                                 messages.append({"role": "user", "kind": "verify", "ts": time.time(),
                                                  "content": tempest.verify_prompt(verify_cmd, summary, verify_attempts,
-                                                                                st["verify_retries"])})
+                                                                                st["verify_retries"])
+                                                 + ("\n\n" + tempest_skills.repair_text(used, "") if used else "")})
                                 self.store.save(self.rec)
                                 continue
                             final_text = final_text + tempest.escalation_note(verify_cmd, summary, st["verify_retries"])
                             error_info = turn_budget.describe("verification")
                             error = error_info["message"]
+                            verify_failed = True
+                            self._verify_summary = summary
                             if self._progress is not None:
                                 self._progress.mark_verified(False)
                             if self._ckpt and self._ckpt_base:
                                 final_text += await asyncio.to_thread(self._rollback, verify_cmd)
                     elif st and self._ckpt and self._changed:
                         await asyncio.to_thread(self._ckpt_mark, "akhir turn", None)
+                    if st and st.get("claim_gate") and not verify_failed and not self.interrupted:
+                        problem = tempest_claims.check(final_text, ledger, harness_verified)
+                        if problem and claim_attempts < int(st.get("claim_retries") or 0) \
+                                and verify_attempts < st["verify_retries"]:
+                            claim_attempts += 1
+                            verify_attempts += 1  # same retry budget as the verify/lint gates
+                            self.emit("status.update", {"kind": "claim", "text": "Meminta bukti eksekusi"})
+                            messages.append({"role": "user", "kind": "claim", "ts": time.time(),
+                                             "content": tempest_claims.prompt(problem, claim_attempts,
+                                                                              int(st.get("claim_retries") or 0))})
+                            self.store.save(self.rec)
+                            continue
+                        if problem:
+                            claim_left = problem
+                            final_text += tempest_claims.unverified_note(problem)
                     break
                 for call in comp.tool_calls:
                     sent_before = len(self.ctx.outbox)
@@ -585,10 +617,21 @@ class Agent:
                         result = prep.error
                     elif st and prep.name == "update_plan" and self._progress is not None:
                         result = self._progress.update(args, str(self.rec.get("id") or ""))
+                    elif st and prep.name == "session_search" and st.get("session_search"):
+                        result = await asyncio.to_thread(tempest_search.run, args, cfgmod.neovarch_home(),
+                                                         str(self.rec.get("id") or ""))
+                    elif st and st.get("memory_dedup") and prep.name in tempest_memory.MEMORY_TOOLS \
+                            and tempest_memory.guard_write(prep.name, args, cfgmod.neovarch_home() / "memory")[1]:
+                        result = tempest_memory.guard_write(prep.name, args, cfgmod.neovarch_home() / "memory")[1]
                     elif st and prep.name in ("write_file", "edit_file"):
                         result = await self._checked_write(prep.name, args)
                     else:
+                        if st and st.get("memory_dedup") and prep.name in tempest_memory.MEMORY_TOOLS:
+                            args = tempest_memory.guard_write(prep.name, args, cfgmod.neovarch_home() / "memory")[0]
                         result = await run_tool(prep.name, args, self.ctx)
+                        if st and prep.name in tempest_memory.MEMORY_TOOLS and str(args.get("action")) in (
+                                "append", "write", "replace") and not str(result).startswith(("error", "denied")):
+                            tempest_memory.note_memory_write(self.rec)
                     if st:
                         result = tempest.offload(result, prep.name, call.id, obs_dir, st["offload_tokens"])
                     dur = time.monotonic() - t0
@@ -614,6 +657,13 @@ class Agent:
             detail = _explain(str(exc), active, self.tried)
             error_info = turn_budget.describe(turn_budget.classify_llm_error(str(exc) + " " + detail), detail=detail)
             error = error_info["message"]
+        verification = None
+        if st:
+            verification = tempest_claims.status(harness_verified, verify_failed, ledger, bool(claim_left))
+            try:
+                self._tempest_learn(st, user_text, ledger, verify_cmd, verification, error)
+            except Exception as exc:  # learning must never break a turn
+                _log.warning("tempest learning skipped: %s", exc)
         evidence = scaffold.parse_evidence(final_text) if final_text else None
         if evidence and messages and messages[-1].get("role") == "assistant":
             messages[-1]["evidence"] = evidence
@@ -647,6 +697,7 @@ class Agent:
             **({"error": error} if error else {}),
             **({"error_info": error_info} if error_info else {}),
             "steps": budget.steps,
+            **({"verification": verification} if verification else {}),
             **({"model": active["model"], "model_fallback": self.fallbacks} if self.fallbacks else {}),
             **({"status": "interrupted"} if error == "interrupted" else {}),
             **({"attachments": sent} if sent else {}),
@@ -754,6 +805,57 @@ class Agent:
                                                                f"~{rep['before']} → ~{rep['after']} token"})
         return tempest.apply_compaction(wire, new_state), sys_prompt, system_split
 
+    def _tempest_notes(self, st: dict) -> list[str]:
+        """Tempest Fase 2: short notes for this user message (memory reminder, skill offer/repair)."""
+        notes = []
+        if self.rec.get("tempest_skill", {}).get("pending"):
+            notes.append(tempest_skills.pending_note(self.rec))
+        if st.get("memory_nudge"):
+            note = tempest_memory.note_turn_start(self.rec, st)
+            if note:
+                notes.append(note)
+        return [n for n in notes if n]
+
+    def _tempest_learn(self, st: dict, user_text: str, ledger, verify_cmd, verification: dict,
+                       error: str | None) -> None:
+        """After a Tempest turn: skill stats, skill candidate/offer/draft, skill repair, memory task marker."""
+        home = cfgmod.neovarch_home()
+        skills_root = home / "skills"
+        used = tempest_skills.skills_read(ledger.tools)
+        status = verification.get("status")
+        sid = str(self.rec.get("id") or "")
+        sk = tempest_skills.state(self.rec)
+        mode = str(st.get("skill_learn") or "offer")
+        if used:
+            tempest_skills.bump(skills_root, used, "use")
+            if status == "verified":
+                tempest_skills.bump(skills_root, used, "pass")
+            elif status in ("failed", "unverified"):
+                tempest_skills.bump(skills_root, used, "fail")
+                summary = getattr(self, "_verify_summary", "") or ""
+                if mode != "off":
+                    sk["pending"] = tempest_skills.repair_text(used, summary)
+                if mode == "auto" and status == "failed":
+                    patched = tempest_skills.auto_repair(skills_root, used, summary,
+                                                         " ".join(verify_cmd or []), sid)
+                    if patched:
+                        self.emit("status.update", {"kind": "skill", "text": "Catatan kegagalan ditambahkan ke skill "
+                                                    + ", ".join(patched)})
+        if status == "verified" and not error and mode != "off":
+            cand = tempest_skills.candidate(user_text, ledger.tools, verify_cmd, int(st.get("skill_min_steps") or 5))
+            if cand:
+                existing = tempest_skills.similar_skill(cand, list_skills(include_disabled=True))
+                if mode == "auto":
+                    msg = tempest_skills.auto_save(cand, sid)
+                    self.emit("status.update", {"kind": "skill", "text": msg})
+                    sk["last_auto"] = msg
+                elif not sk.get("pending"):
+                    sk["pending"] = tempest_skills.offer_text(cand, existing)
+                sk["candidate"] = cand
+        if ledger.files_changed() and status not in ("failed",) and not error:
+            tempest_memory.note_task_done(self.rec)
+        self.store.save(self.rec)
+
     def _ckpt_start(self, st: dict) -> None:
         """Tempest: snapshot the project before this turn's first modifying tool."""
         repo = tempest_ckpt.ShadowRepo(self.ctx.cwd, cfgmod.neovarch_home(), int(st.get("checkpoint_max_files") or 5000))
@@ -798,7 +900,7 @@ class Agent:
             return ""
         self.emit("status.update", {"kind": "rollback", "text": f"File dikembalikan ke checkpoint hijau {base[:8]}"})
         return (f"\n\n↩️ File dikembalikan ke checkpoint hijau terakhir ({base[:8]}, sebelum perubahan turn ini). "
-                f"Versi yang gagal disimpan sebagai checkpoint {red[:8]}; pulihkan dengan `neovarch rewind {red[:8]}`.")
+                f"Versi yang gagal disimpan sebagai checkpoint {red[:8]}; pulihkan dengan `/rewind {red[:8]}` di obrolan atau `neovarch rewind {red[:8]}`.")
 
     def _lint_delta(self, st: dict) -> list:
         tools = None
@@ -838,6 +940,8 @@ class Agent:
         st = getattr(self, "_tempest", None)
         if st and st.get("progress"):
             tools = tools + [tempest_progress.SCHEMA]
+        if st and st.get("session_search"):
+            tools = tools + [tempest_search.SCHEMA]
         if st and st.get("cache_v2"):
             tools = tempest.stable_tools(tools)
         return tools
@@ -849,6 +953,15 @@ class Agent:
         from neovarch import selfedit
         if getattr(self.ctx, "company", None) is not None:
             return None  # employees' chats are not the place to repair the install
+        m = REWIND_COMMAND.match(user_text or "")
+        if m and getattr(self, "_tempest", None):
+            # Tempest: restore the chat's folder to a shadow checkpoint (the user's git is untouched).
+            try:
+                text = tempest_ckpt.rewind(Path(self.ctx.cwd), cfgmod.neovarch_home(), m.group(1) or "last-green")
+                text = "↩️ File " + text + ". Riwayat checkpoint tetap ada; `/rewind <sha>` untuk versi lain."
+            except (tempest_ckpt.CheckpointError, OSError, subprocess.SubprocessError) as exc:
+                text = f"Tidak bisa rewind: {exc}"
+            return "rewind", text, ""
         if selfedit.UNDO_PHRASES.match(user_text or ""):
             res = selfedit.undo(session_id=str(self.rec.get("id") or ""))
             text = res["message"]
@@ -1006,6 +1119,9 @@ def _explain(error: str, endpoint: dict, tried: list[str] | None = None) -> str:
         return (f"9Router sedang membatasi permintaan ke {model} (HTTP 429). Coba lagi sebentar lagi, "
                 "atau pilih model lain dari pemilih model di kolom chat.")
     return error
+
+
+REWIND_COMMAND = re.compile(r"^\s*/rewind(?:\s+([0-9a-fA-F]{4,40}|last-green))?\s*$")
 
 
 def wire_messages(messages: list[dict], vision: bool, cwd: Path) -> list[dict]:
