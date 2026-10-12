@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 RUNS = Path(os.environ.get("TEMPEST_BENCH_DIR", "/workspace/work/tempest-bench-runs"))
 
 from tempest_tasks import TASKS, P  # noqa: E402
+import tempest_tasks_f2  # noqa: E402,F401  (registers the Fase 2 "learn" tasks)
 
 # Assumed price of a cheap OpenAI-compatible model (USD per 1M tokens). Not a quote.
 PRICE_IN, PRICE_CACHED, PRICE_OUT = 0.30, 0.03, 1.20
@@ -69,6 +70,10 @@ ARMS: dict[str, tuple[dict, str]] = {
     "+ckpt": ({**_NOMASK, "tempest_checkpoints": True}, "bench-model"),
     "+progress": ({**_NOMASK, "tempest_progress": True}, "bench-model"),
     "tempest-default": ({"harness_mode": "tempest"}, "bench-model"),
+    # Fase 1 shipped defaults with every Fase 2 feature off (learning loop + claim gate)
+    "tempest-f1": ({"harness_mode": "tempest", "tempest_session_search": False, "tempest_memory_nudge": False,
+                    "tempest_memory_dedup": False, "tempest_skill_learn": "off", "tempest_claim_gate": False},
+                   "bench-model"),
     "legacy@anth": ({"harness_mode": "legacy"}, "claude-bench-haiku"),
     "nomask@anth": (dict(_NOMASK), "claude-bench-haiku"),
     "+cache2@anth": ({**_NOMASK, "tempest_cache_v2": True}, "claude-bench-haiku"),
