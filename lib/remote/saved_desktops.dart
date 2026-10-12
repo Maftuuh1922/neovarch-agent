@@ -190,7 +190,23 @@ class SavedDesktops {
     return kp;
   }
 
+  /// The chat that was open on this PC when the app was last used (v1.4.7):
+  /// reopened on the next start instead of an empty new chat.
+  String? lastSession(String desktopId) {
+    final v = _prefs.getString('remote.lastSession.$desktopId');
+    return (v == null || v.isEmpty) ? null : v;
+  }
+
+  void setLastSession(String desktopId, String? storedId) {
+    if (storedId == null || storedId.isEmpty) {
+      _prefs.remove('remote.lastSession.$desktopId');
+    } else {
+      _prefs.setString('remote.lastSession.$desktopId', storedId);
+    }
+  }
+
   Future<void> remove(String id) async {
+    await _prefs.remove('remote.lastSession.$id');
     items.removeWhere((d) => d.id == id);
     if (activeId == id) activeId = items.firstOrNull?.id;
     try {
