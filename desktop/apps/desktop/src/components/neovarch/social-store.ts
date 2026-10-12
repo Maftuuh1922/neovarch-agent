@@ -317,12 +317,17 @@ onMount($socialStatus, () => {
     void refreshSocial()
   })
   const offReady = onGatewayEvent('gateway.ready', () => void refreshSocial())
-  window.addEventListener('keydown', editorHeartbeat, { passive: true })
+  // Keep a handle on the window we listened on: nanostores runs this unmount
+  // STORE_UNMOUNT_DELAY (1 s) after the last subscriber leaves, from a timer.
+  // By then a test environment may already be torn down (`window` gone), so the
+  // cleanup must not reach for the global again.
+  const win = typeof window === 'undefined' ? null : window
+  win?.addEventListener('keydown', editorHeartbeat, { passive: true })
 
   return () => {
     offChanged()
     offReady()
-    window.removeEventListener('keydown', editorHeartbeat)
+    win?.removeEventListener('keydown', editorHeartbeat)
   }
 })
 

@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanStores } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.fn()
@@ -108,7 +109,13 @@ describe('Profil & Teman', () => {
     api.mockReset()
     window.hermesDesktop = { ...(window.hermesDesktop ?? {}), openExternal: vi.fn() } as never
   })
-  afterEach(() => cleanup())
+  afterEach(async () => {
+    cleanup()
+    // Unmount the stores now instead of from nanostores' 1 s unmount timer,
+    // which otherwise fires after this file's environment is gone.
+    const store = await import('./social-store')
+    cleanStores(store.$socialStatus, store.$socialProfile, store.$socialFriends)
+  })
 
   it('sorts friends with "lagi ngoding" first, then Neovarch users by recency', async () => {
     const { sortFriends } = await import('./social-store')
