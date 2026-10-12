@@ -23,7 +23,7 @@ Usage:
 
 Environment:
   NEOVARCH_HOME            Data home (default ${app.HOME_DIR})
-  NEOVARCH_VERSION         Desktop release tag, e.g. v1.4.6 (default: v${app.PKG_VERSION})
+  NEOVARCH_VERSION         Desktop release tag, e.g. v1.4.7 (default: v${app.PKG_VERSION})
   NEOVARCH_REF             Git ref of the repo to take the core from (default: the release tag, else main)
   NEOVARCH_NO_9ROUTER      Set to skip installing 9Router
 `;

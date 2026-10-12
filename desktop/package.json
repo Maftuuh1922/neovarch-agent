@@ -1,6 +1,6 @@
 {
   "name": "neovarch-agent-desktop-workspace",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "description": "Neovarch Agent desktop (Electron) workspace. Derived from Hermes Desktop by Nous Research.",
   "private": true,
   "workspaces": [

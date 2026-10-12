@@ -3,6 +3,54 @@
 Semua perubahan penting Neovarch Agent (desktop, core, dan aplikasi HP). Yang terbaru di atas.
 Aplikasi HP menampilkan isi yang sama di **Profil › Riwayat perubahan** (`lib/remote/changelog.dart`; `test/changelog_test.dart` menjaga keduanya tetap sama).
 
+## [1.4.7] — 2026-10-13
+
+Tailscale jadi jalur utama HP ↔ PC dengan panduan setup, Wi-Fi di PC Linux dan Windows diperbaiki, Tempest jadi otak bawaan dengan prompt ~52% lebih ramping, Stop benar-benar berhenti, beberapa lampiran dalam satu pesan, antrean pesan, monitor token, dan CLI di terminal.
+Berisi pekerjaan PR #13–#35 (antara lain #25 multi-lampiran, #26 prompt diet, #27 Stop, #29 firewall Linux, #33 Tailscale, #35 Tempest bawaan).
+
+### Penting saat memperbarui
+
+- Perbarui aplikasi desktop dan aplikasi HP bersamaan.
+- Relay bawaan tidak ada lagi: dari luar rumah pakai Tailscale, atau isi URL relay sendiri.
+- Tempest sekarang otak bawaan; loop lama tetap bisa dipilih lewat harness_mode: legacy atau Pengaturan › Agent › Otak agen.
+
+### Tailscale jadi jalur utama
+
+- HP mencoba alamat Tailscale PC dulu (IP 100.x, lalu MagicDNS), baru LAN; bila VPN HP mati, LAN dicoba dulu.
+- Panduan "Siapkan Tailscale" di tab PC di HP dan di Pengaturan › Remote › Tailscale di desktop, dengan tombol Coba lagi / Periksa lagi.
+- Relay bawaan (yang tidak pernah aktif) dimatikan; relay hanya jalan dengan URL relay sendiri.
+
+### Koneksi Wi-Fi
+
+- Linux: desktop mendeteksi ufw/firewalld dan membuka port gateway hanya untuk alamat LAN privat lewat satu prompt pkexec. Periksa koneksi kini jujur.
+- Windows: aturan firewall berlaku juga di Wi-Fi berprofil Publik, aturan blokir lama untuk Python dihapus, timeout LAN di HP 4 detik.
+
+### Tempest
+
+- Tempest jadi otak bawaan: prompt ramping, pemeriksaan lint/tes sebelum selesai, dan checkpoint yang bisa dipulihkan.
+- Prompt diet: prompt pertama 11.388 → 5.473 token (−52%), skema alat jarang dipakai dibuka saat dibutuhkan.
+- Fase 2: pencarian sesi lama, pengingat memori, skill dari pengalaman, gerbang klaim, dan /rewind di obrolan.
+- Perbaikan: Stop saat pemeriksaan berjalan, proses latar belakang ikut dimatikan, tanpa pytest = tanpa vonis, tes yang sudah merah tidak memicu rollback, checkpoint aman untuk folder besar, pesan berisi lampiran saja tetap membawa konteks, dan bytecode basi tidak lagi terbaca saat verifikasi.
+
+### Chat
+
+- Beberapa gambar/berkas dalam satu pesan (maks. 10 lampiran, 25 MB per berkas).
+- Stop membatalkan model, alat, dan proses yang sedang berjalan di PC; status Dihentikan sama di HP dan desktop.
+- Antrean pesan: kirim saat agen bekerja, pesan masuk antrean yang bisa diedit, dihapus, atau dikirim sekarang.
+- Batas langkah berbasis kemajuan dan penjelasan berhenti yang jelas dengan satu tombol aksi.
+- Pemakaian token: konteks % di header chat, Profil › Pemakaian token, dan Token monitor di desktop.
+- Tabel Markdown satu baris dirender sebagai tabel; avatar maskot Neovarch; HP membuka chat terakhir saat dibuka lagi.
+- MiMo bisa membaca gambar; HP menyambung ulang sendiri saat PC restart; mic Android tidak lagi salah melapor izin ditolak.
+
+### Agen & CLI
+
+- Chat interaktif di terminal (neovarch), agen yang bisa memperbaiki dirinya (/perbaiki, /undo), 26 skill bawaan, dan vision fallback.
+
+### Kualitas
+
+- Tes penjaga versi: versi PC yang tampil di HP selalu sama dengan versi aplikasi.
+- Tes desktop flaky diperbaiki dan 9 berkas tes kembali menjaga CI.
+
 ## [1.4.6] — 2026-10-11
 
 Pemasangan HP yang lebih aman, remote dari mana saja lewat relay terenkripsi, pilihan bahasa di Android, agen bisa mengirim berkas ke obrolan, Tempest Fase 1 (opsional), pembaruan langsung dari aplikasi, dan PowerPoint dari HP.
