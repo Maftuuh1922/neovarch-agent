@@ -41,7 +41,8 @@ def _call(cid, tool, **args):
 
 
 def test_diet_default_on_in_tempest_only():
-    assert tempest.settings({}) is None  # legacy stays the default harness
+    assert tempest.settings({})["prompt_diet"] is True  # Tempest (with the diet) is the default since 1.4.7
+    assert tempest.settings({"agent": {"harness_mode": "legacy"}}) is None
     assert tempest.settings({"agent": {"harness_mode": "tempest"}})["prompt_diet"] is True
     off = tempest.settings({"agent": {"harness_mode": "tempest", "tempest_prompt_diet": False}})
     assert off["prompt_diet"] is False and not tempest_diet.enabled(off)

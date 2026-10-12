@@ -5,8 +5,9 @@ The shadow repository lives under ``~/.neovarch/checkpoints/<hash of the project
 and is driven only through ``GIT_DIR``/``GIT_WORK_TREE`` with an isolated config (no global
 or system config, no hooks, no signing), so the project's ``.git`` (ignored by git as a
 path), branches, index and stash are untouched. The project's .gitignore applies, plus a
-built-in exclude list for bulky dirs. Projects that are too big (``max_files``) or the home
-directory itself are skipped.
+built-in exclude list for bulky dirs. Single files over ``MAX_FILE_BYTES`` (videos, datasets,
+model weights) are left out of the snapshot. Projects that are too big (``max_files`` or
+``MAX_TOTAL_BYTES``) or the home directory itself are skipped.
 
 Status per checkpoint tree: ``green`` (verify passed), ``red`` (verify failed), ``unknown``.
 """
@@ -34,14 +35,47 @@ def git_available() -> bool:
     return shutil.which("git") is not None
 
 
+# Tempest is the default harness since 1.4.7, so checkpoints run in whatever folder a chat
+# works in: never copy huge files into ~/.neovarch, and give up on folders too big to snapshot
+# quickly (the turn just runs without checkpoints, like the legacy loop).
+MAX_FILE_BYTES = 20 * 1024 * 1024
+MAX_TOTAL_BYTES = 500 * 1024 * 1024
+
+
+def _scan(root: Path, limit: int) -> tuple[int, int, list[str]]:
+    """(files, bytes, big files) of what ``git add -A`` would take; stops early past a limit.
+
+    Mirrors the snapshot: only SKIP_DIRS and .git are skipped (hidden dirs are snapshotted too),
+    files over MAX_FILE_BYTES are listed instead of counted."""
+    n, total, big = 0, 0, []
+    for cur, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and d != ".git"
+                   and not os.path.islink(os.path.join(cur, d))]
+        for name in files:
+            if name.endswith((".pyc", ".log")) or name == ".DS_Store":
+                continue
+            try:
+                size = os.lstat(os.path.join(cur, name)).st_size
+            except OSError:
+                continue
+            n += 1
+            if size > MAX_FILE_BYTES:
+                big.append(os.path.relpath(os.path.join(cur, name), root).replace(os.sep, "/"))
+            else:
+                total += size
+        if n > limit or total > MAX_TOTAL_BYTES:
+            break
+    return n, total, big
+
+
 def _count_files(root: Path, limit: int) -> int:
-    n = 0
-    for _dir, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
-        n += len(files)
-        if n > limit:
-            return n
-    return n
+    return _scan(root, limit)[0]
+
+
+def _exclude_line(rel: str) -> str:
+    """A gitignore line matching exactly this path (glob characters escaped)."""
+    out = "".join("\\" + ch if ch in "[]*?\\" else ch for ch in rel)
+    return "/" + out
 
 
 class ShadowRepo:
@@ -78,8 +112,11 @@ class ShadowRepo:
             return False, "folder kerja tidak ada"
         if self.work == Path.home().resolve() or self.work == Path(self.work.anchor):
             return False, "folder kerja adalah home/root"
-        if _count_files(self.work, self.max_files) > self.max_files:
+        n, total, _big = _scan(self.work, self.max_files)
+        if n > self.max_files:
             return False, f"proyek lebih dari {self.max_files} file"
+        if total > MAX_TOTAL_BYTES:
+            return False, f"proyek lebih dari {MAX_TOTAL_BYTES // (1024 * 1024)} MB"
         return True, ""
 
     def ensure(self) -> None:
@@ -88,11 +125,16 @@ class ShadowRepo:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.git("init", "-q")
         (self.dir / "info").mkdir(exist_ok=True)
+        self._write_excludes([])
+        (self.dir / "tempest-workdir").write_text(str(self.work) + "\n", encoding="utf-8")
+
+    def _write_excludes(self, big: list[str]) -> None:
         extra = []
         if self.home.is_relative_to(self.work):  # never snapshot Neovarch's own data (or this repo)
             extra.append("/" + self.home.relative_to(self.work).as_posix() + "/")
+        extra += [_exclude_line(p) for p in big]
+        (self.dir / "info").mkdir(parents=True, exist_ok=True)
         (self.dir / "info" / "exclude").write_text("\n".join(EXCLUDES + extra) + "\n", encoding="utf-8")
-        (self.dir / "tempest-workdir").write_text(str(self.work) + "\n", encoding="utf-8")
 
     # --------------------------------------------------------------- status --
     def _statuses(self) -> dict[str, str]:
@@ -116,6 +158,7 @@ class ShadowRepo:
     def checkpoint(self, label: str, status: str | None = None) -> str:
         """Snapshot the whole working tree (honouring ignores); returns the commit sha."""
         self.ensure()
+        self._write_excludes(_scan(self.work, max(self.max_files, 1) * 4)[2])  # big files stay out
         self.git("add", "-A", ".")
         self.git("commit", "-q", "--allow-empty", "--no-verify", "-m", label)
         sha = self.git("rev-parse", "HEAD").strip()

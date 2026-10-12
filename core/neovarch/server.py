@@ -2574,6 +2574,11 @@ def config_schema_payload() -> dict:
     except Exception:
         pass
     return {"category_order": ["model", "chat", "agent", "workspace", "safety", "advanced"], "fields": {
+        "agent.harness_mode": {"category": "agent", "type": "select", "options": ["tempest", "legacy"],
+                               "default": "tempest", "label": "Otak agen",
+                               "description": "tempest = Neovarch Tempest, otak baru (bawaan): prompt hemat, cek "
+                                              "lint/tes sebelum selesai, checkpoint yang bisa dipulihkan. legacy = "
+                                              "loop lama, untuk kembali bila perlu."},
         "agent.escalate_on_stuck": {"category": "agent", "type": "boolean", "label": "Naik ke model lebih kuat saat buntu",
                                     "description": "Kalau agen gagal 2 kali berturut-turut di satu langkah, langkah itu "
                                                    "saja memakai model kuat di bawah, lalu kembali ke model bawaan."},

@@ -718,6 +718,7 @@ export const en: Translations = {
       workspaceProjects: 'Projects & discovery',
       workspaceShell: 'Shell environment',
       workspaceFiles: 'Files & execution',
+      agentBrain: 'Agent brain',
       agentEscalation: 'Escalation',
       safetyApprovals: 'Approvals',
       safetyPrivacy: 'Privacy & network',

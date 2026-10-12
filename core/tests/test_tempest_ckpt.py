@@ -54,6 +54,31 @@ def test_usable_guards(tmp_path):
     assert tc.ShadowRepo(tmp_path / "missing", tmp_path / "h").usable()[0] is False
 
 
+def test_big_files_stay_out_and_huge_projects_skip(tmp_path, monkeypatch):
+    """Tempest runs by default (1.4.7): a snapshot never copies a video/dataset into ~/.neovarch,
+    hidden dirs count like git sees them, and an oversized folder just runs without checkpoints."""
+    monkeypatch.setattr(tc, "MAX_FILE_BYTES", 1000)
+    work, home = tmp_path / "p", tmp_path / "h"
+    work.mkdir()
+    (work / "code.py").write_text("x = 1\n")
+    (work / "data [v1]*.bin").write_bytes(b"0" * 5000)
+    (work / ".cache").mkdir()
+    for i in range(8):
+        (work / ".cache" / f"c{i}").write_text("c")
+    repo = tc.ShadowRepo(work, home)
+    assert repo.usable() == (True, "")
+    sha = repo.checkpoint("awal")
+    files = repo.git("ls-tree", "-r", "--name-only", sha).splitlines()
+    assert "code.py" in files and "data [v1]*.bin" not in files and ".cache/c0" in files
+    (work / "code.py").write_text("x = 2\n")
+    repo.restore(sha)
+    assert (work / "code.py").read_text() == "x = 1\n" and (work / "data [v1]*.bin").exists()
+    assert tc.ShadowRepo(work, home, max_files=5).usable()[0] is False  # .cache counts
+    monkeypatch.setattr(tc, "MAX_TOTAL_BYTES", 10)
+    ok, why = tc.ShadowRepo(work, home).usable()
+    assert ok is False and "MB" in why
+
+
 def test_rewind_last_green(tmp_path):
     work, home = tmp_path / "p", tmp_path / "h"
     work.mkdir()

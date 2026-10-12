@@ -274,7 +274,9 @@ async def test_upload_is_not_swallowed_by_the_quiet_fallback(capture, monkeypatc
         assert res["result"]["attachments"][0]["id"] == meta["id"]
         await _wait_idle(gw, sid)
         parts = capture[-1]["messages"][-1]["content"]
-        assert parts[0] == {"type": "text", "text": "ini"} and parts[1]["type"] == "image_url"
+        # Tempest (default) appends the per-message context after the typed text, image stays attached
+        assert parts[0]["type"] == "text" and parts[0]["text"].split("\n\n# Konteks saat ini")[0] == "ini"
+        assert parts[1]["type"] == "image_url"
         # an empty / unknown id is refused instead of silently dropping the image
         bad = await call("prompt.submit", {"session_id": sid, "text": "ini", "attachments": [""]})
         assert "error" in bad

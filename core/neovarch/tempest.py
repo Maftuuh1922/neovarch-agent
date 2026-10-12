@@ -1,7 +1,8 @@
-"""Tempest: an opt-in, lightweight harness layer for the agent loop (Phase 1 prototype).
+"""Tempest: the lightweight harness layer for the agent loop (Neovarch's default brain since 1.4.7).
 
-Off by default. ``agent.harness_mode: tempest`` in config.yaml turns it on; anything else
-("legacy", empty) keeps the loop exactly as before. ``agent.tempest_profile`` picks:
+On by default. ``agent.harness_mode: legacy`` (or ``off``/``false``) in config.yaml switches back to
+the legacy loop, which is kept unchanged; an unset or empty value follows the default (Tempest).
+``agent.tempest_profile`` picks:
 
 * ``ringan``   (default) - offload big tool output, 2 verify retries;
 * ``tinggi``   - larger offload threshold, 4 verify retries;
@@ -85,6 +86,8 @@ Prompt diet (``tempest_prompt_diet``):
 from __future__ import annotations
 
 import ast
+import asyncio
+import contextvars
 import json
 import os
 import re
@@ -159,10 +162,29 @@ def _lookup(cfg: dict, dotted: str, default=None):
     return cur
 
 
+# Values of ``agent.harness_mode`` that mean "the user turned Tempest off". Since 1.4.7 Tempest is
+# the default harness, so only an explicit one of these keeps the legacy loop; an unset, empty or
+# unknown value runs Tempest. YAML ``false`` / ``off`` / ``no`` arrive here as the bool False.
+LEGACY_VALUES = {"legacy", "lama", "klasik", "classic", "off", "false", "0", "no", "tidak", "none", "disabled"}
+DEFAULT_MODE = "tempest"
+
+
 def mode(cfg: dict) -> str:
-    raw = str(_get(cfg, "agent.harness_mode", "") or "").strip().lower()
-    # "tempa" is the deprecated pre-rename name of this harness; still accepted.
-    return "tempest" if raw in ("tempest", "tempa") else "legacy"
+    val = _get(cfg, "agent.harness_mode", None)
+    if val is False:
+        return "legacy"
+    raw = str(val if val is not None else "").strip().lower()
+    if raw in LEGACY_VALUES:
+        return "legacy"
+    # "tempa" is the deprecated pre-rename name of this harness; still accepted. Empty/unset and any
+    # value we do not know fall back to the default (Tempest), never silently to legacy.
+    return "tempest"
+
+
+def mode_is_explicit(cfg: dict) -> bool:
+    """True when config.yaml names the harness itself (vs. following the shipped default)."""
+    val = _get(cfg, "agent.harness_mode", None)
+    return val is False or str(val if val is not None else "").strip() != ""
 
 
 def settings(cfg: dict) -> dict[str, Any] | None:
@@ -382,6 +404,20 @@ def _python() -> str:
     return shutil.which("python3") or shutil.which("python") or sys.executable
 
 
+_PYTEST_OK: dict[str, bool] = {}
+
+
+def pytest_available(python: str) -> bool:
+    """Can this interpreter run pytest? (cached; a PC without pytest gets no pytest verify gate)"""
+    if python not in _PYTEST_OK:
+        try:
+            r = subprocess.run([python, "-c", "import pytest"], capture_output=True, timeout=30)
+            _PYTEST_OK[python] = r.returncode == 0
+        except Exception:
+            _PYTEST_OK[python] = False
+    return _PYTEST_OK[python]
+
+
 def detect_verify(cwd: Path) -> list[str] | None:
     """A test command for the project at cwd, or None."""
     cwd = Path(cwd)
@@ -403,7 +439,81 @@ def detect_verify(cwd: Path) -> list[str] | None:
     return None
 
 
-def run_verify(cmd: list[str], cwd: Path, timeout: int = 300) -> tuple[bool, str]:
+# Processes started by the gate running in this context (see :func:`killable`). asyncio.to_thread
+# copies the caller's context into the worker thread, so run_proc() there registers into the
+# list the awaiting coroutine owns, and a Stop (task cancel) can kill them.
+_GATE_PROCS: contextvars.ContextVar[list | None] = contextvars.ContextVar("tempest_gate_procs", default=None)
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, timeout=5)
+        else:
+            os.killpg(proc.pid, 9)  # the whole test run (pytest workers, npm children), not only the parent
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def run_proc(cmd: list[str], *, cwd: Path | str | None = None, timeout: float, env: dict | None = None
+             ) -> subprocess.CompletedProcess:
+    """``subprocess.run(capture_output=True, text=True)`` that a Stop can kill, child processes included.
+
+    Raises ``subprocess.TimeoutExpired`` like subprocess.run (after killing the process tree)."""
+    kw: dict[str, Any] = {"cwd": str(cwd) if cwd is not None else None, "stdout": subprocess.PIPE,
+                          "stderr": subprocess.PIPE, "text": True, "errors": "replace", "env": env}
+    if os.name == "nt":
+        kw["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kw["start_new_session"] = True
+    proc = subprocess.Popen(cmd, **kw)
+    group = _GATE_PROCS.get()
+    if group is not None:
+        group.append(proc)
+    try:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc)
+            try:
+                proc.communicate(timeout=5)
+            except Exception:
+                pass
+            raise
+    finally:
+        if group is not None and proc in group:
+            group.remove(proc)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+async def killable(fn, *args):
+    """Run a blocking gate (verify / lint) in a worker thread. When the awaiting task is cancelled
+    (Stop), every process the gate started is killed right away instead of running to its timeout."""
+    group: list = []
+    token = _GATE_PROCS.set(group)
+    try:
+        return await asyncio.to_thread(fn, *args)
+    except asyncio.CancelledError:
+        for proc in list(group):
+            _kill_tree(proc)
+        raise
+    finally:
+        _GATE_PROCS.reset(token)
+
+
+def run_verify(cmd: list[str], cwd: Path, timeout: int = 300) -> tuple[bool | None, str]:
+    """(True, out) passed, (False, out) failed, (None, why) could not run at all: no verdict.
+
+    "Could not run" (runner missing, pytest not installed, no tests collected) must never count
+    as a failure: before 1.4.7 a PC without pytest failed every gated turn and rolled it back."""
+    is_pytest = len(cmd) >= 3 and cmd[1:3] == ["-m", "pytest"]
+    if is_pytest and not pytest_available(cmd[0]):
+        return None, f"(verifikasi dilewati: pytest tidak terpasang untuk {cmd[0]})"
     # A fresh, empty bytecode cache per run. Python (and pytest's assertion
     # rewriter) trust a __pycache__ entry whose recorded source mtime (whole
     # seconds) and size still match; an edit within the same second that keeps
@@ -413,15 +523,42 @@ def run_verify(cmd: list[str], cwd: Path, timeout: int = 300) -> tuple[bool, str
     import tempfile
     try:
         with tempfile.TemporaryDirectory(prefix="nv-verify-pyc-") as pyc:
-            proc = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
-                                  env={**os.environ, "NEOVARCH_CORE": "1", "PYTHONDONTWRITEBYTECODE": "1",
-                                       "PYTHONPYCACHEPREFIX": pyc})
+            proc = run_proc(cmd, cwd=cwd, timeout=timeout,
+                            env={**os.environ, "NEOVARCH_CORE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+                                 "PYTHONPYCACHEPREFIX": pyc})
     except subprocess.TimeoutExpired:
         return False, f"timed out after {timeout}s"
-    except FileNotFoundError as exc:
-        return True, f"(verifikasi dilewati: {exc})"
+    except (FileNotFoundError, PermissionError) as exc:
+        return None, f"(verifikasi dilewati: {exc})"
     out = (proc.stdout or "") + (proc.stderr or "")
+    if is_pytest and proc.returncode == 5:  # pytest: no tests collected
+        return None, "(verifikasi dilewati: tidak ada tes yang terkumpul)\n" + out[-500:]
     return proc.returncode == 0, out
+
+
+_FAILED_ID = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
+
+
+def failing_ids(out: str) -> set[str]:
+    """Test ids pytest reports as FAILED/ERROR (empty for other runners)."""
+    return {m.group(1) for m in _FAILED_ID.finditer(out or "")}
+
+
+def same_failure(now: set[str], before: set[str]) -> bool:
+    """The failure now is (one of) the failures from before the turn. Without test ids (npm and
+    other runners) a red start is taken as the same failure."""
+    return not (now and before and not (now & before))
+
+
+PRE_EXISTING_PROMPT = ("\n\nCatatan: tes ini sudah gagal SEBELUM perubahan di turn ini. Kalau memperbaikinya memang bagian "
+                       "dari permintaan pengguna, perbaiki. Kalau tidak terkait, jangan diubah: jawab saja dan sebutkan "
+                       "bahwa tes itu sudah gagal sebelumnya.")
+
+
+def pre_existing_note(cmd: list[str], summary: str) -> str:
+    return (f"\n\nℹ️ Tes proyek ({' '.join(cmd)}) sudah gagal sebelum perubahan di turn ini, dengan kegagalan "
+            "yang sama, jadi tidak dianggap akibat perubahan ini (file tidak dikembalikan). "
+            "Perubahan ini belum terverifikasi oleh tes.\n" + "\n".join(summary.splitlines()[-6:]))
 
 
 def failure_summary(out: str, max_lines: int = 40) -> str:

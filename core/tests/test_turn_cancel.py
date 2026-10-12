@@ -149,3 +149,80 @@ async def test_outside_cancel_is_not_swallowed(home, tmp_path, monkeypatch):
     turn.cancel()
     with pytest.raises(asyncio.CancelledError):
         await turn
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="process groups are POSIX")
+async def test_stop_kills_the_tempest_verify_gate(home, tmp_path, monkeypatch):
+    """Tempest (the default harness since 1.4.7) runs the project's tests before a turn that
+    changed files may finish. Stop during that run ends the turn now and kills the test
+    process tree, instead of waiting up to the verify timeout."""
+    from neovarch.llm import Completion, ToolCall
+    _cfg()
+    pidfile = tmp_path / "verify.pid"
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_slow.py").write_text(
+        "import os, subprocess, time\n\n"
+        "def test_slow():\n"
+        f"    p = subprocess.Popen(['sleep', '120'])\n"
+        f"    open({str(pidfile)!r}, 'w').write(str(p.pid))\n"
+        "    time.sleep(120)\n")
+    script = [Completion(text="", tool_calls=[ToolCall(id="w", name="write_file", arguments=json.dumps(
+        {"path": "m.py", "content": "def f():\n    return 1\n"}))]),
+        Completion(text="Selesai.")]
+
+    async def fake(**_kw):
+        return script.pop(0) if script else Completion(text="lagi")
+    events: list = []
+    agent, rec = _agent(tmp_path, monkeypatch, fake, events)
+    from neovarch import tempest
+    assert tempest.mode({}) == "tempest"
+    turn = asyncio.create_task(agent.run_turn("buat m.py"))
+    await _wait_for(lambda: pidfile.exists() and pidfile.read_text().strip())
+    child = int(pidfile.read_text())
+    assert _alive(child)
+    t0 = time.monotonic()
+    agent.interrupt()
+    await asyncio.wait_for(turn, 10)
+    assert time.monotonic() - t0 < 5
+    await _wait_for(lambda: not _alive(child), 10)
+    done = [p for k, p in events if k == "message.complete"]
+    assert done and done[-1].get("status") == "interrupted"
+    assert not [p for k, p in events if k == "error"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="process groups are POSIX")
+async def test_stop_while_the_shell_is_still_starting_kills_its_group(home, tmp_path, monkeypatch):
+    """Race seen under load: Stop arrives while create_subprocess_shell is still connecting its
+    pipes. The command already runs; asyncio would only SIGKILL the shell and leave its
+    background child behind. The whole process group must go."""
+    from neovarch.llm import Completion, ToolCall
+    import neovarch.tools as toolsmod
+    _cfg()
+    pidfile = tmp_path / "child.pid"
+    cmd = f"sleep 120 & echo $! > {pidfile}; wait"
+    real = asyncio.create_subprocess_shell
+
+    async def slow_start(*a, **kw):
+        proc = await real(*a, **kw)
+        await _wait_for(lambda: pidfile.exists() and pidfile.read_text().strip())
+        await asyncio.sleep(1)  # still "starting" when the Stop lands
+        return proc
+    monkeypatch.setattr(toolsmod.asyncio, "create_subprocess_shell", slow_start)
+    calls = []
+
+    async def fake(**_kw):
+        calls.append(1)
+        if len(calls) == 1:
+            return Completion(text="", tool_calls=[ToolCall(id="s1", name="shell",
+                                                             arguments=json.dumps({"command": cmd, "timeout": 300}))])
+        return Completion(text="tidak boleh sampai sini", tool_calls=[])
+    events: list = []
+    agent, rec = _agent(tmp_path, monkeypatch, fake, events)
+    turn = asyncio.create_task(agent.run_turn("jalankan"))
+    await _wait_for(lambda: pidfile.exists() and pidfile.read_text().strip())
+    child = int(pidfile.read_text().strip())
+    agent.interrupt()
+    await asyncio.wait_for(turn, 10)
+    await _wait_for(lambda: not _alive(child), 5)
+    done = [p for k, p in events if k == "message.complete"]
+    assert done and done[-1].get("status") == "interrupted"

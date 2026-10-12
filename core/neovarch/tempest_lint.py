@@ -200,8 +200,8 @@ def _tsc(root: Path) -> list[str] | None:
 
 def _run(cmd: list[str], cwd: Path, timeout: int) -> str | None:
     try:
-        r = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
-                           env={**os.environ, "NO_COLOR": "1"})
+        from neovarch import tempest  # Stop kills a running checker (tempest.killable)
+        r = tempest.run_proc(cmd, cwd=cwd, timeout=timeout, env={**os.environ, "NO_COLOR": "1"})
     except Exception:
         return None
     return (r.stdout or "") + (r.stderr or "")

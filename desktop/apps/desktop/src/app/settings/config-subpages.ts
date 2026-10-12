@@ -29,7 +29,10 @@ const CONFIG_SUBPAGE_DEFINITIONS: Record<string, ConfigSubpageDefinition[]> = {
     },
     { id: 'attachments', labelKey: 'chatAttachments', fields: ['agent.image_input_mode'] }
   ],
-  agent: [{ id: 'escalation', labelKey: 'agentEscalation', prefixes: ['agent.escalat'] }],
+  agent: [
+    { id: 'brain', labelKey: 'agentBrain', fields: ['agent.harness_mode'] },
+    { id: 'escalation', labelKey: 'agentEscalation', prefixes: ['agent.escalat'] }
+  ],
   workspace: [
     {
       id: 'projects',

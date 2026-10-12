@@ -361,6 +361,9 @@ class Agent:
         claim_left = ""
         self._ckpt = None       # ShadowRepo once the first modifying tool of this turn runs
         self._ckpt_base = None  # checkpoint sha taken before that tool
+        self._base_red = None   # tests already red at turn start? (None = not checked yet)
+        self._base_fail_ids: set[str] = set()
+        self._writes_at_verify = -1
         verify_cmd = tempest.detect_verify(self.ctx.cwd) if st else None
         obs_dir = cfgmod.neovarch_home() / "obs" / str(self.rec.get("id") or "session")
         messages = self.rec["messages"]
@@ -579,7 +582,8 @@ class Agent:
                         continue
                     final_text = comp.text
                     if st and st.get("lint_gate") and self._before and not self.interrupted:
-                        diags = await asyncio.to_thread(self._lint_delta, st)
+                        # Stop cancels the gate and kills its checkers (not only after they finish)
+                        diags = await self._cancellable(tempest.killable(self._lint_delta, st))
                         if diags and lint_attempts < int(st.get("lint_retries") or 0) \
                                 and verify_attempts < st["verify_retries"]:
                             lint_attempts += 1
@@ -594,23 +598,46 @@ class Agent:
                             final_text = comp.text + tempest_lint.leftover_note(diags)
                     if st and self._changed and verify_cmd and not self.interrupted:
                         self.emit("status.update", {"kind": "verify", "text": "Memverifikasi: " + " ".join(verify_cmd)})
-                        ok, out = await asyncio.to_thread(tempest.run_verify, verify_cmd, self.ctx.cwd)
-                        harness_verified = bool(ok)
-                        if ok and self._ckpt:
+                        ok, out = await self._cancellable(
+                            tempest.killable(tempest.run_verify, verify_cmd, self.ctx.cwd))
+                        skipped = ok is None  # no test runner on this PC (e.g. pytest not installed)
+                        if not ok and not skipped and self._base_red is None and self._ckpt and self._ckpt_base:
+                            # Were the tests red already before this turn? Then a failure that was there
+                            # before is not this turn's doing: one fix-up chance (the user may be asking
+                            # for exactly that), then no error and no rollback (legacy would not nag).
+                            self._base_red, self._base_fail_ids = await self._cancellable(
+                                tempest.killable(self._failed_before, verify_cmd))
+                        pre_existing = bool(not ok and not skipped and self._base_red
+                                            and tempest.same_failure(tempest.failing_ids(out), self._base_fail_ids))
+                        harness_verified = bool(ok) and not skipped
+                        if harness_verified and self._ckpt:
                             await asyncio.to_thread(self._ckpt_mark, "akhir turn: verifikasi lulus", "green")
-                        if ok and self._progress is not None:
+                        elif skipped and self._ckpt:
+                            await asyncio.to_thread(self._ckpt_mark, "akhir turn", None)
+                        if harness_verified and self._progress is not None:
                             self._progress.mark_verified(True)
-                        if not ok:
+                        if skipped:
+                            _log.info("tempest verify skipped session=%s: %s", self.rec.get("id"), out)
+                        if not ok and not skipped:
                             summary = tempest.failure_summary(out)
-                            if verify_attempts < st["verify_retries"]:
+                            writes = sum(1 for t in ledger.tools if t["name"] in ("write_file", "edit_file") and t["ok"])
+                            stale = pre_existing and writes == self._writes_at_verify  # nothing changed since
+                            if verify_attempts < st["verify_retries"] and not stale:
                                 verify_attempts += 1
+                                self._writes_at_verify = writes
                                 used = tempest_skills.skills_read(ledger.tools)
                                 messages.append({"role": "user", "kind": "verify", "ts": time.time(),
                                                  "content": tempest.verify_prompt(verify_cmd, summary, verify_attempts,
                                                                                 st["verify_retries"])
+                                                 + (tempest.PRE_EXISTING_PROMPT if pre_existing else "")
                                                  + ("\n\n" + tempest_skills.repair_text(used, "") if used else "")})
                                 self.store.save(self.rec)
                                 continue
+                        if not ok and not skipped and pre_existing:
+                            final_text = final_text + tempest.pre_existing_note(verify_cmd, summary)
+                            if self._ckpt:
+                                await asyncio.to_thread(self._ckpt_mark, "akhir turn (tes sudah merah sebelumnya)", None)
+                        elif not ok and not skipped:
                             final_text = final_text + tempest.escalation_note(verify_cmd, summary, st["verify_retries"])
                             error_info = turn_budget.describe("verification")
                             error = error_info["message"]
@@ -619,7 +646,7 @@ class Agent:
                             if self._progress is not None:
                                 self._progress.mark_verified(False)
                             if self._ckpt and self._ckpt_base:
-                                final_text += await asyncio.to_thread(self._rollback, verify_cmd)
+                                final_text += await self._cancellable(tempest.killable(self._rollback, verify_cmd))
                     elif st and self._ckpt and self._changed:
                         await asyncio.to_thread(self._ckpt_mark, "akhir turn", None)
                     if st and st.get("claim_gate") and not verify_failed and not self.interrupted:
@@ -944,7 +971,7 @@ class Agent:
             repo.restore(base)
             if status != "green":
                 ok, _ = tempest.run_verify(verify_cmd, self.ctx.cwd)
-                if not ok:
+                if ok is None or not ok:
                     repo.set_status(base, "red")
                     repo.restore(red)
                     repo.checkpoint("kembali ke versi gagal (awal turn juga merah)", "red")
@@ -956,6 +983,30 @@ class Agent:
         self.emit("status.update", {"kind": "rollback", "text": f"File dikembalikan ke checkpoint hijau {base[:8]}"})
         return (f"\n\n↩️ File dikembalikan ke checkpoint hijau terakhir ({base[:8]}, sebelum perubahan turn ini). "
                 f"Versi yang gagal disimpan sebagai checkpoint {red[:8]}; pulihkan dengan `/rewind {red[:8]}` di obrolan atau `neovarch rewind {red[:8]}`.")
+
+    def _failed_before(self, verify_cmd: list[str]) -> tuple[bool, set[str]]:
+        """Were the project's tests already failing at the start of this turn? -> (red, failing ids)
+
+        Uses the turn-start checkpoint: the current files are snapshotted, the turn-start version is
+        put back just long enough to run the tests, then the current files return. Runs in a worker
+        thread (see tempest.killable); a Stop kills the test run and the files still come back."""
+        repo, base = self._ckpt, self._ckpt_base
+        try:
+            if repo.status(base) == "green":
+                return False, set()
+            cur = repo.checkpoint("cek: apakah tes sudah gagal sebelum turn ini")
+            try:
+                repo.restore(base)
+                ok_b, out_b = tempest.run_verify(verify_cmd, self.ctx.cwd)
+            finally:
+                repo.restore(cur)
+            if ok_b is None:
+                return False, set()
+            repo.set_status(base, "green" if ok_b else "red")
+            return (not ok_b), tempest.failing_ids(out_b)
+        except (tempest_ckpt.CheckpointError, OSError, subprocess.SubprocessError) as exc:
+            _log.warning("tempest baseline check failed: %s", exc)
+            return False, set()
 
     def _lint_delta(self, st: dict) -> list:
         tools = None
@@ -1203,17 +1254,22 @@ def wire_messages(messages: list[dict], vision: bool, cwd: Path) -> list[dict]:
             w = vision_hook.augment_wire(uploads.user_wire(m, vision, i in recent), m, vision)
         else:
             w = _wire(m)
-        if m.get("role") == "user" and m.get("wire_tail"):  # Tempest: dynamic context of that message
-            tail = "\n\n" + str(m["wire_tail"])
-            if isinstance(w["content"], str):
-                w["content"] = w["content"] + tail
-            elif isinstance(w["content"], list) and w["content"] and w["content"][0].get("type") == "text":
-                w["content"] = [dict(w["content"][0], text=w["content"][0]["text"] + tail)] + w["content"][1:]
         if i == last_user and "@file:" in str(m.get("content") or ""):
             if isinstance(w["content"], str):
                 w["content"] = uploads.expand_file_refs(w["content"], cwd)
             elif isinstance(w["content"], list) and w["content"] and w["content"][0].get("type") == "text":
                 w["content"][0]["text"] = uploads.expand_file_refs(w["content"][0]["text"], cwd)
+        if m.get("role") == "user" and m.get("wire_tail"):  # Tempest: dynamic context of that message
+            # After the @file: expansion, so refs inside vault notes / skill hints are never expanded.
+            tail = "\n\n" + str(m["wire_tail"])
+            if isinstance(w["content"], str):
+                w["content"] = w["content"] + tail
+            elif isinstance(w["content"], list) and w["content"] and w["content"][0].get("type") == "text":
+                w["content"] = [dict(w["content"][0], text=w["content"][0]["text"] + tail)] + w["content"][1:]
+            elif isinstance(w["content"], list):
+                # parts without a leading text part (attachments only): the clock, the skill hint
+                # and a continue note must not get lost, so they ride as their own text part
+                w["content"] = list(w["content"]) + [{"type": "text", "text": tail.strip()}]
         out.append(w)
     return out
 

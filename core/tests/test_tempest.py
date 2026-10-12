@@ -1,13 +1,26 @@
-"""Tempest harness layer (opt-in): legacy stays the default; each mechanism in isolation."""
+"""Tempest harness layer (the default since 1.4.7; legacy stays one setting away); each mechanism in isolation."""
 
 import json
 
 from neovarch import tempest
 
 
-def test_default_is_legacy():
-    assert tempest.mode({}) == "legacy"
-    assert tempest.settings({"agent": {"harness_mode": "legacy"}}) is None
+def test_default_is_tempest_and_explicit_off_is_respected():
+    # 1.4.7: unset / empty -> Tempest (new and existing installs that never chose)
+    assert tempest.mode({}) == "tempest"
+    assert tempest.mode({"agent": {}}) == "tempest"
+    assert tempest.mode({"agent": {"harness_mode": ""}}) == "tempest"
+    assert tempest.mode({"agent": {"harness_mode": None}}) == "tempest"
+    assert tempest.settings({}) is not None
+    assert not tempest.mode_is_explicit({}) and not tempest.mode_is_explicit({"agent": {"harness_mode": " "}})
+    # an explicit "off" in config.yaml keeps the legacy loop, in every spelling a user may write
+    for off in ("legacy", "LEGACY", " legacy ", "off", "false", "0", "no", "lama", False):
+        assert tempest.mode({"agent": {"harness_mode": off}}) == "legacy", off
+        assert tempest.settings({"agent": {"harness_mode": off}}) is None
+        assert tempest.mode_is_explicit({"agent": {"harness_mode": off}})
+    assert tempest.mode({"agent": {"harness_mode": "tempest"}}) == "tempest"
+    assert tempest.mode({"agent": {"harness_mode": "Tempest"}}) == "tempest"
+    assert tempest.mode({"agent": {"harness_mode": True}}) == "tempest"
     st = tempest.settings({"agent": {"harness_mode": "tempest"}})
     assert st["profile"] == "ringan" and st["mask_mode"] == "compact" and st["verify_retries"] == 2
     assert st["cache_v2"] and st["lint_gate"] and st["checkpoints"] and not st["progress"]
@@ -94,6 +107,7 @@ async def test_agent_legacy_wire_unchanged_and_tempest_gate(home, tmp_path, monk
     cfg = cfgmod.load_config()
     cfg["model"] = {"provider": "custom", "default": "m", "base_url": "http://127.0.0.1:9/v1"}
     cfg["approvals"] = {"mode": "off"}
+    cfg["agent"]["harness_mode"] = "legacy"  # Tempest is the default since 1.4.7: pick legacy explicitly
     cfgmod.save_config(cfg)
     monkeypatch.setenv("NEOVARCH_API_KEY", "x")
     (tmp_path / "tests").mkdir()
@@ -400,3 +414,118 @@ async def test_agent_compacts_at_threshold_only(home, tmp_path, monkeypatch):
     breaks = [i for i, (a, b) in enumerate(zip(seen, seen[1:])) if tempest.prefix_violation(a, b) is not None]
     assert len(breaks) == len(compactions)  # the cache breaks once per compaction, never in between
     assert rec["tempest_compact"]["masked"]
+
+
+def test_wire_tail_survives_every_user_content_shape(tmp_path):
+    """Tempest (default) appends the per-message context to the user turn; it must reach the
+    model for plain text, text+image parts and parts without a leading text part, and must
+    come after an @file: expansion (never expanding refs inside the tail)."""
+    from neovarch.agent import wire_messages
+    tail = "# Konteks saat ini\nDate: X\n@file:secret.txt"
+    (tmp_path / "a.txt").write_text("isi a")
+    (tmp_path / "secret.txt").write_text("rahasia")
+    w = wire_messages([{"role": "user", "content": "lihat @file:a.txt", "wire_tail": tail}], False, tmp_path)
+    text = w[0]["content"]
+    assert text.endswith(tail) and "[Isi @file:a.txt]" in text and "rahasia" not in text
+    assert text.index("[Isi @file:a.txt]") < text.index("# Konteks saat ini")
+    import neovarch.agent as agentmod
+    from neovarch import uploads, vision
+    real = uploads.user_wire
+    try:
+        uploads.user_wire = lambda m, v, s: {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:x"}}]}
+        w = wire_messages([{"role": "user", "content": "", "attachments": [{"kind": "image"}], "wire_tail": tail}],
+                          True, tmp_path)
+    finally:
+        uploads.user_wire = real
+    parts = w[0]["content"]
+    assert parts[0]["type"] == "image_url" and parts[-1] == {"type": "text", "text": tail}
+    assert agentmod and vision
+
+
+# ------------------------------------------------- default-harness safety (1.4.7) -----
+
+async def _gate_turn(home, tmp_path, monkeypatch, script, events=None):
+    import neovarch.agent as agentmod
+    from neovarch import config as cfgmod
+    from neovarch.agent import Agent
+    from neovarch.llm import Completion
+    from neovarch.store import SessionStore
+    from neovarch.tools import ToolContext
+    cfg = cfgmod.load_config()
+    cfg["model"] = {"provider": "custom", "default": "m", "base_url": "http://127.0.0.1:9/v1"}
+    cfg["approvals"] = {"mode": "off"}
+    cfgmod.save_config(cfg)  # harness_mode unset: the default (Tempest)
+    monkeypatch.setenv("NEOVARCH_API_KEY", "x")
+    seen = []
+
+    async def fake(*, messages, **_kw):
+        seen.append(messages)
+        text, calls = script.pop(0) if script else ("selesai lagi", [])
+        return Completion(text=text, tool_calls=calls)
+    monkeypatch.setattr(agentmod, "stream_chat", fake)
+    store = SessionStore()
+    rec = store.create(cwd=str(tmp_path))
+    ev = events if events is not None else []
+    agent = Agent(rec, store, ToolContext(cwd=tmp_path, approve=None), lambda k, p: ev.append((k, p)))
+    final = await agent.run_turn("ubah kode")
+    return final, seen
+
+
+def _write(cid, path, content):
+    from neovarch.llm import ToolCall
+    return ToolCall(id=cid, name="write_file", arguments=json.dumps({"path": path, "content": content}))
+
+
+def _run_ok(cid):
+    import sys as _sys
+    from neovarch.llm import ToolCall
+    return ToolCall(id=cid, name="shell", arguments=json.dumps({"command": f"{_sys.executable} -c 'print(1)'"}))
+
+
+def test_run_verify_without_pytest_or_tests_is_no_verdict(tmp_path, monkeypatch):
+    """A PC whose python has no pytest (or a tests/ dir without tests) must not fail every turn."""
+    monkeypatch.setattr(tempest, "pytest_available", lambda py: False)
+    ok, why = tempest.run_verify(["python3", "-m", "pytest", "-q"], tmp_path)
+    assert ok is None and "pytest" in why
+    monkeypatch.undo()
+    import sys as _sys
+    (tmp_path / "tests").mkdir()
+    ok, why = tempest.run_verify([_sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"], tmp_path)
+    assert ok is None and "tidak ada tes" in why
+    ok, why = tempest.run_verify(["neovarch-no-such-runner-xyz"], tmp_path)
+    assert ok is None
+
+
+async def test_pre_existing_red_tests_do_not_trigger_fixup_or_rollback(home, tmp_path, monkeypatch):
+    """Project already red before the turn (same failing test): one fix-up chance that says so,
+    then the turn's work stays, no retry loop, no error; it is reported as unverified instead."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_old.py").write_text("def test_old():\n    assert False, 'rusak sejak dulu'\n")
+    (tmp_path / "notes.py").write_text("A = 1\n")
+    events = []
+    final, seen = await _gate_turn(home, tmp_path, monkeypatch, [
+        ("", [_write("w", "notes.py", "A = 2\n")]), ("", [_run_ok("r")]), ("Sudah selesai.", [])], events)
+    assert (tmp_path / "notes.py").read_text() == "A = 2\n"  # not rolled back
+    nudges = [m for m in seen[-1] if "[verifikasi otomatis gagal" in str(m.get("content"))]
+    assert len(nudges) == 1 and "sudah gagal SEBELUM" in nudges[0]["content"]
+    assert final.startswith("selesai lagi") and "sudah gagal sebelum perubahan" in final
+    done = [p for k, p in events if k == "message.complete"][-1]
+    assert done.get("status") != "error" and not [p for k, p in events if k == "error"]
+    assert len(seen) == 4  # one hint, the model left it alone, no second round
+
+
+async def test_new_failure_in_a_red_project_is_still_gated(home, tmp_path, monkeypatch):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "m.py").write_text("def f():\n    return 2\n")
+    (tmp_path / "tests" / "test_a_old.py").write_text("def test_old():\n    assert False\n")
+    (tmp_path / "tests" / "test_b_new.py").write_text(
+        "import sys, pathlib\nsys.path.insert(0, str(pathlib.Path(__file__).parent.parent))\n"
+        "from m import f\n\ndef test_f():\n    assert f() == 2\n")
+    # the old failure is fixed in this turn, but f() is broken: a different failure -> gate
+    final, seen = await _gate_turn(home, tmp_path, monkeypatch, [
+        ("", [_write("a", "tests/test_a_old.py", "def test_old():\n    assert True\n")]),
+        ("", [_write("b", "m.py", "def f():\n    return 3\n")]), ("Selesai.", []),
+        ("refleksi", [_write("c", "m.py", "def f():\n    return 2\n")]), ("Selesai 2.", [])])
+    assert final.startswith("Selesai 2.")
+    assert any("[verifikasi otomatis gagal" in str(m.get("content")) for m in seen[3])
+    assert (tmp_path / "m.py").read_text().endswith("return 2\n")

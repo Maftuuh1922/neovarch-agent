@@ -165,7 +165,7 @@ export function ConfigField({
     return row(
       <Select
         onValueChange={next => onChange(next === EMPTY_SELECT_VALUE ? '' : next)}
-        value={String(value ?? '') || EMPTY_SELECT_VALUE}
+        value={String(value ?? '') || String(schema.default ?? '') || EMPTY_SELECT_VALUE}
       >
         <SelectTrigger className={CONTROL_TEXT}>
           <SelectValue />
