@@ -147,20 +147,37 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
+        await kill_process_tree(proc)
+        return f"error: timed out after {timeout:.0f}s"
+    except asyncio.CancelledError:
+        # Stop: the command and everything it started go away now, not when it finishes.
+        await asyncio.shield(kill_process_tree(proc))
+        raise
+    text = decode_output(out)
+    return _clip(f"exit code {proc.returncode} ({time.monotonic() - started:.1f}s)\n{text}")
+
+
+async def kill_process_tree(proc) -> None:
+    """Kill a command started with start_new_session=True together with every process
+    it spawned (its process group); on Windows, taskkill /T kills the tree."""
+    if proc.returncode is None:
         try:
-            os.killpg(proc.pid, 9)  # the whole command (start_new_session), not only the shell
-        except (ProcessLookupError, PermissionError, AttributeError, OSError):
+            if os.name == "nt":
+                killer = await asyncio.create_subprocess_exec(
+                    "taskkill", "/F", "/T", "/PID", str(proc.pid),
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                await asyncio.wait_for(killer.wait(), 5)
+            else:
+                os.killpg(proc.pid, 9)  # the whole command (start_new_session), not only the shell
+        except (ProcessLookupError, PermissionError, AttributeError, OSError, asyncio.TimeoutError):
             try:
                 proc.kill()
             except ProcessLookupError:
                 pass
-        try:
-            await asyncio.wait_for(proc.wait(), 5)
-        except (asyncio.TimeoutError, Exception):
-            pass
-        return f"error: timed out after {timeout:.0f}s"
-    text = decode_output(out)
-    return _clip(f"exit code {proc.returncode} ({time.monotonic() - started:.1f}s)\n{text}")
+    try:
+        await asyncio.wait_for(proc.wait(), 5)
+    except (asyncio.TimeoutError, Exception):
+        pass
 
 
 def decode_output(raw: bytes) -> str:

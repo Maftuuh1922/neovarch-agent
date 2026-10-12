@@ -6,6 +6,17 @@ import 'dart:convert';
 import '../data/gateway_client.dart';
 import '../models/models.dart';
 
+
+/// What a stopped turn shows (same words as the desktop): title, one sentence,
+/// and the one-tap "Lanjutkan".
+const Map<String, dynamic> kStoppedInfo = {
+  'code': 'stopped',
+  'title': 'Dihentikan',
+  'message': 'Dihentikan. Model, alat, dan perintah yang sedang berjalan sudah dibatalkan.',
+  'action': 'continue',
+  'action_label': 'Lanjutkan',
+};
+
 class RemoteTranscript {
   RemoteTranscript({List<ChatMsg>? history}) : messages = history ?? [];
 
@@ -143,14 +154,17 @@ class RemoteTranscript {
         title = '${p['title'] ?? ''}';
       case 'message.complete':
         final text = p['text'] is String ? p['text'] as String : '';
-        final err = (p['error'] ?? p['failure_reason'])?.toString();
+        final stopped = p['status'] == 'interrupted' || p['error'] == 'interrupted';
+        // Stop pressed (here or on the PC): a plain "Dihentikan" note with one tap to
+        // continue, never the raw word "interrupted" as an error.
+        final err = stopped ? kStoppedInfo['message'] as String : (p['error'] ?? p['failure_reason'])?.toString();
         final cur = _cur;
         if (text.isNotEmpty && (cur == null || (cur.content.isEmpty && !_afterTool))) {
           _open.content = text;
         } else if (text.isNotEmpty && _afterTool) {
           _assistant().content = text;
         }
-        final info = p['error_info'];
+        final info = stopped ? (p['error_info'] ?? kStoppedInfo) : p['error_info'];
         if (err != null && err.isNotEmpty && err != error) {
           // Not shown yet by an `error` event of this turn.
           error = err;
