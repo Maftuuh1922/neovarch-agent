@@ -15,6 +15,8 @@ import 'attachments.dart';
 import 'company_models.dart';
 import 'link/frame_link.dart';
 import 'link/link_info.dart';
+import 'l10n/strings.dart';
+import 'message_queue.dart';
 import 'models_api.dart';
 import 'office_models.dart';
 import 'pairing.dart';
@@ -33,6 +35,9 @@ class RemoteController extends ChangeNotifier {
 
   RemoteGateway? gateway;
   SavedDesktop? desktop;
+
+  /// Antrean pesan of the open chat, mirrored from the PC (`queue.update`).
+  MessageQueueState queue = MessageQueueState.empty;
   RemoteStatus status = RemoteStatus.disconnected;
   String? error;
   StreamSubscription? _statusSub, _eventSub, _approvalSub, _routeSub;
@@ -285,6 +290,8 @@ class RemoteController extends ChangeNotifier {
   /// sentence ("PC tidak terjangkau…"), see remote_errors.dart.
   String _friendly(String e, {bool? relay}) {
     final s = e.replaceFirst('Exception: ', '');
+    final core = friendlyCoreError(s);
+    if (core != null) return core;
     final viaRelay = relay ?? (gateway?.relayAvailable ?? false);
     if (s.contains('401') || s.contains('403') || s.contains('not upgraded')) {
       return 'PC menolak token. Buat ulang QR pemasangan di PC lalu pindai lagi.';
@@ -488,6 +495,19 @@ class RemoteController extends ChangeNotifier {
             reasoningEffort = next;
             notifyListeners();
           }
+        }
+      case 'queue.update':
+        if (f.sessionId != null && f.sessionId == runtimeId) {
+          queue = MessageQueueState.fromJson(f.payload);
+          notifyListeners();
+        }
+      case 'queue.sent':
+        // The PC took the next queued message: it becomes this chat's user turn.
+        if (f.sessionId != null && f.sessionId == runtimeId) {
+          transcript.addUser('${f.payload['text'] ?? ''}');
+          queue = MessageQueueState(
+              items: queue.items.where((i) => i.id != '${f.payload['id']}').toList(), paused: false);
+          notifyListeners();
         }
       case 'resync.required':
         unawaited(refreshAll());
@@ -717,6 +737,7 @@ class RemoteController extends ChangeNotifier {
       runtimeId = s.runtimeId;
       title = s.title.isNotEmpty ? s.title : (sessions.where((x) => x.id == stored).firstOrNull?.title ?? '');
       transcript = RemoteTranscript(history: s.messages)..running = s.running;
+      queue = MessageQueueState.fromJson(s.queue);
       // Each chat keeps its own reasoning level (shared with the desktop).
       reasoningEffort = sessionEffort(s.reasoningEffort, composer);
     } catch (e) {
@@ -745,6 +766,7 @@ class RemoteController extends ChangeNotifier {
       runtimeId = s.runtimeId;
       title = '';
       transcript = RemoteTranscript(history: s.messages);
+      queue = MessageQueueState.empty;
     } catch (e) {
       error = _friendly('$e');
     }
@@ -767,22 +789,60 @@ class RemoteController extends ChangeNotifier {
     // The PC prefixes picked skills as `/name` (the desktop's text form); show
     // the turn the same way right away.
     final skills = [for (final s in (extra['skills'] as List? ?? const [])) '/$s'].where((s) => !t.split(RegExp(r'\s+')).contains(s));
-    transcript.addUser(skills.isEmpty ? t : '${skills.join(' ')} $t', attachments: [for (final a in ready) a.remote!.toJson()]);
+    // While the agent works the message goes to the PC's queue (shown above the
+    // composer); it becomes a chat bubble when the PC sends it (`queue.sent`).
+    final busy = transcript.running;
+    final shown = skills.isEmpty ? t : '${skills.join(' ')} $t';
+    final attJson = [for (final a in ready) a.remote!.toJson()];
+    if (!busy) transcript.addUser(shown, attachments: attJson);
+    final bubbles = transcript.messages.length;
     pendingAttachments.clear();
     attachNotice = null;
     notifyListeners();
     try {
       final res = await g.submit(rid, t, attachments: [for (final a in ready) a.remote!.id], extra: extra);
+      if (res is Map && (res['status'] == 'queued' || res['queued'] == true)) {
+        // The PC was still busy (maybe a turn started on the desktop): undo the
+        // optimistic bubble, the queue strip shows the message instead.
+        if (!busy && transcript.messages.length == bubbles && transcript.messages.isNotEmpty && transcript.messages.last.role == 'user') {
+          transcript.messages.removeLast();
+          transcript.running = true;
+        }
+        if (res['queue'] is Map) queue = MessageQueueState.fromJson(res['queue']);
+        notifyListeners();
+        return null;
+      }
       if (res is Map && res['notice'] != null) {
         attachNotice = '${res['notice']}';
         notifyListeners();
       }
       return null;
     } catch (e) {
+      final msg = _friendly('$e');
+      if (busy) {
+        // Older PC without a queue: keep the running turn, just say why.
+        notifyListeners();
+        return msg;
+      }
       transcript.interrupted();
-      transcript.error = _friendly('$e');
+      transcript.error = msg;
       notifyListeners();
       return transcript.error;
+    }
+  }
+
+  /// Antrean: 'edit' (with [text]) / 'remove' / 'send_now' / 'resume' / 'clear'.
+  /// Returns an error to show, or null.
+  Future<String?> queueAction(String action, {String? id, String? text}) async {
+    final g = gateway, rid = runtimeId;
+    if (g == null || rid == null) return tr('Belum terhubung ke PC.');
+    try {
+      final res = await g.queueCall(rid, action, id: id, text: text);
+      if (res is Map) queue = MessageQueueState.fromJson(res);
+      notifyListeners();
+      return null;
+    } catch (e) {
+      return _friendly('$e');
     }
   }
 

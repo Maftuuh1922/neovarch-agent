@@ -28,6 +28,7 @@ import 'nv_widgets.dart';
 import 'remote_attachments.dart';
 import 'model_picker.dart';
 import 'remote_composer.dart';
+import 'queue_strip.dart';
 
 class RemoteChatScreen extends ConsumerStatefulWidget {
   const RemoteChatScreen({super.key, required this.onOpenApprovals});
@@ -628,6 +629,7 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
         borderRadius: BorderRadius.circular(NV.rCard),
         padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        QueueStrip(queue: r.queue, onAction: r.queueAction, onError: (m) => toast(context, m)),
         AttachmentStrip(items: r.pendingAttachments, onRemove: r.removeAttachment),
         ComposerChipsRow(
           r: r,
@@ -717,9 +719,19 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
               ),
             ),
           ),
-          if (r.running)
-            ComposerSendButton(key: const ValueKey('composer-stop'), stop: true, onPressed: r.stop)
-          else
+          if (r.running) ...[
+            // Typing while the agent works: send = put it in the queue.
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _input,
+              builder: (context, v, _) => v.text.trim().isEmpty && r.pendingAttachments.isEmpty
+                  ? const SizedBox.shrink()
+                  : Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: ComposerSendButton(key: const ValueKey('composer-queue'), onPressed: r.connected ? _send : null),
+                    ),
+            ),
+            ComposerSendButton(key: const ValueKey('composer-stop'), stop: true, onPressed: r.stop),
+          ] else
             ComposerSendButton(key: const ValueKey('composer-send'), onPressed: r.connected ? _send : null),
         ]),
         ]),
