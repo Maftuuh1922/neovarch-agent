@@ -194,6 +194,11 @@ class ModelCatalog:
         self.error = None
         self.fetched_at = time.time()
         router9.LAST_MODEL_IDS[:] = [str(r["id"]) for r in self.rows]
+        try:  # vision flags the upstreams declare (input_modalities, capabilities, …)
+            from neovarch import uploads
+            uploads.remember_model_meta(self.rows)
+        except Exception:  # noqa: BLE001 - metadata is a bonus, never a failure
+            pass
         return self.ids() != before
 
     def listing(self, cfg: dict, router_running: bool) -> list[dict]:

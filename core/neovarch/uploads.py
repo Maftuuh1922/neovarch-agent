@@ -49,7 +49,52 @@ VISION_HINTS = (
     "qwen3-vl", "pixtral", "vision", "llama-3.2-11b", "llama-3.2-90b", "llama-4", "minicpm-v", "glm-4v",
     "glm-4.5v", "internvl", "moondream", "grok-2-vision", "grok-4", "mistral-medium-3", "mistral-small-3.1",
     "phi-3.5-vision", "phi-4-multimodal", "kimi-vl", "step-1v", "yi-vision",
+    # Xiaomi MiMo v2.x reads images (mimo-v2.5, mimo-v2.6, flash / free / pro).
+    "mimo-v2", "mimo-vl",
 )
+
+# The models Neovarch ships as defaults (9Router): always vision-capable, whatever
+# the hint list or the provider's metadata says.
+DEFAULT_VISION_MODELS = ("oc/mimo-v2.6-flash-free", "mimo/mimo-v2.6-pro")
+
+# Vision flags read from a provider's ``GET /models`` (9Router passes through what
+# its upstreams declare). Filled by models.ModelCatalog.fetch; id → True/False.
+MODEL_VISION_META: dict[str, bool] = {}
+
+
+def vision_from_meta(row: dict) -> bool | None:
+    """What one ``/models`` row says about image input, or None when it says nothing."""
+    if not isinstance(row, dict):
+        return None
+    for key in ("vision", "supports_vision", "supportsVision"):
+        if isinstance(row.get(key), bool):
+            return row[key]
+    caps = row.get("capabilities")
+    if isinstance(caps, dict):
+        for key in ("vision", "image_input", "images"):
+            if isinstance(caps.get(key), bool):
+                return caps[key]
+    if isinstance(caps, list) and caps:
+        return any(str(c).lower() in ("vision", "image", "image_input") for c in caps)
+    arch = row.get("architecture") if isinstance(row.get("architecture"), dict) else {}
+    for mods in (row.get("input_modalities"), row.get("modalities"), arch.get("input_modalities")):
+        if isinstance(mods, list) and mods:
+            return any(str(m).lower() in ("image", "images", "vision") for m in mods)
+        if isinstance(mods, dict) and isinstance(mods.get("input"), list):
+            return any(str(m).lower() in ("image", "images") for m in mods["input"])
+    modality = str(arch.get("modality") or row.get("modality") or "")
+    if "->" in modality:
+        return "image" in modality.split("->", 1)[0]
+    return None
+
+
+def remember_model_meta(rows: list[dict]) -> None:
+    """Record the vision flags a ``/models`` listing declares (unknown rows are skipped)."""
+    for row in rows or []:
+        mid = str((row or {}).get("id") or "")
+        flag = vision_from_meta(row)
+        if mid and flag is not None:
+            MODEL_VISION_META[mid] = flag
 
 
 class UploadError(ValueError):
@@ -252,8 +297,15 @@ def supports_vision(cfg: dict, endpoint: dict) -> bool:
                 return spec["vision"]
         except Exception:
             pass
-    model = str(endpoint.get("model") or "").lower()
-    return any(h in model for h in VISION_HINTS)
+    raw = str(endpoint.get("model") or "")
+    model = raw.lower()
+    if raw in DEFAULT_VISION_MODELS or MODEL_VISION_META.get(raw) is True:
+        return True
+    if any(h in model for h in VISION_HINTS):
+        return True
+    # Only the provider's own metadata can still say yes for an unknown name.
+    bare = raw.split("/", 1)[-1]
+    return MODEL_VISION_META.get(bare) is True
 
 
 def extract_text(path: Path, mime: str = "") -> str | None:

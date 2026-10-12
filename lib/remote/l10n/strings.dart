@@ -152,4 +152,8 @@ const enStrings = <String, String>{
   'Batal': 'Cancel',
   'Masuk antrean · dikirim setelah agen selesai': 'Queued · sent when the agent finishes',
   '{n} lampiran': '{n} attachments',
+  // ---- restart PC (v1.4.7) ----------------------------------------------------------
+  'PC sedang restart… menyambung ulang': 'PC is restarting… reconnecting',
+  'PC belum kembali setelah restart. Pastikan aplikasi Neovarch di PC berjalan, lalu tarik untuk menyambung ulang.':
+      'The PC has not come back after the restart. Make sure the Neovarch app is running on your PC, then pull to reconnect.',
 };

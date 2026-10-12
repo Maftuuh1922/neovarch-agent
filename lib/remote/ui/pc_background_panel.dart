@@ -11,7 +11,9 @@ import '../remote_gateway.dart' show RemoteRestError;
 import 'nv_widgets.dart';
 
 class PcBackgroundPanel extends StatefulWidget {
-  const PcBackgroundPanel({super.key, required this.api});
+  const PcBackgroundPanel({super.key, required this.api, this.onRestarting});
+  /// A restart was asked for: the chat shows "PC sedang restart…" and reconnects.
+  final VoidCallback? onRestarting;
   final PcBackgroundApi api;
 
   @override
@@ -94,6 +96,7 @@ class _PcBackgroundPanelState extends State<PcBackgroundPanel> {
           destructive: stop);
       if (!yes) return;
     }
+    if (a == PcBackgroundAction.restartGateway || a == PcBackgroundAction.restartAgent) widget.onRestarting?.call();
     await _run(() async {
       final msg = await widget.api.backgroundAction(a);
       if (mounted) setState(() => _message = msg);
