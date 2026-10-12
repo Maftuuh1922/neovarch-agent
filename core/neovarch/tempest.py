@@ -131,7 +131,7 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "claim_gate": True,            # "done" claims need execution evidence after the last edit
     "claim_retries": 1,            # hidden corrections before the answer is marked unverified
     # Prompt diet: lazy skill index + deferred tool schemas behind extra_tool (tempest_diet.py)
-    "prompt_diet": True,           # live bench: first prompt ~11.4K -> see docs/tempest-vs-hermes.md
+    "prompt_diet": True,           # live bench: first prompt ~11.3K -> ~5.4K tokens, no pass loss
 }
 
 HEAD_LINES = 30
