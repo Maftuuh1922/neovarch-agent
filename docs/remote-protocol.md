@@ -144,16 +144,22 @@ User guide, privacy and self-hosting: [relay.md](relay.md). Code: `relay/` (serv
 
 ### 7.1 Connection order on the phone
 
-1. Every direct address from the pairing (`url` + `alt`, refreshed from `network.addresses`), **LAN first**,
-   VPN/MagicDNS names after. A DNS failure, refused port or timeout on one address moves to the next one silently.
+1. Every direct address from the pairing (`url` + `alt`, refreshed from `network.addresses`), **Tailscale first**
+   (v1.4.7): tailnet IPs (100.64.0.0/10), then the MagicDNS name (`*.ts.net`), then LAN, then anything else. When
+   the phone knows its VPN is off (Android `tailscaleStatus`), the LAN goes first instead. A DNS failure, refused
+   port or timeout on one address moves to the next one silently.
 2. **Bluetooth** — if the PC advertised a Bluetooth target and the phone setting is on.
-3. **Relay** — if the PC is known (`pc`/`pk`) and a relay URL is set.
+3. **Relay** — only if the PC is known (`pc`/`pk`) and a relay URL is actually configured. There is no built-in
+   relay since v1.4.7; the never-deployed `wss://relay.neovarchlabs.web.id` is ignored wherever it still appears.
+
+The PC's QR puts the Tailscale IP as `url` when Tailscale is up, then MagicDNS and LAN addresses as `alt`.
 
 Every REST call (model switch, Kanban, vault, uploads…) goes through the same connection manager
 (`RemoteGateway._send`): over the live transport, and when a direct address stops answering mid-session it
 reconnects over the next route and retries once. Users never see raw socket errors; a total failure reads
-"PC tidak terjangkau. Mencoba lewat relay…" with a **Coba lagi** action. While on relay/Bluetooth the phone
-probes the LAN every 45 s and switches back as soon as it answers.
+"PC tidak terjangkau. Pastikan PC menyala dan Tailscale aktif di HP dan PC…" with a **Coba lagi** action and, when
+Tailscale is not ready on the phone, the **Siapkan Tailscale** steps. While on relay/Bluetooth the phone probes the
+direct addresses every 45 s and switches back as soon as one answers.
 
 ### 7.2 Pairing payload additions (backward compatible)
 

@@ -28,24 +28,34 @@ const PREVIEW_STATUS: NeovarchRemoteStatus = {
     { address: '192.168.1.5', iface: 'wlan0' },
     { address: '100.84.12.7', iface: 'tailscale0', kind: 'tailscale' }
   ],
-  altUrls: ['http://pc-kantor.tail1234.ts.net:9319', 'http://100.84.12.7:9319'],
+  altUrls: ['http://pc-kantor.tail1234.ts.net:9319', 'http://192.168.1.5:9319'],
   tailscale: { dnsName: 'pc-kantor.tail1234.ts.net', ips: ['100.84.12.7'] },
   address: '192.168.1.5',
   url: 'http://192.168.1.5:9319',
   token: 'eyJzdWIiOiJuZW92YXJjaC1yZW1vdGUiLCJraW5kIjoiYWNjZXNzIiwiZXhwIjoxOTE3NjgwMDAwfdcg06aPZhiOLEAVRMba-pi23576xtM_tVRtdvf8-eZL',
   pairingUri:
-    'neovarch://pair?v=1&url=http%3A%2F%2F192.168.1.5%3A9319&token=eyJzdWIiOiJuZW92YXJjaC1yZW1vdGUiLCJraW5kIjoiYWNjZXNzIiwiZXhwIjoxOTE3NjgwMDAwfdcg06aPZhiOLEAVRMba-pi23576xtM_tVRtdvf8-eZL&name=PC+Kantor&profile=default',
+    'neovarch://pair?v=1&url=http%3A%2F%2F100.84.12.7%3A9319&token=eyJzdWIiOiJuZW92YXJjaC1yZW1vdGUiLCJraW5kIjoiYWNjZXNzIiwiZXhwIjoxOTE3NjgwMDAwfdcg06aPZhiOLEAVRMba-pi23576xtM_tVRtdvf8-eZL&name=PC+Kantor&profile=default',
   deviceName: 'PC Kantor',
   profile: 'default',
   error: null,
   logTail: '',
+  pairUrl: 'http://100.84.12.7:9319',
+  tailscaleSetup: {
+    state: 'running',
+    label: 'Tersambung',
+    account: 'andi@example.com',
+    platform: 'linux',
+    steps: [],
+    checkedAt: 0
+  },
   relay: {
     enabled: true,
-    url: 'wss://relay.neovarchlabs.web.id',
-    defaultUrl: 'wss://relay.neovarchlabs.web.id',
-    state: 'online',
+    configured: false,
+    url: '',
+    defaultUrl: '',
+    state: 'off',
     error: null,
-    phones: 1
+    phones: 0
   },
   bluetooth: { enabled: false, state: 'off', error: null, address: null, phones: 0 },
   devices: [
@@ -188,8 +198,7 @@ export function RemoteSettings() {
       <SectionHeading icon={QrCode} meta={stateLabel} title="Detail koneksi" />
       <p className={`${CAPTION} mb-2`}>
         Kendalikan agen di PC ini dari aplikasi Neovarch di HP: obrolan, persetujuan, dan Kanban. Pindai QR sekali —
-        HP tersambung langsung di Wi‑Fi yang sama, atau dari mana saja lewat relay terenkripsi (tanpa aplikasi
-        tambahan).
+        HP tersambung dari mana saja lewat Tailscale (disarankan), atau langsung di Wi‑Fi yang sama.
         {preview && ' (Pratinjau — data contoh.)'}
       </p>
 
@@ -207,6 +216,8 @@ export function RemoteSettings() {
 
       {status?.enabled && (
         <>
+          <TailscaleSection api={api} preview={preview} setStatus={setStatus} status={status} />
+
           <ListRow
             below={
               <div className="mt-3 flex flex-wrap items-start gap-5">
@@ -215,20 +226,20 @@ export function RemoteSettings() {
                     <img alt="QR pemasangan Neovarch" className="size-[232px]" src={qr} />
                   ) : (
                     <span className="text-xs text-[#0d0606]/60">
-                      {status.url ? 'Membuat QR…' : 'Tidak ada alamat LAN'}
+                      {(status.pairUrl ?? status.url) ? 'Membuat QR…' : 'Tidak ada alamat jaringan'}
                     </span>
                   )}
                 </div>
                 <div className="min-w-0 flex-1 space-y-3">
-                  <Field copy={status.url ?? ''} label="Alamat">
-                    <span className={MONO}>{status.url ?? '—'}</span>
+                  <Field copy={status.pairUrl ?? status.url ?? ''} label="Alamat">
+                    <span className={MONO}>{status.pairUrl ?? status.url ?? '—'}</span>
                   </Field>
                   <Field copy={status.token ?? ''} label="Token">
                     <span className={MONO}>{status.token ?? '—'}</span>
                   </Field>
                   {(status.altUrls?.length ?? 0) > 0 && (
                     <div data-nv-remote-alt="">
-                      <p className={CAPTION}>Cadangan (dicoba HP bila LAN tidak terjangkau)</p>
+                      <p className={CAPTION}>Cadangan (dicoba HP berurutan bila alamat pertama tidak terjangkau)</p>
                       {status.altUrls!.map(u => (
                         <p className={MONO} key={u}>
                           {u}
@@ -322,9 +333,9 @@ export function RemoteSettings() {
           />
 
           <p className={`${CAPTION} mt-3`}>
-            Token = kendali penuh atas agen di PC ini. Di Wi‑Fi tanpa enkripsi token bisa disadap; di luar rumah HP
-            memakai relay yang terenkripsi ujung‑ke‑ujung. Bila HP hanya bisa lewat Tailscale, firewall PC memblokir
-            port {status.port} di Wi‑Fi: tekan Periksa koneksi untuk membukanya (khusus jaringan lokal).
+            Token = kendali penuh atas agen di PC ini. Di Wi‑Fi tanpa enkripsi token bisa disadap; lewat Tailscale
+            koneksi HP ke PC terenkripsi. Bila HP hanya bisa lewat Tailscale, firewall PC memblokir port {status.port}{' '}
+            di Wi‑Fi: tekan Periksa koneksi untuk membukanya (khusus jaringan lokal).
           </p>
         </>
       )}
@@ -412,55 +423,63 @@ function AnywhereSection({
   }
 
   const online = relay?.state === 'online'
+  // v1.4.7: no built-in relay (never deployed). It only runs with a URL set here.
+  const configured = relay?.configured ?? Boolean(relay?.url)
 
   return (
     <div data-nv-remote-anywhere="">
       <ToggleRow
-        checked={Boolean(relay?.enabled)}
+        checked={Boolean(relay?.enabled) && configured}
         description={
           <span>
-            PC menjaga satu koneksi keluar ke relay sehingga HP bisa tersambung dari mana saja (data seluler, Wi‑Fi
-            lain) tanpa Tailscale atau membuka port. Isi pesan terenkripsi ujung‑ke‑ujung; relay tidak bisa
-            membacanya.{' '}
-            <span data-nv-relay-state={relay?.state ?? 'off'}>
-              Status:{' '}
-              <span className={online ? 'text-(--ui-text-primary)' : 'text-(--ui-text-tertiary)'}>
-                {relayStateLabel(relay?.state, relay?.phones)}
+            {configured ? (
+              <>
+                PC menjaga satu koneksi keluar ke relay Anda sehingga HP bisa tersambung tanpa Tailscale. Isi pesan
+                terenkripsi ujung‑ke‑ujung; relay tidak bisa membacanya.{' '}
+                <span data-nv-relay-state={relay?.state ?? 'off'}>
+                  Status:{' '}
+                  <span className={online ? 'text-(--ui-text-primary)' : 'text-(--ui-text-tertiary)'}>
+                    {relayStateLabel(relay?.state, relay?.phones)}
+                  </span>
+                </span>
+                {relay?.error && relay.state !== 'online' && (
+                  <span className="block text-(--ui-text-tertiary)">({relay.error})</span>
+                )}
+              </>
+            ) : (
+              <span data-nv-relay-state="unconfigured">
+                Opsional, untuk yang menjalankan relay sendiri (lihat docs/relay.md). Belum ada relay — dari luar rumah
+                HP memakai Tailscale.
               </span>
-            </span>
-            {relay?.error && relay.state !== 'online' && (
-              <span className="block text-(--ui-text-tertiary)">({relay.error})</span>
             )}
           </span>
         }
-        disabled={busy || preview || !api?.setRelay}
-        label="Akses dari mana saja (relay)"
+        disabled={busy || preview || !api?.setRelay || !configured}
+        label="Relay sendiri (opsional)"
         onChange={on => api?.setRelay && void run(() => api.setRelay!({ enabled: on }))}
       />
 
-      {relay?.enabled && (
-        <ListRow
-          action={
-            <Input
-              aria-label="Relay URL"
-              className="h-8 w-72 font-mono text-xs"
-              disabled={busy || preview}
-              onBlur={() =>
-                api?.setRelay && url.trim() !== (relay?.url ?? '') && void run(() => api.setRelay!({ url: url.trim() || null }))
-              }
-              onChange={e => setUrl(e.target.value)}
-              placeholder={relay?.defaultUrl}
-              value={url}
-            />
-          }
-          description={
-            relay && relay.url !== relay.defaultUrl
-              ? 'Relay sendiri. Kosongkan untuk kembali ke relay bawaan NeovarchLabs.'
-              : 'Relay bawaan NeovarchLabs (gratis). Bisa diganti dengan relay Anda sendiri (lihat docs/relay.md).'
-          }
-          title="Relay URL"
-        />
-      )}
+      <ListRow
+        action={
+          <Input
+            aria-label="Relay URL"
+            className="h-8 w-72 font-mono text-xs"
+            disabled={busy || preview}
+            onBlur={() =>
+              api?.setRelay && url.trim() !== (relay?.url ?? '') && void run(() => api.setRelay!({ url: url.trim() || null }))
+            }
+            onChange={e => setUrl(e.target.value)}
+            placeholder={relay?.defaultUrl || 'wss://relay-anda.example.com'}
+            value={url}
+          />
+        }
+        description={
+          configured
+            ? 'Relay Anda. Kosongkan untuk mematikan relay.'
+            : 'Isi URL relay Anda sendiri (wss://…) untuk mengaktifkannya. Kosong = tanpa relay.'
+        }
+        title="Relay URL"
+      />
 
       <ToggleRow
         checked={Boolean(bt?.enabled)}
@@ -512,6 +531,119 @@ function AnywhereSection({
         wide
       />
     </div>
+  )
+}
+
+/** "Tailscale" chip text: running → green "Tersambung", else the state label. */
+export function tailscaleChip(setup: NeovarchTailscaleSetup | null | undefined): { ok: boolean; text: string } {
+  if (!setup) {
+    return { ok: false, text: 'Memeriksa…' }
+  }
+
+  return { ok: setup.state === 'running', text: setup.label }
+}
+
+// Tailscale is the primary remote path (v1.4.7): its state on this PC and, when
+// it is not ready, the per-OS steps with copy buttons and "Periksa lagi".
+function TailscaleSection({
+  api,
+  preview,
+  setStatus,
+  status
+}: {
+  api: Window['hermesDesktop']['neovarchRemote']
+  preview: boolean
+  setStatus: (s: NeovarchRemoteStatus) => void
+  status: NeovarchRemoteStatus
+}) {
+  const [checking, setChecking] = useState(false)
+  const setup = status.tailscaleSetup ?? null
+  const chip = tailscaleChip(setup)
+  const ready = setup?.state === 'running'
+
+  const recheck = async () => {
+    if (!api || preview) {
+      return
+    }
+
+    setChecking(true)
+
+    try {
+      setStatus(await (api.recheckTailscale ? api.recheckTailscale() : api.get()))
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  return (
+    <ListRow
+      action={
+        <Button disabled={checking || preview || !api} onClick={() => void recheck()} size="sm" variant="outline">
+          <RefreshCw />
+          {checking ? 'Memeriksa…' : 'Periksa lagi'}
+        </Button>
+      }
+      below={
+        ready ? (
+          <p className={`${CAPTION} mt-1`} data-nv-tailscale-ready="">
+            {status.tailscale?.dnsName ? (
+              <>
+                <span className="font-mono">{status.tailscale.dnsName}</span>
+                {status.tailscale.ips[0] ? <span className="font-mono"> · {status.tailscale.ips[0]}</span> : null} — alamat
+                ini jadi alamat pertama di QR.
+              </>
+            ) : (
+              'Alamat Tailscale PC ini jadi alamat pertama di QR.'
+            )}
+            {setup?.account ? ` Akun: ${setup.account}. Pakai akun yang sama di HP.` : ' Pakai akun yang sama di HP.'}
+          </p>
+        ) : setup ? (
+          <ol className="mt-2 space-y-2" data-nv-tailscale-steps="">
+            {setup.steps.map((step, i) => (
+              <li className="flex gap-2.5" key={`${i}-${step.title}`}>
+                <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-(--ui-bg-quaternary) font-mono text-[0.625rem] text-(--ui-text-secondary)">
+                  {i + 1}
+                </span>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="text-xs text-(--ui-text-primary)">{step.title}</p>
+                  {step.command && (
+                    <div className="flex items-center gap-2 rounded-[4px] bg-(--ui-bg-quaternary) px-2.5 py-1.5">
+                      <code className={`${MONO} flex-1`}>{step.command}</code>
+                      <CopyButton appearance="inline" label="Salin perintah" text={step.command} />
+                    </div>
+                  )}
+                  {step.link && (
+                    <a
+                      className="text-xs text-(--nv-red) underline underline-offset-2"
+                      href={step.link.url}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {step.link.label}
+                    </a>
+                  )}
+                  {step.detail && <p className={CAPTION}>{step.detail}</p>}
+                </div>
+              </li>
+            ))}
+          </ol>
+        ) : null
+      }
+      description={
+        <span>
+          Cara utama HP tersambung ke PC dari mana saja (data seluler, Wi‑Fi lain). Pasang Tailscale di PC dan HP, masuk
+          dengan akun yang sama.{' '}
+          <span
+            className={chip.ok ? 'text-(--ui-text-primary)' : 'text-(--ui-text-tertiary)'}
+            data-nv-tailscale-state={setup?.state ?? 'unknown'}
+          >
+            Status: {chip.text}
+          </span>
+        </span>
+      }
+      title="Tailscale"
+      wide
+    />
   )
 }
 

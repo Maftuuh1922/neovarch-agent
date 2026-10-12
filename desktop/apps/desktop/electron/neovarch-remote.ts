@@ -26,7 +26,17 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { detectLinuxFirewall, ensureLinuxFirewallRule, linuxFirewallBlockHelp } from './linux-firewall'
-import { DEFAULT_RELAY_URL, normalizeRelayUrl } from './relay-defaults'
+import { DEFAULT_RELAY_URL, effectiveRelayUrl, normalizeRelayUrl } from './relay-defaults'
+import {
+  detectTailscale,
+  linuxFamily,
+  readOsRelease,
+  TAILSCALE_STATE_LABEL,
+  type TailscaleDetect,
+  tailscaleSetupSteps,
+  type TailscaleState,
+  type TailscaleStep
+} from './tailscale-detect'
 import { ensureFirewallRule, firewallHelp } from './windows-firewall'
 
 export const REMOTE_DEFAULT_PORT = 9319
@@ -106,6 +116,17 @@ export interface TailscaleInfo {
   ips: string[]
 }
 
+/** Settings ▸ Remote: Tailscale state on this PC and the steps when it is not ready (v1.4.7). */
+export interface TailscaleSetupStatus {
+  state: TailscaleState
+  label: string
+  account: string | null
+  platform: string
+  steps: TailscaleStep[]
+  /** unix ms of the last check */
+  checkedAt: number
+}
+
 export interface RemoteStatus {
   enabled: boolean
   running: boolean
@@ -116,15 +137,27 @@ export interface RemoteStatus {
   url: string | null
   token: string | null
   pairingUri: string | null
-  /** fallback origins the phone tries after `url`, in order (other LAN, MagicDNS, tailnet IP) */
+  /** fallback origins the phone tries after the QR's first address, in order (MagicDNS, tailnet IP, LAN) */
   altUrls: string[]
+  /** The first address in the QR: the Tailscale IP when Tailscale is up, else `url` (v1.4.7). */
+  pairUrl: string | null
   tailscale: TailscaleInfo | null
+  /** null until the first check finished */
+  tailscaleSetup: TailscaleSetupStatus | null
   deviceName: string
   profile: string | null
   error: string | null
   logTail: string
-  /** Remote dari mana saja (relay) */
-  relay: { enabled: boolean; url: string; defaultUrl: string; state: string; error: string | null; phones: number }
+  /** Remote dari mana saja (relay). `configured` false = no relay URL set: relay stays off. */
+  relay: {
+    enabled: boolean
+    configured: boolean
+    url: string
+    defaultUrl: string
+    state: string
+    error: string | null
+    phones: number
+  }
   bluetooth: { enabled: boolean; state: string; error: string | null; address: string | null; phones: number }
   devices: RemoteLinkDevice[]
 }
@@ -164,6 +197,8 @@ export interface RemoteControllerDeps {
   gatewayLogPath?: string
   /** Test seams for the Linux ufw/firewalld step (linux-firewall.ts). */
   linuxFirewall?: { run?: (file: string, args: string[], timeoutMs: number) => Promise<number>; readFile?: (p: string) => string | null }
+  /** Test seam: Tailscale detection (tailscale-detect.ts). */
+  detectTailscale?: () => Promise<TailscaleDetect>
 }
 
 export interface ProcessRow {
@@ -445,39 +480,40 @@ export function parseTailscaleStatus(json: string): TailscaleInfo | null {
   }
 }
 
-export function readTailscale(): Promise<TailscaleInfo | null> {
-  const exe = process.platform === 'win32' ? 'tailscale.exe' : 'tailscale'
+/** Tailscale on this PC when it is up (MagicDNS + tailnet IPs), else null. */
+export async function readTailscale(detect: () => Promise<TailscaleDetect> = () => detectTailscale()): Promise<TailscaleInfo | null> {
+  const d = await detect()
 
-  return new Promise(resolve => {
-    execFile(exe, ['status', '--json'], { timeout: 4000, windowsHide: true }, (err, stdout) => {
-      resolve(err ? null : parseTailscaleStatus(String(stdout)))
-    })
-  })
+  return d.state === 'running' ? { dnsName: d.dnsName, ips: d.ips } : null
 }
 
-/** Phone try order after the primary `url`: other real LAN addresses, MagicDNS, tailnet IPs. */
+/**
+ * Every address the phone may try, Tailscale first (v1.4.7: Tailscale is the
+ * primary remote path): tailnet IPs, the MagicDNS name, then real LAN
+ * addresses. The QR's first address is `ordered[0]`; the rest go in `alt`.
+ */
+export function orderedPairHosts(input: { addresses: RemoteAddress[]; tailscale: TailscaleInfo | null; lanPrimary: string | null }): string[] {
+  const tailnet = [
+    ...new Set([...(input.tailscale?.ips ?? []), ...input.addresses.filter(a => isTailnetIp(a.address)).map(a => a.address)])
+  ]
+  const lan = input.addresses.filter(a => !isTailnetIp(a.address) && !VIRTUAL_IFACE.test(a.iface)).map(a => a.address)
+  // The chosen LAN address (Settings ▸ Alamat LAN) leads the LAN group.
+  const lanOrdered = input.lanPrimary && !isTailnetIp(input.lanPrimary) ? [input.lanPrimary, ...lan] : lan
+  const hosts = [...tailnet, ...(input.tailscale?.dnsName ? [input.tailscale.dnsName] : []), ...lanOrdered]
+
+  return [...new Set(hosts)]
+}
+
+/** Phone try order after the QR's first address [primary] (a host, not a URL). */
 export function fallbackUrls(input: {
   primary: string | null
   addresses: RemoteAddress[]
   tailscale: TailscaleInfo | null
   port: number
 }): string[] {
-  const hosts: string[] = []
-  const lan = input.addresses.filter(a => !isTailnetIp(a.address) && !VIRTUAL_IFACE.test(a.iface))
-  const tailnet = new Set([
-    ...input.addresses.filter(a => isTailnetIp(a.address)).map(a => a.address),
-    ...(input.tailscale?.ips ?? [])
-  ])
-
-  hosts.push(...lan.map(a => a.address))
-
-  if (input.tailscale?.dnsName) {
-    hosts.push(input.tailscale.dnsName)
-  }
-
-  hosts.push(...[...tailnet].sort())
-
-  return [...new Set(hosts)].filter(h => h !== input.primary).map(h => `http://${h}:${input.port}`)
+  return orderedPairHosts({ addresses: input.addresses, tailscale: input.tailscale, lanPrimary: null })
+    .filter(h => h !== input.primary)
+    .map(h => `http://${h}:${input.port}`)
 }
 
 export function buildPairingUri(input: {
@@ -777,20 +813,61 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     return pid
   }
 
-  // Tailscale is optional: read it lazily (at most once a minute) and re-emit
-  // when the MagicDNS name or tailnet IPs change.
-  function refreshTailscale(force = false) {
+  // Tailscale is the primary remote path (v1.4.7): read it lazily (at most
+  // once a minute, or now from "Periksa lagi") and re-emit when its state,
+  // MagicDNS name or tailnet IPs change.
+  const detect = deps.detectTailscale ?? (() => detectTailscale())
+  let tailscaleDetect: TailscaleDetect | null = null
+  let osFamily: 'arch' | 'other' | null = null
+
+  function refreshTailscale(force = false): Promise<void> {
     if (!force && Date.now() - tailscaleAt < 60_000) {
-      return
+      return Promise.resolve()
     }
 
     tailscaleAt = Date.now()
-    void readTailscale().then(next => {
-      if (JSON.stringify(next) !== JSON.stringify(tailscale)) {
+
+    return detect()
+      .catch(() => null)
+      .then(d => {
+        const next: TailscaleInfo | null = d && d.state === 'running' ? { dnsName: d.dnsName, ips: d.ips } : null
+        const changed = JSON.stringify(d) !== JSON.stringify(tailscaleDetect) || JSON.stringify(next) !== JSON.stringify(tailscale)
+        tailscaleDetect = d
         tailscale = next
-        emit()
-      }
-    })
+
+        if (changed) {
+          emit()
+        }
+      })
+  }
+
+  function tailscaleSetup(): TailscaleSetupStatus | null {
+    const d = tailscaleDetect
+
+    if (!d) {
+      return null
+    }
+
+    if (osFamily === null) {
+      osFamily = process.platform === 'linux' ? linuxFamily(readOsRelease()) : 'other'
+    }
+
+    return {
+      state: d.state,
+      label: TAILSCALE_STATE_LABEL[d.state],
+      account: d.account,
+      platform: process.platform,
+      steps: tailscaleSetupSteps(d.state, process.platform, osFamily),
+      checkedAt: tailscaleAt
+    }
+  }
+
+  /** Settings ▸ Remote ▸ "Periksa lagi": detect Tailscale now (QR gets the tailnet address). */
+  async function recheckTailscale(): Promise<RemoteStatus> {
+    await refreshTailscale(true)
+    emit()
+
+    return status()
   }
 
   function readSettings(): RemoteSettings {
@@ -845,15 +922,20 @@ export function createRemoteController(deps: RemoteControllerDeps) {
         : mintAccessToken(decodeSecret(settings.secret), settings.issuedAt)
     const profile = deps.currentProfile()
     refreshTailscale()
-    const altUrls = fallbackUrls({ primary: address, addresses, tailscale, port: settings.port })
-    const relayUrl = settings.relayUrl || DEFAULT_RELAY_URL
+    // Tailscale first: when it is up the QR's first address is the tailnet IP.
+    const hosts = orderedPairHosts({ addresses, tailscale, lanPrimary: address })
+    const pairUrl = hosts[0] ? `http://${hosts[0]}:${settings.port}` : null
+    const altUrls = hosts.slice(1).map(h => `http://${h}:${settings.port}`)
+    const relayUrl = effectiveRelayUrl(settings.relayUrl)
+    const relayOn = settings.relayEnabled && Boolean(relayUrl)
 
     const pairLink =
       link && running
         ? {
             pcId: link.pc_id,
             pcPk: link.pc_pk,
-            relayUrl: settings.relayEnabled ? link.relay?.url || relayUrl : null,
+            // Only a relay that is actually configured goes into the QR.
+            relayUrl: relayOn ? effectiveRelayUrl(link.relay?.url) || relayUrl : null,
             pairCode: link.pair_code,
             btAddress: settings.bluetoothEnabled ? link.bluetooth?.address : null,
             btChannel: settings.bluetoothEnabled ? link.bluetooth?.channel : null
@@ -870,20 +952,23 @@ export function createRemoteController(deps: RemoteControllerDeps) {
       url,
       token: settings.enabled ? token : null,
       pairingUri:
-        settings.enabled && url
-          ? buildPairingUri({ url, token, name: settings.deviceName, profile, alt: altUrls, link: pairLink })
+        settings.enabled && pairUrl
+          ? buildPairingUri({ url: pairUrl, token, name: settings.deviceName, profile, alt: altUrls, link: pairLink })
           : null,
       altUrls,
+      pairUrl,
       tailscale,
+      tailscaleSetup: tailscaleSetup(),
       deviceName: settings.deviceName,
       profile,
       error,
       logTail: logTail.slice(-2000),
       relay: {
         enabled: settings.relayEnabled,
-        url: relayUrl,
+        configured: Boolean(relayUrl),
+        url: relayUrl ?? '',
         defaultUrl: DEFAULT_RELAY_URL,
-        state: !settings.enabled || !settings.relayEnabled ? 'off' : (link?.relay?.state ?? 'connecting'),
+        state: !settings.enabled || !relayOn ? 'off' : (link?.relay?.state ?? 'connecting'),
         error: link?.relay?.error ?? null,
         phones: link?.relay?.phones ?? 0
       },
@@ -900,10 +985,13 @@ export function createRemoteController(deps: RemoteControllerDeps) {
 
   /** Env for the remote gateway's encrypted-link transports (core remote_link/service.py). */
   function linkEnv(): NodeJS.ProcessEnv {
+    const relayUrl = effectiveRelayUrl(settings.relayUrl)
+
     return {
       NEOVARCH_LINK: '1',
-      NEOVARCH_RELAY: settings.relayEnabled ? '1' : '0',
-      NEOVARCH_RELAY_URL: settings.relayUrl || DEFAULT_RELAY_URL,
+      // No relay URL configured (the built-in one is not deployed): relay off.
+      NEOVARCH_RELAY: settings.relayEnabled && relayUrl ? '1' : '0',
+      NEOVARCH_RELAY_URL: relayUrl ?? '',
       NEOVARCH_BT: settings.bluetoothEnabled ? '1' : '0',
       NEOVARCH_REMOTE_NAME: settings.deviceName
     }
@@ -1366,9 +1454,10 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     writeSettings()
 
     if (running) {
+      const relayUrl = effectiveRelayUrl(settings.relayUrl)
       const next = await linkCall('POST', '/api/remote/link/config', {
-        relay_enabled: settings.relayEnabled,
-        relay_url: settings.relayUrl || DEFAULT_RELAY_URL
+        relay_enabled: settings.relayEnabled && Boolean(relayUrl),
+        relay_url: relayUrl ?? ''
       })
 
       if (next) {
@@ -1468,6 +1557,7 @@ export function createRemoteController(deps: RemoteControllerDeps) {
     setBluetooth,
     revokeDevice,
     refreshLink,
+    recheckTailscale,
     check,
     stop,
     /** Start at boot when the user left remote access on. */

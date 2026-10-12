@@ -45,6 +45,15 @@ declare global {
     error: string | null
   }
 
+  interface NeovarchTailscaleSetup {
+    state: 'not-installed' | 'daemon-down' | 'logged-out' | 'stopped' | 'starting' | 'running'
+    label: string
+    account: string | null
+    platform: string
+    steps: { title: string; command?: string; link?: { label: string; url: string }; detail?: string }[]
+    checkedAt: number
+  }
+
   interface NeovarchRemoteStatus {
     enabled: boolean
     running: boolean
@@ -56,13 +65,26 @@ declare global {
     token: string | null
     pairingUri: string | null
     altUrls?: string[]
+    /** First address in the QR (the Tailscale IP when Tailscale is up). */
+    pairUrl?: string | null
     tailscale?: { dnsName: string | null; ips: string[] } | null
+    /** Tailscale on this PC and the setup steps when it is not ready (v1.4.7). */
+    tailscaleSetup?: NeovarchTailscaleSetup | null
     deviceName: string
     profile: string | null
     error: string | null
     logTail: string
-    /** Remote dari mana saja: outbound relay connection of the remote gateway. */
-    relay?: { enabled: boolean; url: string; defaultUrl: string; state: string; error: string | null; phones: number }
+    /** Remote dari mana saja: outbound relay connection of the remote gateway (optional, self-hosted). */
+    relay?: {
+      enabled: boolean
+      /** false = no relay URL configured: the relay stays off */
+      configured?: boolean
+      url: string
+      defaultUrl: string
+      state: string
+      error: string | null
+      phones: number
+    }
     bluetooth?: { enabled: boolean; state: string; error: string | null; address: string | null; phones: number }
     devices?: {
       id: string
@@ -465,6 +487,8 @@ declare global {
         setRelay?: (patch: { enabled?: boolean; url?: string | null }) => Promise<NeovarchRemoteStatus>
         setBluetooth?: (on: boolean) => Promise<NeovarchRemoteStatus>
         revokeDevice?: (id: string) => Promise<NeovarchRemoteStatus>
+        /** Settings ▸ Remote ▸ Tailscale ▸ Periksa lagi (v1.4.7) */
+        recheckTailscale?: () => Promise<NeovarchRemoteStatus>
         onChanged: (callback: (status: NeovarchRemoteStatus) => void) => () => void
       }
       neovarchBackground?: {

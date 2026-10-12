@@ -45,6 +45,10 @@ class RemoteController extends ChangeNotifier {
   /// Opens a Bluetooth link to the PC (Android platform channel; null = no Bluetooth).
   Future<FrameLink> Function(BluetoothTarget target)? bluetoothConnector;
 
+  /// Is a VPN (Tailscale) up on this phone? (Android platform channel; null =
+  /// unknown.) With the VPN off the LAN is tried before the Tailscale addresses.
+  Future<bool?> Function()? vpnProbe;
+
   /// The PC's appearance (`/api/appearance`, `appearance.changed`).
   void Function(Map<String, dynamic> appearance)? onAppearance;
 
@@ -308,7 +312,8 @@ class RemoteController extends ChangeNotifier {
         link: link,
         deviceKey: () => desktops.linkKey(id),
         deviceName: deviceName,
-        onLinkChanged: (l) => link = l);
+        onLinkChanged: (l) => link = l)
+      ..vpnProbe = vpnProbe;
     try {
       // The QR's token is one-time: trade it for this phone's own session token first.
       await g.exchangePairToken();
@@ -379,7 +384,8 @@ class RemoteController extends ChangeNotifier {
         bluetoothEnabled: d.bluetooth,
         bluetoothConnector: bluetoothConnector,
         onLinkChanged: (l) => desktops.updateLink(d, link: l),
-        onTokenChanged: (t) => unawaited(desktops.updateToken(d, t)));
+        onTokenChanged: (t) => unawaited(desktops.updateToken(d, t)))
+      ..vpnProbe = vpnProbe;
     _statusSub = g.statusStream.listen(_onStatus);
     _eventSub = g.events.listen(_onEvent);
     _approvalSub = g.approvalsChanged.listen(_onApproval);

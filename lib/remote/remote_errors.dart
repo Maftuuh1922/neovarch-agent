@@ -12,11 +12,11 @@ class RemoteUnreachable implements Exception {
   const RemoteUnreachable({this.relayAvailable = false});
   final bool relayAvailable;
   @override
-  // Shown after every route was tried (LAN, Tailscale, then Bluetooth/relay), so
-  // it says what to check instead of "trying the relay…" (v1.4.7).
+  // Shown after every route was tried (Tailscale, LAN, then Bluetooth/relay), so
+  // it says what to check (v1.4.7: Tailscale is the primary remote path).
   String toString() => relayAvailable
-      ? 'PC tidak terjangkau lewat Wi-Fi maupun relay. Pastikan PC menyala, HP dan PC di Wi-Fi yang sama (izinkan Neovarch di firewall PC), atau pakai Tailscale.'
-      : 'PC tidak terjangkau. Pastikan PC menyala, HP dan PC di Wi-Fi yang sama (izinkan Neovarch di firewall PC), atau pakai Tailscale.';
+      ? 'PC tidak terjangkau lewat Tailscale, Wi-Fi maupun relay. Pastikan PC menyala dan Tailscale aktif di HP dan PC (akun yang sama), atau HP dan PC di Wi-Fi yang sama.'
+      : 'PC tidak terjangkau. Pastikan PC menyala dan Tailscale aktif di HP dan PC (akun yang sama), atau HP dan PC di Wi-Fi yang sama (izinkan Neovarch di firewall PC).';
 }
 
 /// Prefix of a per-device session token the PC hands out after pairing.

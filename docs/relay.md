@@ -2,6 +2,17 @@
 
 *Bahasa Indonesia di bawah · English further down.*
 
+> **v1.4.7: Tailscale adalah jalur utama.** Relay bawaan NeovarchLabs (`wss://relay.neovarchlabs.web.id`) tidak
+> pernah di‑deploy, jadi sejak v1.4.7 **tidak ada relay bawaan**: HP mencoba alamat Tailscale PC (100.x / MagicDNS)
+> dulu, lalu LAN, lalu Bluetooth bila aktif, dan relay **hanya** bila Anda mengisi URL relay sendiri di
+> Pengaturan ▸ Remote ▸ Relay URL. QR/HP lama yang masih membawa URL relay bawaan itu mengabaikannya (tanpa pesan
+> error). Kode relay di `relay/` dan pengaturannya tetap ada untuk yang ingin menjalankan relay sendiri — panduan di
+> bawah masih berlaku untuk itu. Cara memasang Tailscale: README ▸ *Remote dari mana saja*.
+>
+> **v1.4.7: Tailscale is the primary path.** The built-in NeovarchLabs relay was never deployed, so there is **no
+> default relay** any more: the phone tries the PC's Tailscale address first, then the LAN, then Bluetooth, and a
+> relay **only** when you set your own relay URL. The self-hosting guide below still applies.
+
 ---
 
 ## Bahasa Indonesia

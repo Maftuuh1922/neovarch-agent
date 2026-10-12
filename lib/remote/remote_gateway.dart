@@ -241,8 +241,16 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
   /// The address the live socket uses (REST goes there too).
   late String activeUrl;
 
-  /// LAN first, then Tailscale MagicDNS, then tailnet IPs.
-  List<String> get candidates => orderedGatewayUrls([baseUrl, ...alternates]);
+  /// False when the phone knows its VPN is off: then the LAN is tried before
+  /// the Tailscale addresses (which would only time out). Refreshed from
+  /// [vpnProbe] at the start of every [connect].
+  bool preferTailscale = true;
+
+  /// Is a VPN (Tailscale) up on this phone? null = unknown (keeps Tailscale first).
+  Future<bool?> Function()? vpnProbe;
+
+  /// Tailscale first (tailnet IP, then MagicDNS), then LAN (v1.4.7).
+  List<String> get candidates => orderedGatewayUrls([baseUrl, ...alternates], tailscaleFirst: preferTailscale);
 
   /// `lan` / `tailscale` / `other` for a direct address, else `relay` / `bluetooth`.
   String get route => _tunnel != null ? _tunnel!.kind : gatewayRoute(activeUrl);
@@ -303,8 +311,8 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
   }
 
   // ------------------------------------------------------------ connection --
-  /// Open the socket on the first address that answers (LAN first, then
-  /// Tailscale), advertise server-request support, replay what was missed,
+  /// Open the socket on the first address that answers (Tailscale first, then
+  /// LAN; relay only when one is configured), advertise server-request support, replay what was missed,
   /// start the keepalive. Throws (and sets [lastError]) when no address works.
   Future<void> connect() async {
     _closed = false;
@@ -313,11 +321,19 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
     // before the replay answer must not move it past the gap.
     final since = lastSeq;
     _setStatus(_attempt == 0 && !_everConnected ? RemoteStatus.connecting : RemoteStatus.reconnecting);
+    final probe = vpnProbe;
+    if (probe != null) {
+      try {
+        preferTailscale = await probe().timeout(const Duration(seconds: 2)) != false;
+      } catch (_) {
+        preferTailscale = true;
+      }
+    }
     try {
       Object? firstError;
       var ok = false;
-      // 1. Direct addresses, LAN first. A DNS failure (a MagicDNS name while
-      //    that VPN is off) or a refused port just moves on to the next one.
+      // 1. Direct addresses, Tailscale first. A DNS failure (a MagicDNS name
+      //    while that VPN is off) or a refused port just moves on to the next one.
       for (final url in candidates) {
         if (_closed) break;
         final c = GatewayClient(
@@ -542,12 +558,13 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
     return false;
   }
 
-  /// While on relay/Bluetooth: come back to the LAN as soon as it answers.
+  /// While on relay/Bluetooth: come back to a direct route (Tailscale or LAN)
+  /// as soon as one answers.
   void _startLanProbe() {
     _lanProbe?.cancel();
     _lanProbe = Timer.periodic(lanProbeEvery, (_) async {
       if (_tunnel == null || _closed || status != RemoteStatus.connected) return;
-      for (final url in candidates.where((u) => gatewayRoute(u) == 'lan')) {
+      for (final url in candidates.where((u) => gatewayRoute(u) != 'other')) {
         try {
           final res = await _http.get(Uri.parse(url).replace(path: '${Uri.parse(url).path}/api/status')).timeout(lanTimeout);
           if (res.statusCode == 200) {

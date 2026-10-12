@@ -3,6 +3,15 @@
 // target. The device's private key lives in flutter_secure_storage
 // (SavedDesktops.linkKey), never here.
 
+/// Relay URLs shipped as a default before v1.4.7 but never deployed.
+const kUndeployedRelayUrls = {'wss://relay.neovarchlabs.web.id'};
+
+/// A relay URL worth trying: set, and not a known undeployed default.
+bool isUsableRelayUrl(String? url) {
+  final u = (url ?? '').trim().replaceAll(RegExp(r'/+$'), '');
+  return u.isNotEmpty && !kUndeployedRelayUrls.contains(u);
+}
+
 /// Bluetooth RFCOMM target of the PC (only when the PC enabled Bluetooth).
 class BluetoothTarget {
   const BluetoothTarget({required this.address, this.channel, this.uuid});
@@ -39,7 +48,11 @@ class LinkInfo {
   static final _pk = RegExp(r'^[A-Za-z0-9_-]{43}$');
 
   bool get valid => _pcId.hasMatch(pcId) && _pk.hasMatch(pcPk);
-  bool get canRelay => valid && (relayUrl ?? '').isNotEmpty;
+
+  /// Only a relay that is actually configured: the pre-1.4.7 built-in default
+  /// was never deployed, so a QR / saved PC that still carries it never tries
+  /// it (and never shows a relay error). Tailscale is the primary remote path.
+  bool get canRelay => valid && isUsableRelayUrl(relayUrl);
 
   static LinkInfo? tryParse(Object? j) {
     if (j is! Map) return null;

@@ -15,6 +15,7 @@ import '../remote_gateway.dart';
 import 'connect_screen.dart';
 import 'nv_widgets.dart';
 import 'pc_background_panel.dart';
+import 'tailscale_setup_card.dart';
 import 'appearance/appearance_section.dart' show NvAppearanceSection;
 
 class RemotePcScreen extends ConsumerWidget {
@@ -104,13 +105,19 @@ class RemotePcScreen extends ConsumerWidget {
                   Expanded(child: Text('JALUR', style: NV.monoLabel(size: 9.5))),
                   Expanded(
                     flex: 2,
-                    child: Text(
-                      key: const ValueKey('pc-route'),
-                      '${routeLabel(r.gateway!.activeUrl, transport: r.gateway!.transport)}${r.gateway!.lastRtt != null ? ' · ${r.gateway!.lastRtt!.inMilliseconds} ms' : ''}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 14, color: NV.text, fontWeight: FontWeight.w500),
-                    ),
+                    child: Row(children: [
+                      Flexible(
+                        child: Text(
+                          key: const ValueKey('pc-route'),
+                          '${routeLabel(r.gateway!.activeUrl, transport: r.gateway!.transport)}${r.gateway!.lastRtt != null ? ' · ${r.gateway!.lastRtt!.inMilliseconds} ms' : ''}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 14, color: NV.text, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      RouteChip(r.gateway!.route),
+                    ]),
                   ),
                 ]),
               ],
@@ -130,6 +137,20 @@ class RemotePcScreen extends ConsumerWidget {
               ]),
             ]),
           ),
+          // Tailscale is the primary remote path (v1.4.7): guided steps when the
+          // phone cannot use it yet (folded while connected over the LAN).
+          if (d != null && r.status != RemoteStatus.connecting)
+            TailscaleSetupCard(
+              pcUrls: [d.url, ...d.alternates],
+              connected: ok,
+              route: ok && r.gateway != null ? r.gateway!.route : '',
+              onRetry: () async {
+                try {
+                  await r.reconnect();
+                } catch (_) {}
+              },
+              onScan: () => open(const ConnectScreen()),
+            ),
           if (r.active.isNotEmpty) ...[
             NvSection('sedang berjalan di pc', count: r.active.length),
             NvList(children: [

@@ -320,6 +320,8 @@ class MainActivity : FlutterActivity() {
             // Kartu Neovarch: which of the given share targets are installed
             // (each package is listed in the manifest's <queries>).
             "installedPackages" -> result.success((call.argument<List<String>>("packages") ?: emptyList()).filter { isInstalled(it) })
+            // Tailscale setup card (lib/remote/tailscale_setup.dart): app installed + a VPN up.
+            "tailscaleStatus" -> result.success(mapOf("installed" to isInstalled(TAILSCALE_PKG), "vpn" to vpnActive()))
             "saveImageToGallery" -> Thread {
                 val out = try { saveToGallery(java.io.File(call.argument<String>("path") ?: ""), call.argument<String>("name") ?: "neovarch.png") } catch (e: Exception) { null }
                 Handler(Looper.getMainLooper()).post { result.success(out) }
@@ -442,6 +444,15 @@ class MainActivity : FlutterActivity() {
         if (Build.VERSION.SDK_INT >= 33) packageManager.getPackageInfo(pkg, PackageManager.PackageInfoFlags.of(0))
         else packageManager.getPackageInfo(pkg, 0)
         true
+    } catch (e: Exception) {
+        false
+    }
+
+    /** True when any network has the VPN transport (Tailscale's tunnel shows up as one). */
+    @Suppress("DEPRECATION")
+    private fun vpnActive(): Boolean = try {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true }
     } catch (e: Exception) {
         false
     }
@@ -817,6 +828,7 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val EXTRA_ROUTE = "nv_route"
+        private const val TAILSCALE_PKG = "com.tailscale.ipn"
         /** Order = the Dart picker (lib/remote/app_icon.dart); first is the manifest default. */
         private val ICON_IDS = listOf("merah", "biru", "ungu", "toska", "hijau", "oranye", "monokrom")
     }
