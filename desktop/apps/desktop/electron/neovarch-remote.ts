@@ -25,8 +25,9 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 
+import { detectLinuxFirewall, ensureLinuxFirewallRule, linuxFirewallBlockHelp } from './linux-firewall'
 import { DEFAULT_RELAY_URL, normalizeRelayUrl } from './relay-defaults'
-import { ensureFirewallRule, firewallHelp, linuxFirewallHelp } from './windows-firewall'
+import { ensureFirewallRule, firewallHelp } from './windows-firewall'
 
 export const REMOTE_DEFAULT_PORT = 9319
 /** core/neovarch/background.py RESTART_EXIT_CODE: the gateway asks to be started again. */
@@ -53,6 +54,8 @@ export interface RemoteSettings {
   relayUrl: string | null
   /** Bluetooth transport (off by default). */
   bluetoothEnabled: boolean
+  /** Linux: the gateway port this PC's ufw/firewalld was opened for (linux-firewall.ts). */
+  linuxFirewallPort?: number
 }
 
 /** A phone allowed to use the relay / Bluetooth (core /api/remote/link). */
@@ -159,6 +162,8 @@ export interface RemoteControllerDeps {
   backgroundMode?: () => boolean
   /** Background gateway output (default: neovarch-remote-gateway.log next to settings). */
   gatewayLogPath?: string
+  /** Test seams for the Linux ufw/firewalld step (linux-firewall.ts). */
+  linuxFirewall?: { run?: (file: string, args: string[], timeoutMs: number) => Promise<number>; readFile?: (p: string) => string | null }
 }
 
 export interface ProcessRow {
@@ -806,7 +811,8 @@ export function createRemoteController(deps: RemoteControllerDeps) {
         deviceName: typeof parsed.deviceName === 'string' ? resolveDeviceName(parsed.deviceName) : base.deviceName,
         relayEnabled: typeof parsed.relayEnabled === 'boolean' ? parsed.relayEnabled : base.relayEnabled,
         relayUrl: typeof parsed.relayUrl === 'string' ? normalizeRelayUrl(parsed.relayUrl) : null,
-        bluetoothEnabled: parsed.bluetoothEnabled === true
+        bluetoothEnabled: parsed.bluetoothEnabled === true,
+        ...(Number.isInteger(parsed.linuxFirewallPort) ? { linuxFirewallPort: parsed.linuxFirewallPort as number } : {})
       }
     } catch {
       return defaultSettings()
@@ -985,7 +991,52 @@ export function createRemoteController(deps: RemoteControllerDeps) {
   }
 
   // Windows: ask once per app run for the inbound firewall rule (UAC prompt).
+  // Linux: the same once per run for ufw/firewalld (polkit prompt), skipped when
+  // this port was already opened (remembered in the settings file).
   let firewallAsked = false
+
+  async function openLinuxFirewall(why: 'start' | 'check'): Promise<{ ok: boolean; message: string | null }> {
+    const port = settings.port
+    const runFw = deps.linuxFirewall?.run
+    const readFile = deps.linuxFirewall?.readFile
+
+    // Unit tests never reach a real polkit prompt unless they inject the seam.
+    if (!deps.linuxFirewall && process.env.VITEST) {
+      return { ok: true, message: null }
+    }
+
+    try {
+      const kind = await detectLinuxFirewall({ run: runFw, readFile })
+
+      if (kind === 'none') {
+        return { ok: true, message: null }
+      }
+
+      if (settings.linuxFirewallPort === port) {
+        return { ok: true, message: null }
+      }
+
+      deps.log(`[remote] ${kind} is active; asking (pkexec) to allow port ${port} from private LAN ranges (${why})`)
+      const { result } = await ensureLinuxFirewallRule(port, { platform: 'linux', run: runFw, kind })
+      deps.log(`[remote] linux firewall rule for port ${port}: ${result}`)
+
+      if (result === 'added') {
+        settings = { ...settings, linuxFirewallPort: port }
+        writeSettings()
+
+        return { ok: true, message: `Port ${port} dibuka di ${kind} untuk jaringan lokal.` }
+      }
+
+      const help = linuxFirewallBlockHelp(kind, port)
+      deps.log(`[remote] ${help}`)
+
+      return { ok: false, message: help }
+    } catch (err) {
+      deps.log(`[remote] linux firewall check failed: ${(err as Error).message}`)
+
+      return { ok: true, message: null }
+    }
+  }
 
   async function start() {
     if (child || starting || closed) {
@@ -1146,7 +1197,7 @@ export function createRemoteController(deps: RemoteControllerDeps) {
 
       if (running && process.platform === 'linux' && !firewallAsked) {
         firewallAsked = true
-        deps.log(`[remote] ${linuxFirewallHelp(settings.port)}`)
+        void openLinuxFirewall('start')
       }
 
       if (running && process.platform === 'win32' && !firewallAsked) {
@@ -1376,6 +1427,20 @@ export function createRemoteController(deps: RemoteControllerDeps) {
       })
 
       if (res.ok) {
+        // A probe from the PC to its own LAN address goes over loopback and never
+        // meets the firewall, so "OK" here did not mean the phone could get in.
+        if (process.platform === 'linux') {
+          const fw = await openLinuxFirewall('check')
+
+          if (!fw.ok) {
+            return { ok: false, message: `Dari PC ini OK, tetapi HP akan terblokir. ${fw.message}` }
+          }
+
+          if (fw.message) {
+            return { ok: true, message: `Terhubung: ${host}:${settings.port} menerima token (Kanban OK). ${fw.message}` }
+          }
+        }
+
         return { ok: true, message: `Terhubung: ${host}:${settings.port} menerima token (Kanban OK).` }
       }
 
