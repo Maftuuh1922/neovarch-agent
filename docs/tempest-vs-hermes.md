@@ -91,8 +91,119 @@ Yang **belum** ada (bukan stub; memang tidak dibuat di Fase 2):
 
 ## 5. Langkah berikut yang disarankan
 
-1. **Diet prompt (dampak terbesar pada token).** Muat indeks skill secara lazy (nama saja, atau hanya skill yang cocok dengan pesan) dan pakai tool search untuk alat yang jarang dipakai (Kantor, PPT, laporan, Obsidian, diagram). Targetkan prompt pertama di bawah 6 ribu token, lalu ulangi run live.
+1. ~~Diet prompt~~ **Selesai** (lihat bagian 6): prompt pertama ~5,5K token, tanpa kehilangan lulus. Berikutnya: bench penalaran yang lebih sulit supaya arm bisa dibedakan.
 2. Tampilkan `verification` dan statistik skill di UI desktop/Android (badge "terverifikasi / belum terverifikasi").
 3. Siklus hidup skill buatan Tempest (stale/archive berbasis uses/fails, tanpa LLM) dan halaman review skill.
 4. Bench live yang lebih besar: ≥20 tugas × 3 seed, termasuk tugas multi-sesi untuk session search dan memori dengan model sungguhan. Tujuannya mengganti asumsi policy dengan data.
 5. Subagent/folding untuk eksplorasi (roadmap 2.3), baru setelah diet prompt.
+
+## 6. Prompt diet + benchmark ulang (12 Okt 2026)
+
+### 6a. Apa yang diubah (`core/neovarch/tempest_diet.py`, saklar `agent.tempest_prompt_diet`)
+
+Hanya berlaku di mode Tempest (tetap opt-in; `legacy` tetap default aplikasi). Default `true` di dalam Tempest; `tempest_prompt_diet: false` mengembalikan prompt Fase 2 persis.
+
+| Bagian prompt pertama | Fase 2 (main) | Diet |
+|---|---|---|
+| Indeks skill | ~30 skill + deskripsi (4.481 char) | hanya nama skill (897 char). Deskripsi skill yang cocok dengan pesan tetap ikut di ekor pesan user (`skillpack.hint_block`, sudah ada sejak Fase 1); `skill` tanpa `name` menampilkan semua deskripsi. |
+| Skema alat | 29 alat (~16.000 char JSON) | 10 alat inti (shell, read/write/edit_file, skill, memory, web_fetch, send_file, plan_update, session_search) + 1 alat `extra_tool` (~6.000 char). 19 alat lain (manage, Kantor, laporan, PPT, Obsidian, diagram, image_ask, …) hanya disebut nama + satu baris di deskripsi `extra_tool`. |
+| Teks aplikasi + orkestrator | 2.527 + 1.676 char | 1.143 + 946 char, aturan yang sama (send_file, office_status, jalur dokumen/diagram, aksi berisiko). |
+| Total system + tools (char) | ~27.600 | ~12.000 |
+
+Cara kerja `extra_tool`: `action=describe` mengembalikan skema lengkap sebagai *hasil alat*; `action=run` + `arguments` menjalankannya. Agent membuka bungkus panggilan `run` menjadi alat aslinya sebelum apa pun (persetujuan, checkpoint, gate, ledger, log), jadi perilakunya sama dengan panggilan langsung. Alat tertunda yang dipanggil langsung dengan namanya juga tetap jalan (model sering memanggil `diagram_save` / `memory_update` langsung karena disebut di teks aplikasi).
+
+Cache: array tools tidak pernah berubah dalam satu sesi (skema yang dimuat belakangan masuk sebagai pesan, append-only). Baris nama skill berubah hanya bila skill dipasang/dihapus, dan itu ditangani catatan perubahan konfigurasi cache-v2 seperti bagian lain. Tes: `core/tests/test_tempest_diet.py` (tools + system prompt identik byte antar giliran, describe/run, panggilan langsung, diet off = semua alat).
+
+Desainnya ditulis sendiri. Gagasan umumnya (memuat skema alat sesuai kebutuhan) juga ada di "Tool Search" Hermes; tidak ada kode Hermes yang dilihat atau disalin untuk ini.
+
+### 6b. Benchmark live ulang: Hermes vs Tempest F2 vs Tempest diet vs legacy
+
+- 12 Okt 2026 (WIB). Model `claude-haiku-5.5` lewat zRouter, sama untuk semua arm. Maks 25 panggilan, budget 300 dtk, fixture segar per run, check deterministik (pytest + tes tersembunyi / verifikasi brute-force).
+- 7 tugas coding lama × 2 seed + **9 tugas penalaran baru** × 3 seed, plus 9 tugas penalaran × 1 seed dengan `reasoning_effort=high` = 50 sel × 4 arm = **200 run**, total 8542273 runs: 200 token.
+- Tugas penalaran: ksatria/pembohong (instans acak, solusi unik dicek brute force), penjadwalan 7 rapat dengan batasan, peluang (pecahan), debug interval merge (3 bug, tes tersembunyi), debug LRU cache (3 bug), debug dari log tanpa tes (split tagihan), ember air jumlah langkah minimum (BFS), rute terpendek dengan syarat urutan, hitung harga bertingkat (diskon, voucher, PPN, ongkir).
+- 4 arm dari satu sel jalan **bersamaan**, jadi kondisi router sama. Setiap run lewat relay lokal sendiri yang mencatat `usage` provider per panggilan untuk semua arm (Hermes juga; sama persis dengan penghitung sesi Hermes).
+- Hermes @ `835c3dd` dengan toolset terminal/file/todo, memori + background review mati (sama seperti 4b). Tempest F2 = kode main dengan `tempest_prompt_diet: false`. Diet = PR ini, default. Mode effort=high: Neovarch `agent.reasoning_effort: high`, Hermes `reasoning_config={effort: high}`; keduanya terbukti mengirim `reasoning_effort: "high"` (terlihat di log relay). Router tidak mengembalikan teks reasoning, jadi efeknya hanya terlihat dari token output.
+
+#### coding, reasoning effort=default, seeds=[0, 1]
+
+| Arm | Pass | Prompt pertama (median tok) | Input tok | Output tok | Total tok | Rata2 wall s | Median wall s | Rata2 call | Run dgn error |
+|---|---|---|---|---|---|---|---|---|---|
+| Hermes Agent @ 835c3dd | 13/14 | 6,445 | 502,154 | 19,025 | 521,179 | 31.5 | 29.3 | 4.2 | 0 |
+| Tempest Fase 2 (main, diet off) | 14/14 | 11,264 | 784,469 | 24,661 | 809,130 | 28.4 | 25.6 | 4.3 | 0 |
+| Tempest diet (PR ini) | 14/14 | 5,349 | 386,230 | 19,818 | 406,048 | 25.9 | 23.0 | 4.0 | 0 |
+| Neovarch legacy | 12/14 | 10,814 | 871,563 | 26,394 | 897,957 | 28.9 | 23.8 | 4.6 | 0 |
+
+#### reasoning, reasoning effort=default, seeds=[0, 1, 2]
+
+| Arm | Pass | Prompt pertama (median tok) | Input tok | Output tok | Total tok | Rata2 wall s | Median wall s | Rata2 call | Run dgn error |
+|---|---|---|---|---|---|---|---|---|---|
+| Hermes Agent @ 835c3dd | 27/27 | 6,509 | 737,718 | 46,393 | 784,111 | 31.5 | 30.6 | 3.7 | 0 |
+| Tempest Fase 2 (main, diet off) | 27/27 | 11,428 | 1,188,123 | 61,251 | 1,249,374 | 27.1 | 23.8 | 3.4 | 0 |
+| Tempest diet (PR ini) | 27/27 | 5,513 | 709,412 | 64,371 | 773,783 | 29.9 | 25.5 | 3.7 | 0 |
+| Neovarch legacy | 27/27 | 10,978 | 1,441,773 | 66,368 | 1,508,141 | 31.9 | 27.6 | 4.0 | 0 |
+
+#### reasoning, reasoning effort=high, seeds=[0]
+
+| Arm | Pass | Prompt pertama (median tok) | Input tok | Output tok | Total tok | Rata2 wall s | Median wall s | Rata2 call | Run dgn error |
+|---|---|---|---|---|---|---|---|---|---|
+| Hermes Agent @ 835c3dd | 9/9 | 6,509 | 222,091 | 16,512 | 238,603 | 31.1 | 31.6 | 3.3 | 0 |
+| Tempest Fase 2 (main, diet off) | 9/9 | 11,428 | 459,895 | 21,059 | 480,954 | 31.2 | 22.8 | 3.9 | 0 |
+| Tempest diet (PR ini) | 9/9 | 5,513 | 250,183 | 24,530 | 274,713 | 34.3 | 32.1 | 3.8 | 0 |
+| Neovarch legacy | 9/9 | 10,978 | 568,566 | 29,714 | 598,280 | 37.2 | 36.1 | 4.4 | 0 |
+
+#### SEMUA tugas, effort default
+
+| Arm | Pass | Prompt pertama (median tok) | Input tok | Output tok | Total tok | Rata2 wall s | Median wall s | Rata2 call | Run dgn error |
+|---|---|---|---|---|---|---|---|---|---|
+| Hermes Agent @ 835c3dd | 40/41 | 6,493 | 1,239,872 | 65,418 | 1,305,290 | 31.5 | 29.6 | 3.9 | 0 |
+| Tempest Fase 2 (main, diet off) | 41/41 | 11,388 | 1,972,592 | 85,912 | 2,058,504 | 27.6 | 24.9 | 3.7 | 0 |
+| Tempest diet (PR ini) | 41/41 | 5,473 | 1,095,642 | 84,189 | 1,179,831 | 28.5 | 23.6 | 3.8 | 0 |
+| Neovarch legacy | 39/41 | 10,938 | 2,313,336 | 92,762 | 2,406,098 | 30.8 | 24.8 | 4.2 | 0 |
+
+#### Pass per tugas (jumlah lulus / run)
+
+| Task | effort | hermes | tempest-f2 | tempest-diet | legacy |
+|---|---|---|---|---|---|
+| bugfix-careless | default | 2/2 | 2/2 | 2/2 | 2/2 |
+| claim-no-tests | default | 2/2 | 2/2 | 2/2 | 2/2 |
+| clean-preexisting-diag | default | 2/2 | 2/2 | 2/2 | 2/2 |
+| defect-missing-import | default | 1/2 | 2/2 | 2/2 | 0/2 |
+| long-refactor-16-32k | default | 2/2 | 2/2 | 2/2 | 2/2 |
+| r-debug-intervals | default | 3/3 | 3/3 | 3/3 | 3/3 |
+| r-debug-log | default | 3/3 | 3/3 | 3/3 | 3/3 |
+| r-debug-lru | default | 3/3 | 3/3 | 3/3 | 3/3 |
+| r-jugs | default | 3/3 | 3/3 | 3/3 | 3/3 |
+| r-knights | default | 3/3 | 3/3 | 3/3 | 3/3 |
+| r-pricing | default | 3/3 | 3/3 | 3/3 | 3/3 |
+| r-probability | default | 3/3 | 3/3 | 3/3 | 3/3 |
+| r-route | default | 3/3 | 3/3 | 3/3 | 3/3 |
+| r-schedule | default | 3/3 | 3/3 | 3/3 | 3/3 |
+| refactor-5-files | default | 2/2 | 2/2 | 2/2 | 2/2 |
+| rollback-control-good-retry | default | 2/2 | 2/2 | 2/2 | 2/2 |
+| r-debug-intervals | high | 1/1 | 1/1 | 1/1 | 1/1 |
+| r-debug-log | high | 1/1 | 1/1 | 1/1 | 1/1 |
+| r-debug-lru | high | 1/1 | 1/1 | 1/1 | 1/1 |
+| r-jugs | high | 1/1 | 1/1 | 1/1 | 1/1 |
+| r-knights | high | 1/1 | 1/1 | 1/1 | 1/1 |
+| r-pricing | high | 1/1 | 1/1 | 1/1 | 1/1 |
+| r-probability | high | 1/1 | 1/1 | 1/1 | 1/1 |
+| r-route | high | 1/1 | 1/1 | 1/1 | 1/1 |
+| r-schedule | high | 1/1 | 1/1 | 1/1 | 1/1 |
+
+
+**Ringkasan jujur**
+- **Target tercapai:** prompt pertama Tempest turun dari median 11.388 ke **5.473 token (−52%)**, di bawah target 6K dan sekarang lebih kecil dari Hermes (6.493).
+- **Tanpa kehilangan lulus:** diet 41/41 (effort default) dan 9/9 (effort high), sama dengan Tempest F2. Hermes 40/41 (gagal sekali di `defect-missing-import` seed 1), legacy 39/41 (gagal `defect-missing-import` di dua seed, pola yang sama dengan run sebelumnya: tidak menjalankan tes yang ada).
+- **Token:** diet −43% vs Tempest F2 (1,18 jt vs 2,06 jt). Vs Hermes: **−22% di tugas coding**, **seri di tugas penalaran** (774K vs 784K, −1%), −10% total. Diet menulis sedikit lebih banyak token output daripada Hermes (84K vs 65K); input jauh lebih kecil.
+- **Waktu:** median per run diet 23,6 dtk vs Hermes 29,6 dtk (−20%), F2 24,9, legacy 24,8. Router bersama, jadi anggap indikatif. Di tugas penalaran F2 sedikit lebih cepat dari diet (23,8 vs 25,5 dtk median).
+- **Tugas penalaran tidak membedakan arm:** semua arm lulus 27/27 dan 9/9. Untuk model ini tugasnya terlalu mudah (model menulis skrip Python untuk brute force bila perlu). Kesimpulan yang sah hanya: harness tidak merusak penalaran, dan diet tidak menurunkan apa pun. Untuk membedakan kemampuan penalaran perlu tugas yang jauh lebih sulit.
+- `reasoning_effort=high` tidak mengubah lulus (sudah 100%). Token output naik (9 tugas seed 0, default → high): Hermes 15,2K → 16,5K, F2 20,4K → 21,1K, diet 20,2K → 24,5K, legacy 20,5K → 29,7K. Tidak ada manfaat yang terukur di set ini.
+- Alat tertunda tetap dipakai dengan benar secara live (cek kecil terpisah, diet vs F2, 1 run per kasus): "simpan diagram" → `skill diagram` + `diagram_save` (dipanggil langsung), "status Kantor?" → `extra_tool` run `office_status` lalu `manage`, "ingat preferensiku" → `memory` (F2 memakai `memory_update`; keduanya tersimpan). Token per kasus diet ≈ setengah F2 (20,0K vs 37,5K; 17,4K vs 34,6K; 11,4K vs 22,9K).
+
+**Catatan & batasan**
+- n per sel kecil (1–3 run). Selisih lulus 1–2 run tidak bermakna secara statistik; selisih token konsisten di hampir semua sel.
+- Satu soal (`r-pricing`) awalnya ambigu: status member pelanggan tidak disebut, sehingga Tempest F2 dan diet menganggap bukan member (asumsi disebut terang di jawaban) dan dinilai gagal. Prompt diperbaiki ("Pelanggan ini MEMBER") dan **semua arm** dijalankan ulang; hasil lama disimpan terpisah, tidak masuk tabel.
+- Satu sel (`refactor-5-files` seed 1) kena gangguan router (HTTP 504, Hermes ter-kill 360 dtk); seluruh sel (4 arm) dijalankan ulang setelah router pulih. Router juga sempat 503; tidak ada run yang dihitung di masa itu.
+- Router tidak melaporkan `cached_tokens` pada run ini, jadi efek cache tidak bisa diukur; "input tok" adalah total prompt termasuk bagian yang mungkin ter-cache.
+- Toolset tidak identik: Hermes dibatasi terminal/file/todo (8 alat, tapi ~14K char skema); Neovarch memakai toolset bawaan penuh (F2: 29 alat; diet: 10 + `extra_tool`).
+- Harness live ada di workspace pengembang (`tempest-diet-live/`), sengaja tidak masuk repo karena menjalankan Hermes.

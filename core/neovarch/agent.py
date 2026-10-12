@@ -22,6 +22,7 @@ from neovarch import tempest_memory
 from neovarch import tempest_progress
 from neovarch import tempest_search
 from neovarch import tempest_skills
+from neovarch import tempest_diet
 from neovarch import turn_budget
 from neovarch.llm import Completion, LLMError, stream_chat
 from neovarch.store import SessionStore
@@ -111,7 +112,7 @@ def context_files(cwd: Path, limit: int = 12000) -> str:
             + "\n\n".join(parts))
 
 
-def persona_prompt(session_id: str | None, office: dict | None) -> str:
+def persona_prompt(session_id: str | None, office: dict | None, diet: bool = False) -> str:
     """Who answers a normal chat: always the main Neovarch Agent.
 
     Chats are not Kantor employees (before 1.4.6 every chat sat at a desk under
@@ -125,7 +126,7 @@ def persona_prompt(session_id: str | None, office: dict | None) -> str:
              "Kantor (Organisasi → Agency → Orang) kosong sampai pengguna memintamu mengisinya. Saat pengguna "
              "meminta membuat organisasi/agency, merekrut, memindah, memberhentikan pegawai, mengatur skill/alat/"
              "model/persona pegawai, atau memberi tugas, pakai alat `kantor`. Jangan merekrut pegawai tanpa diminta.",
-             ORCHESTRATOR_GUIDE]
+             tempest_diet.ORCH_COMPACT if diet else ORCHESTRATOR_GUIDE]
     agents = [a for a in ((office or {}).get("agents") or []) if isinstance(a, dict)]
     if agents:
         lines.append(f"Pegawai Kantor saat ini: {len(agents)} orang; lihat detail dengan `kantor` aksi overview.")
@@ -133,12 +134,14 @@ def persona_prompt(session_id: str | None, office: dict | None) -> str:
 
 
 def system_sections(cfg: dict, cwd: Path, query: str = "", persona: str = "",
-                    stable: bool = False) -> list[tuple[str, str]]:
+                    stable: bool = False, diet: bool = False) -> list[tuple[str, str]]:
     """The system prompt as ordered (key, text) sections; see :func:`system_prompt`.
 
     Keys: soul, app, method, persona, extra, project, memory, vault, skills, platform, cwd. Tempest cache v2 freezes
-    these per session and appends a note for the ones that change later."""
-    parts: list[tuple[str, str]] = [("soul", cfgmod.soul_text().strip()), ("app", APP_KNOWLEDGE),
+    these per session and appends a note for the ones that change later. ``diet`` (Tempest prompt diet) uses the
+    compact app text and only the skill names (see tempest_diet.py)."""
+    parts: list[tuple[str, str]] = [("soul", cfgmod.soul_text().strip()),
+                                    ("app", tempest_diet.APP_COMPACT if diet else APP_KNOWLEDGE),
                                     ("method", scaffold.WORKING_METHOD)]
     if persona:
         parts.append(("persona", persona))
@@ -163,7 +166,7 @@ def system_sections(cfg: dict, cwd: Path, query: str = "", persona: str = "",
         parts.append(("vault", "\n\n".join(vault)))
     skills = list_skills()
     if skills:
-        parts.append(("skills", skills_index(skills)))
+        parts.append(("skills", tempest_diet.skills_names(skills) if diet else skills_index(skills)))
         if query and not stable:  # Tempest moves the per-message hint to prompt_tail
             hint = _skill_hint(query, skills)
             if hint:
@@ -184,10 +187,11 @@ def join_sections(sections) -> str:
     return "\n\n".join(text for _, text in sections)
 
 
-def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "", stable: bool = False) -> str:
+def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "", stable: bool = False,
+                  diet: bool = False) -> str:
     """The system prompt. ``stable`` (Tempest) leaves out what changes per message or minute
     (vault notes matched to this message, the clock); those go to :func:`prompt_tail`."""
-    return join_sections(system_sections(cfg, cwd, query, persona, stable))
+    return join_sections(system_sections(cfg, cwd, query, persona, stable, diet))
 
 
 def prompt_tail(cfg: dict, query: str) -> str:
@@ -391,9 +395,10 @@ class Agent:
                 persona = ""
         if not persona:
             try:
-                persona = persona_prompt(self.rec.get("id"), self.ctx.office() if self.ctx.office else None)
+                persona = persona_prompt(self.rec.get("id"), self.ctx.office() if self.ctx.office else None,
+                                         diet=tempest_diet.enabled(st))
             except Exception:  # the Kantor must never break a turn
-                persona = persona_prompt(self.rec.get("id"), None)
+                persona = persona_prompt(self.rec.get("id"), None, diet=tempest_diet.enabled(st))
         kantor = ""
         if "@kantor" in user_text.lower() and self.ctx.office is not None:
             try:  # `@kantor` attaches the live Kantor state to this turn
@@ -405,7 +410,8 @@ class Agent:
         if st and st.get("cache_v2"):
             # Cache layout v2: the system prompt is frozen for the session; a later change
             # rides on this user message as an appended note (the prefix never changes).
-            sections = [[k, v] for k, v in system_sections(cfg, self.ctx.cwd, user_text, persona, stable=True)]
+            sections = [[k, v] for k, v in system_sections(cfg, self.ctx.cwd, user_text, persona, stable=True,
+                                                           diet=tempest_diet.enabled(st))]
             prefix = self.rec.get("tempest_prefix")
             tail_extra = []
             if not prefix or not prefix.get("frozen"):
@@ -429,7 +435,8 @@ class Agent:
         else:
             if kantor:
                 persona += "\n\n" + kantor
-            sys_prompt = system_prompt(cfg, self.ctx.cwd, user_text, persona, stable=bool(st))
+            sys_prompt = system_prompt(cfg, self.ctx.cwd, user_text, persona, stable=bool(st),
+                                       diet=tempest_diet.enabled(st))
         window = int(cfgmod.get_path(cfg, "model.context_length", 128000) or 128000)
         breakpoints = tempest.wants_breakpoints(st, endpoint)
         lint_prefix = bool(st and st.get("cache_v2") and not st.get("mask"))
@@ -457,6 +464,7 @@ class Agent:
         escalation = _escalation_endpoint(cfg)
         stuck_notified = False
         schemas = self._tools()  # includes Tempest's update_plan when on
+        all_schemas = schemas + list((getattr(self, "_deferred", None) or {}).values())
         try:
             while True:
                 if self.interrupted:
@@ -601,7 +609,16 @@ class Agent:
                     break
                 for call in comp.tool_calls:
                     sent_before = len(self.ctx.outbox)
-                    prep = scaffold.prepare_call(call.name, call.arguments, schemas)
+                    # Prompt diet: a deferred tool called directly by name still runs (lenient), and
+                    # extra_tool run is unwrapped below.
+                    prep = scaffold.prepare_call(call.name, call.arguments, all_schemas)
+                    proxy_reply = None
+                    if getattr(self, "_deferred", None) and prep.name == tempest_diet.PROXY and not prep.error:
+                        # Prompt diet: a deferred tool runs through extra_tool; unwrap it so every gate,
+                        # approval, checkpoint and log below sees the real tool.
+                        real, real_args, proxy_reply = tempest_diet.resolve(prep.args, self._deferred)
+                        if real:
+                            prep = scaffold.prepare_call(real, real_args, list(self._deferred.values()))
                     if prep.note:
                         _log.info("tool-call repair session=%s: %s", self.rec.get("id"), prep.note)
                     args = prep.args
@@ -615,6 +632,8 @@ class Agent:
                         result = "interrupted"
                     elif prep.error:
                         result = prep.error
+                    elif proxy_reply is not None:
+                        result = proxy_reply
                     elif st and prep.name == "update_plan" and self._progress is not None:
                         result = self._progress.update(args, str(self.rec.get("id") or ""))
                     elif st and prep.name == "session_search" and st.get("session_search"):
@@ -938,10 +957,18 @@ class Agent:
     def _tools(self) -> list[dict]:
         tools = tool_schemas(self.ctx)
         st = getattr(self, "_tempest", None)
+        self._deferred: dict[str, dict] = {}
         if st and st.get("progress"):
             tools = tools + [tempest_progress.SCHEMA]
         if st and st.get("session_search"):
             tools = tools + [tempest_search.SCHEMA]
+        if tempest_diet.enabled(st):
+            company = getattr(self.ctx, "company", None)
+            try:
+                names = set(company.tool_names()) if company is not None else set()
+            except Exception:
+                names = set()
+            tools, self._deferred = tempest_diet.diet_tools(tools, names)
         if st and st.get("cache_v2"):
             tools = tempest.stable_tools(tools)
         return tools
