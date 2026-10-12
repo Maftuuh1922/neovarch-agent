@@ -38,10 +38,18 @@ extension BragFormatX on BragFormat {
 }
 
 class BragStats {
-  const BragStats({this.agentsActive, this.agentsTotal, this.tasksDone, this.sessions, this.messages, this.model});
+  const BragStats({this.agentsActive, this.agentsTotal, this.tasksDone, this.sessions, this.messages, this.model, this.tokensToday, this.tokensTotal});
   final int? agentsActive, agentsTotal, tasksDone, sessions, messages;
   final String? model;
-  bool get isEmpty => agentsActive == null && tasksDone == null && sessions == null && messages == null && model == null;
+
+  /// Token usage counted by the PC core (`GET /api/usage`, core ≥ 1.4.7): today
+  /// (PC's local date) and lifetime, input + output. Null on older PCs.
+  final int? tokensToday, tokensTotal;
+  bool get isEmpty =>
+      agentsActive == null && tasksDone == null && sessions == null && messages == null && model == null && tokensToday == null && tokensTotal == null;
+
+  /// Number of stat tiles shown (the layouts make room for the token tiles).
+  int get tileCount => [agentsActive, tasksDone, sessions, messages, tokensToday, tokensTotal].where((v) => v != null).length;
 }
 
 class BragCardData {
@@ -77,6 +85,7 @@ class BragCardData {
     List<ChatSessionInfo> sessions = const [],
     ModelRef? defaultModel,
     Uint8List? officeShot,
+    Map<String, dynamic>? usage,
   }) {
     final login = safeHandle(profile?.login);
     final name = safeLabel(profile?.name, max: 32) ?? login ?? 'Pengguna Neovarch';
@@ -101,9 +110,19 @@ class BragCardData {
         sessions: sessions.isEmpty ? null : sessions.length,
         messages: msgs,
         model: safeModelName(model?.model),
+        tokensToday: _usageTotal(usage, 'today'),
+        tokensTotal: _usageTotal(usage, 'lifetime'),
       ),
     );
   }
+}
+
+/// `{"today": {"total": n}}` → n (null when absent; numbers only, nothing private).
+int? _usageTotal(Map<String, dynamic>? usage, String key) {
+  final b = usage?[key];
+  if (b is! Map) return null;
+  final t = b['total'];
+  return t is num && t >= 0 ? t.toInt() : null;
 }
 
 final _secretLike = RegExp(r'(sk-|ghp_|gho_|github_pat_|xox[abp]-|AKIA|AIza|Bearer\s)', caseSensitive: false);

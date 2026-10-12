@@ -65,6 +65,8 @@ Future<void> showBragShareSheet(BuildContext context, WidgetRef ref, {Uint8List?
   // The GitHub profile always comes from the PC's sign-in (no phone login).
   final profile = r.socialSignedIn ? r.socialProfile : null;
   final shot = officeShot ?? await captureOfficeSnapshot();
+  // Token tiles (token hari ini / total token) from the PC's own counter.
+  final usage = r.connected ? await r.gateway?.usageStats().timeout(const Duration(seconds: 4), onTimeout: () => null) : null;
   if (!context.mounted) return;
   final data = BragCardData.gather(
     profile: profile,
@@ -73,6 +75,7 @@ Future<void> showBragShareSheet(BuildContext context, WidgetRef ref, {Uint8List?
     sessions: r.sessions,
     defaultModel: r.models?.defaultModel,
     officeShot: shot,
+    usage: usage,
   );
   await showModalBottomSheet<void>(
     context: context,

@@ -983,6 +983,17 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
     return bytes;
   }
 
+  /// Token usage counted by the PC core (core ≥ 1.4.7): today, lifetime, per
+  /// model, 30-day trend, and this session when [session] is given. Null on older PCs.
+  Future<Map<String, dynamic>?> usageStats({String? session}) async {
+    try {
+      final j = await _json('GET', '/api/usage', query: {if (session != null && session.isNotEmpty) 'session': session});
+      return j is Map ? Map<String, dynamic>.from(j) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Public `/api/status` (version, components); never throws.
   Future<Map<String, dynamic>> serverStatus() async {
     try {

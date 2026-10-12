@@ -2129,6 +2129,19 @@ def build_app(gw: Gateway) -> web.Application:
     r.add_get("/api/events", events_sse)
     r.add_get("/api/events/replay", events_replay)
     r.add_get("/api/network/addresses", network_addresses)
+
+    async def usage_get(request):
+        from neovarch import usage_stats
+        sid = request.query.get("session") or ""
+        rec = None
+        if sid:
+            try:
+                rec = gw.store.load(sid)
+            except Exception:
+                rec = None
+        return web.json_response(await asyncio.to_thread(usage_stats.summary, session=rec))
+
+    r.add_get("/api/usage", usage_get)
     _add_remote_link_routes(app, gw)
     from neovarch.background import add_routes as _add_background_routes
     _add_background_routes(app, gw)
