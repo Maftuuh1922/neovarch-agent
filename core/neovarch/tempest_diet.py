@@ -9,7 +9,7 @@ rarely used parts behind one cheap indirection:
    Descriptions of the skills that match the current message already ride in the
    per-message tail (``skillpack.hint_block``); the ``skill`` tool lists all descriptions
    on demand and reads one skill in full.
-2. **Deferred tool schemas** - only the core tools (shell, files, memory, skill, web_fetch,
+2. **Deferred tool schemas** - only the core tools (shell, files, grep, glob, memory, skill, web_fetch,
    send_file, plan_update, session_search, update_plan) are sent as schemas. Every other
    built-in tool is listed by name + a short one-liner inside the description of a single
    ``extra_tool`` tool. ``extra_tool(action="describe", name=...)`` returns the full schema
@@ -34,7 +34,8 @@ from typing import Any
 PROXY = "extra_tool"
 
 # Always sent as full schemas. Everything else built-in is deferred behind ``extra_tool``.
-CORE_TOOLS = ("shell", "read_file", "write_file", "edit_file", "skill", "memory", "web_search", "web_fetch",
+CORE_TOOLS = ("shell", "read_file", "write_file", "edit_file", "grep", "glob", "skill", "memory", "web_search",
+              "web_fetch",
               "send_file", "plan_update", "session_search", "update_plan")
 
 # Short one-liners for the deferred catalog (fallback: first clause of the tool's description).
@@ -59,6 +60,7 @@ ONE_LINERS = {
     "ppt_setup": "siapkan pembuatan PowerPoint (PPT Master)",
     "ppt_export": "ekspor proyek PPT Master ke .pptx",
     "image_ask": "tanya model vision tentang sebuah gambar",
+    "shell_job": "pantau/tunggu/hentikan perintah shell background (shell background=true)",
 }
 
 APP_COMPACT = """# Aplikasi Neovarch (tempatmu berjalan)
