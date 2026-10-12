@@ -159,7 +159,7 @@ describe('speaker labels', () => {
     )
   })
 
-  it('the default profile speaks as Hermes in transcripts, not @default', async () => {
+  it('the default profile speaks as Neovarch in transcripts, not @default', async () => {
     const { rounds } = await loadRoom()
     const { formatGroupChatLine } = await import('./group-round-prompt')
 
@@ -168,12 +168,12 @@ describe('speaker labels', () => {
       'builder'
     )
 
-    expect(line).toBe('Hermes: hello room')
+    expect(line).toBe('Neovarch: hello room')
 
     // Other members keep their profile name; the (you) suffix survives.
     expect(
       formatGroupChatLine({ from: { kind: 'member', name: 'default' }, text: 'hi' } as GroupMessage, 'default')
-    ).toBe('Hermes (you): hi')
+    ).toBe('Neovarch (you): hi')
     expect(
       formatGroupChatLine({ from: { kind: 'member', name: 'builder' }, text: 'yo' } as GroupMessage, 'research')
     ).toBe('builder: yo')
@@ -206,10 +206,10 @@ describe('speaker labels', () => {
 
     expect(chat.groupSpeakerLabel('research')).toBe('Radar')
 
-    // Untitled rows keep today's behavior: default → Hermes, others verbatim.
+    // Untitled rows keep today's behavior: default → Neovarch, others verbatim.
     data.$botMeta.set({})
 
-    expect(chat.groupSpeakerLabel('default')).toBe('Hermes')
+    expect(chat.groupSpeakerLabel('default')).toBe('Neovarch')
     expect(chat.groupSpeakerLabel('builder')).toBe('builder')
   })
 
@@ -285,7 +285,7 @@ describe('speaker labels', () => {
     data.$lastRoster.set([])
 
     expect(chat.groupSpeakerLabel('local::reviewer')).toBe('reviewer')
-    expect(chat.groupSpeakerLabel('spark::default')).toBe('Hermes')
+    expect(chat.groupSpeakerLabel('spark::default')).toBe('Neovarch')
 
     data.$botMeta.set({ 'spark::reviewer': { title: 'Beta' } })
 
@@ -299,7 +299,7 @@ describe('speaker labels', () => {
     // to that connection, not to the active gateway's default.
     data.$lastRoster.set([{ display_name: 'HomelabBot', name: 'default', remoteSource: true }])
 
-    expect(chat.groupSpeakerLabel('default')).toBe('Hermes')
+    expect(chat.groupSpeakerLabel('default')).toBe('Neovarch')
   })
 })
 
