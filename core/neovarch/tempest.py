@@ -404,9 +404,18 @@ def detect_verify(cwd: Path) -> list[str] | None:
 
 
 def run_verify(cmd: list[str], cwd: Path, timeout: int = 300) -> tuple[bool, str]:
+    # A fresh, empty bytecode cache per run. Python (and pytest's assertion
+    # rewriter) trust a __pycache__ entry whose recorded source mtime (whole
+    # seconds) and size still match; an edit within the same second that keeps
+    # the size ("return 2" -> "return 4") then ran the OLD code and the gate
+    # passed a broken change. PYTHONDONTWRITEBYTECODE alone only stops writes,
+    # stale entries left by an earlier shell `pytest` were still read.
+    import tempfile
     try:
-        proc = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
-                              env={**os.environ, "NEOVARCH_CORE": "1", "PYTHONDONTWRITEBYTECODE": "1"})
+        with tempfile.TemporaryDirectory(prefix="nv-verify-pyc-") as pyc:
+            proc = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
+                                  env={**os.environ, "NEOVARCH_CORE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+                                       "PYTHONPYCACHEPREFIX": pyc})
     except subprocess.TimeoutExpired:
         return False, f"timed out after {timeout}s"
     except FileNotFoundError as exc:
