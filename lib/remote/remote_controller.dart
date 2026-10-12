@@ -475,6 +475,9 @@ class RemoteController extends ChangeNotifier {
       if (was != RemoteStatus.connected && storedId != null && (g == null || g.resyncNeeded || runtimeId == null)) {
         unawaited(openSession(storedId!, quiet: true));
       }
+      // Cold start (or another PC picked): reopen the chat that was open last
+      // time instead of an empty one; a new chat only comes from "+".
+      if (was != RemoteStatus.connected && storedId == null) unawaited(restoreLastSession());
     } else if (s == RemoteStatus.reconnecting || s == RemoteStatus.failed) {
       transcript.interrupted();
       if (s == RemoteStatus.failed && !pcRestarting) error ??= _friendly(gateway?.lastError ?? 'gagal terhubung');
@@ -786,17 +789,56 @@ class RemoteController extends ChangeNotifier {
       notifyListeners();
     }
     try {
-      final s = await g.resume(stored);
-      storedId = s.storedId;
-      runtimeId = s.runtimeId;
-      title = s.title.isNotEmpty ? s.title : (sessions.where((x) => x.id == stored).firstOrNull?.title ?? '');
-      transcript = RemoteTranscript(history: s.messages)..running = s.running;
-      queue = MessageQueueState.fromJson(s.queue);
-      // Each chat keeps its own reasoning level (shared with the desktop).
-      reasoningEffort = sessionEffort(s.reasoningEffort, composer);
+      _applyOpened(await g.resume(stored), stored);
     } catch (e) {
       error = _friendly('$e');
     }
+    opening = false;
+    notifyListeners();
+  }
+
+  void _applyOpened(OpenedSession s, String stored) {
+    storedId = s.storedId;
+    runtimeId = s.runtimeId;
+    title = s.title.isNotEmpty ? s.title : (sessions.where((x) => x.id == stored).firstOrNull?.title ?? '');
+    // A turn still running on the PC keeps showing as running; its stream
+    // continues from the live events the resume attached us to.
+    transcript = RemoteTranscript(history: s.messages)..running = s.running;
+    queue = MessageQueueState.fromJson(s.queue);
+    // Each chat keeps its own reasoning level (shared with the desktop).
+    reasoningEffort = sessionEffort(s.reasoningEffort, composer);
+    _rememberSession();
+  }
+
+  /// Persist the open chat per PC so the next app start reopens it.
+  void _rememberSession() {
+    final d = desktop, id = storedId;
+    if (d != null && id != null && id.isNotEmpty) desktops.setLastSession(d.id, id);
+  }
+
+  bool _restoring = false;
+
+  /// Reopen the chat that was open when the app was last used on this PC
+  /// (v1.4.7). No-op when a chat is already open, nothing was saved, or a
+  /// restore is in flight. A chat deleted on the PC is forgotten quietly
+  /// (empty chat, no error); "+" is still the only way to make a new chat.
+  Future<void> restoreLastSession() async {
+    final d = desktop, g = gateway;
+    if (d == null || g == null || storedId != null || _restoring) return;
+    final last = desktops.lastSession(d.id);
+    if (last == null) return;
+    _restoring = true;
+    opening = true;
+    notifyListeners();
+    try {
+      final s = await g.resume(last);
+      // The user may have tapped "+" or picked another chat meanwhile.
+      if (storedId == null && gateway == g) _applyOpened(s, last);
+    } catch (e) {
+      final m = '$e';
+      if (m.contains('not found') || m.contains('-32004')) desktops.setLastSession(d.id, null);
+    }
+    _restoring = false;
     opening = false;
     notifyListeners();
   }
@@ -821,6 +863,7 @@ class RemoteController extends ChangeNotifier {
       title = '';
       transcript = RemoteTranscript(history: s.messages);
       queue = MessageQueueState.empty;
+      _rememberSession();
     } catch (e) {
       error = _friendly('$e');
     }
