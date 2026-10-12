@@ -73,6 +73,13 @@ Fase 2 additions (the learning loop and the claim gate, all zero extra LLM calls
    the last edit gets one correction, then an explicit "belum terverifikasi" note; every turn
    reports ``verification`` (verified/unverified/failed/none) in message.complete
    (tempest_claims.py). ``/rewind`` in a Tempest chat restores the last green checkpoint.
+
+Prompt diet (``tempest_prompt_diet``):
+
+15. lazy skill index + deferred tool schemas - the system prompt names the skills but leaves the
+   descriptions to the per-message skill hint and the ``skill`` tool; only core tool schemas are sent
+   and the rest sit behind one ``extra_tool`` (describe -> schema as a tool result, run -> unwrapped
+   into the real tool). The tools array stays byte-stable per session (tempest_diet.py).
 """
 
 from __future__ import annotations
@@ -123,6 +130,8 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "skill_min_steps": 5,          # tool calls a verified task needs before it is skill material
     "claim_gate": True,            # "done" claims need execution evidence after the last edit
     "claim_retries": 1,            # hidden corrections before the answer is marked unverified
+    # Prompt diet: lazy skill index + deferred tool schemas behind extra_tool (tempest_diet.py)
+    "prompt_diet": True,           # live bench: first prompt ~11.4K -> see docs/tempest-vs-hermes.md
 }
 
 HEAD_LINES = 30
