@@ -2,16 +2,9 @@
 # They are excluded from the gate so every OTHER test must pass and new failures break CI.
 # Each one must be fixed and removed from this list before the v1.4.0 release.
 electron/app-icon.test.ts
-electron/backend-env.test.ts
 electron/backend-probes-runtime.test.ts
-electron/channel-build-version.test.ts
-electron/desktop-uninstall.test.ts
-electron/portal-session-live.test.ts
-electron/product-identity.test.ts
 electron/source-backend.test.ts
 electron/update-prerequisites.test.ts
-electron/updater/app-installer-strategy.test.ts
-electron/updater/checkout-handoff.test.ts
 electron/updater/checkout-legacy.test.ts
 electron/updater/checkout-source.test.ts
 electron/updater/state-db-preflight.test.ts
@@ -19,10 +12,8 @@ electron/user-launcher-install.test.ts
 electron/window-below.test.ts
 electron/window-growth.test.ts
 scripts/after-pack-toolchain.test.mjs
-scripts/bundle-electron-main.test.mjs
 scripts/bundle-env.test.mjs
 scripts/commit-stamp-identity.test.mjs
-scripts/mac-sign.test.mjs
 scripts/prepared-packaging.test.mjs
 scripts/run-electron-builder.test.mjs
 src/app/chat/sidebar/profile-rail-fleet.test.tsx
