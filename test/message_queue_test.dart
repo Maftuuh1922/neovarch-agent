@@ -37,7 +37,7 @@ Map<String, dynamic> _q(List<String> texts, {bool paused = false, String? reason
       'items': [for (var i = 0; i < texts.length; i++) {'id': 'q-$i', 'text': texts[i], 'ts': 1.0, 'attachments': const []}],
       'count': texts.length,
       'paused': paused,
-      if (reason != null) 'paused_reason': reason,
+      'paused_reason': ?reason,
     };
 
 void main() {

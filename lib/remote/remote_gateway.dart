@@ -827,8 +827,8 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
   Future<dynamic> queueCall(String runtimeId, String action, {String? id, String? text}) => client.call('queue.$action', {
         ..._p,
         'session_id': runtimeId,
-        if (id != null) 'id': id,
-        if (text != null) 'text': text,
+        'id': ?id,
+        'text': ?text,
       });
 
   /// Save the open chat's reasoning level on the PC — the same per-session
