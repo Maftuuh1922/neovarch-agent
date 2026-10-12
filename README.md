@@ -251,6 +251,18 @@ Still stuck? Open an [issue on GitHub](https://github.com/Maftuuh1922/neovrach_A
 
 ---
 
+## Benchmark
+
+<p align="center"><img src="docs/assets/tempest-diet-bench.png" alt="Tempest prompt diet benchmark" width="720"></p>
+
+Live run on 12 Oct 2026, `claude-haiku-5.5`, 41 tasks (7 coding × 2 seeds + 9 reasoning × 3 seeds), Hermes Agent as reference:
+
+- **Tempest prompt diet** (opt-in `harness_mode: tempest`): first prompt **11,388 → 5,473 tokens (−52%)**, 41/41 passed (Hermes 40/41, legacy 39/41).
+- Total tokens **−43% vs Tempest Fase 2** and −10% vs Hermes (−22% on coding, even on reasoning).
+- The reasoning tasks were too easy for this model (every arm 100%), and timings share one router, so treat them as indicative. Full tables and caveats: [`docs/tempest-vs-hermes.md` §6](docs/tempest-vs-hermes.md#6-prompt-diet--benchmark-ulang-12-okt-2026).
+
+---
+
 ## Acknowledgements
 
 Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) by Nous Research.
