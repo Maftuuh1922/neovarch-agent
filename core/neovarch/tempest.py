@@ -19,7 +19,9 @@ What it does (all deterministic, zero extra LLM calls):
    and ride as a tail on the user message they were computed for (stored, so the history
    is byte-identical across calls and turns -> provider prefix caches keep hitting);
 2. offload - a tool result over ``offload_tokens`` is written to a file and only head +
-   tail + the path (+ size) stays in context (``read_file`` is exempt: the model asked for it);
+   tail + the path (+ size) stays in context. Read-only tools (read_file, web_search, web_fetch, note
+   search) are exempt since v2: they are clipped in context around the query instead, so the model never
+   spends an extra read_file step on its own search result;
 3. observation masking - tool results older than ``keep_turns`` assistant turns become a
    short placeholder on the wire; the boundary moves in blocks of ``mask_block`` turns so
    the prefix only changes once per block;
@@ -135,6 +137,10 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "claim_retries": 1,            # hidden corrections before the answer is marked unverified
     # Prompt diet: lazy skill index + deferred tool schemas behind extra_tool (tempest_diet.py)
     "prompt_diet": True,           # live bench: first prompt ~11.3K -> ~5.4K tokens, no pass loss
+    # Tempest v2
+    "adaptive_effort": True,       # high effort on the first step / after a failure, lighter on routine steps
+    "parallel_tools": True,        # read-only tool calls of one model message run at the same time
+    "ground_check": True,          # numbers in a web answer must appear in the fetched text (tempest_ground.py)
 }
 
 HEAD_LINES = 30
@@ -273,10 +279,52 @@ def est_tokens(text: str) -> int:
     return (len(text) + 3) // 4
 
 
+# ------------------------------------------------------- adaptive effort -----
+
+# The user's level -> the lighter effort used on routine steps (tool result in, next tool call out).
+# The first step of a turn (planning) and any step after a failure keep the full level.
+ROUTINE_EFFORT = {"ultra": "medium", "max": "medium", "xhigh": "medium", "high": "low"}
+FAIL_KINDS = ("verify", "lint", "claim", "ground")
+PLAN_ONCE = ("[Tempest] Rencanakan sekali, di penalaran langkah pertama, dan panggil alat pertama di respons yang sama "
+             "(plan_update hanya untuk tugas >5 langkah, digabung dengan alat lain). Setelah itu eksekusi tanpa "
+             "merencanakan ulang, kecuali ada kegagalan atau temuan yang mengubah rencana.")
+
+
+def step_effort(level: str, wire: str | None, messages: list[dict], last_failed: bool,
+                first_step: bool) -> str | None:
+    """The ``reasoning_effort`` for the next model call of a turn.
+
+    ``level`` is the user's normalized choice (ultra/high/...), ``wire`` its full wire value. Only high
+    levels adapt: lower ones are already cheap and the user picked them on purpose."""
+    routine = ROUTINE_EFFORT.get(str(level or ""))
+    if not wire or not routine or first_step:
+        return wire
+    last = messages[-1] if messages else {}
+    if last.get("role") == "user":  # a gate asked for a fix, or a new message: think properly
+        return wire
+    if last_failed:
+        return wire  # a tool of the last batch failed: this step needs real thought
+    return routine
+
+
 # ------------------------------------------------------------ offload -----
 
-def offload(result: str, name: str, call_id: str, obs_dir: Path, limit_tokens: int) -> str:
-    if name == "read_file" or est_tokens(result) <= limit_tokens:
+# Read-only tools (web, file reads, note search) are never moved to a file: the model would only have
+# to spend a step reading the file back. They are clipped in context around what matches the query.
+READ_ONLY_INLINE_TOKENS = 6000
+
+
+def offload(result: str, name: str, call_id: str, obs_dir: Path, limit_tokens: int, query: str = "") -> str:
+    from neovarch.tools import READ_ONLY_TOOLS
+    if name in READ_ONLY_TOOLS:
+        if name == "read_file":
+            return result  # the model asked for exactly this range
+        cap = max(int(limit_tokens) * 3, READ_ONLY_INLINE_TOKENS)
+        if est_tokens(result) <= cap:
+            return result
+        from neovarch import web
+        return web.smart_clip(result, query, cap * 4)
+    if est_tokens(result) <= limit_tokens:
         return result
     obs_dir.mkdir(parents=True, exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{name}-{call_id}")[:80] or "obs"

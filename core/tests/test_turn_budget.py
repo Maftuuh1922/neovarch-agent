@@ -95,7 +95,7 @@ async def test_long_tool_job_passes_old_30_call_cap(home, tmp_path, monkeypatch)
     assert final == "Deck selesai: 45 slide."
     assert not [p for k, p in events if k == "error"]
     progress = [p for k, p in events if k == "turn.progress"]
-    assert progress[-1]["step"] >= 46 and progress[0] == {"step": 1, "limit": 30, "max": 600}
+    assert progress[-1]["step"] >= 46 and progress[0] == {"step": 1, "limit": 30, "max": 600, "extended": 0}
     assert (tmp_path / "P45.svg").exists()
 
 
