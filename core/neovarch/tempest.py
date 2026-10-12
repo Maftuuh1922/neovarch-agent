@@ -285,8 +285,9 @@ def est_tokens(text: str) -> int:
 # The first step of a turn (planning) and any step after a failure keep the full level.
 ROUTINE_EFFORT = {"ultra": "medium", "max": "medium", "xhigh": "medium", "high": "low"}
 FAIL_KINDS = ("verify", "lint", "claim", "ground")
-PLAN_ONCE = ("[Tempest] Penalaran tinggi: rencanakan sekali di langkah pertama (singkat, 2-6 butir), lalu eksekusi "
-             "tanpa merencanakan ulang; pikirkan ulang hanya bila ada kegagalan atau temuan yang mengubah rencana.")
+PLAN_ONCE = ("[Tempest] Rencanakan sekali, di penalaran langkah pertama, dan panggil alat pertama di respons yang sama "
+             "(plan_update hanya untuk tugas >5 langkah, digabung dengan alat lain). Setelah itu eksekusi tanpa "
+             "merencanakan ulang, kecuali ada kegagalan atau temuan yang mengubah rencana.")
 
 
 def step_effort(level: str, wire: str | None, messages: list[dict], last_failed: bool,

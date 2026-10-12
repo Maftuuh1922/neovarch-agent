@@ -916,14 +916,12 @@ TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
     "web_search": (tool_web_search, {
         "description": "Search the web (no key) and read the top `fetch` pages (default 2, clipped to the query). "
                        "Use it for facts you do not know.",
-        "parameters": {"type": "object", "properties": {
-            "query": {"type": "string"}, "n": {"type": "integer"}, "fetch": {"type": "integer"}},
-            "required": ["query"]}}),
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "fetch": {"type": "integer"}},
+                       "required": ["query"]}}),
     "web_fetch": (tool_web_fetch, {
         "description": "Fetch a URL as readable text (JS pages rendered); `query` keeps the matching parts of long pages.",
-        "parameters": {"type": "object", "properties": {
-            "url": {"type": "string"}, "query": {"type": "string"},
-            "render": {"type": "string", "enum": ["auto", "always", "never"]}}, "required": ["url"]}}),
+        "parameters": {"type": "object", "properties": {"url": {"type": "string"}, "query": {"type": "string"}},
+                       "required": ["url"]}}),
     "memory": (tool_memory, {
         "description": "Long-term memory notes. action: list | read | append | write; name: note name.",
         "parameters": {"type": "object", "properties": {
