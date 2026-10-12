@@ -162,6 +162,15 @@ async def test_skip_dirs_without_gitignore(home, tmp_path, engine):
     assert "node_modules" not in await run_tool("glob", {"pattern": "*.py"}, ctx)
 
 
+async def test_grep_single_file_outside_cwd(home, tmp_path, engine):
+    big = home / "obs" / "call1.txt"  # where Tempest offloads big tool output
+    big.parent.mkdir(parents=True)
+    big.write_text("noise\n" * 50 + "ERROR: boom\n")
+    (tmp_path / "proj").mkdir()
+    out = await run_tool("grep", {"pattern": "ERROR", "path": str(big)}, _ctx(tmp_path / "proj"))
+    assert "51:ERROR: boom" in out
+
+
 async def test_grep_caps_and_bad_regex(home, tmp_path, engine):
     (tmp_path / "big.txt").write_text("hit\n" * 300)
     ctx = _ctx(tmp_path)
