@@ -238,13 +238,13 @@ class RemoteController extends ChangeNotifier {
   /// error and keep reconnecting until it is back (max [kRestartWindow]).
   bool pcRestarting = false;
   Timer? _restartTimer;
-  DateTime? _restartSince;
+  int _restartTicks = 0;
   static const kRestartWindow = Duration(seconds: 120);
   static const kRestartPoll = Duration(seconds: 2);
 
   void notePcRestarting() {
     pcRestarting = true;
-    _restartSince = DateTime.now();
+    _restartTicks = 0;
     error = null;
     _restartTimer?.cancel();
     _restartTimer = Timer.periodic(kRestartPoll, (_) => _restartTick());
@@ -256,9 +256,11 @@ class RemoteController extends ChangeNotifier {
       _restartTimer?.cancel();
       return;
     }
+    // Count poll ticks rather than reading the wall clock: the window is the
+    // same on a sleeping phone and under the test clock.
+    _restartTicks++;
     if (connected) return; // the socket may still be up for a moment before the PC goes down
-    final since = _restartSince ?? DateTime.now();
-    if (DateTime.now().difference(since) > kRestartWindow) {
+    if (kRestartPoll * _restartTicks > kRestartWindow) {
       _restartTimer?.cancel();
       pcRestarting = false;
       error = tr('PC belum kembali setelah restart. Pastikan aplikasi Neovarch di PC berjalan, lalu tarik untuk menyambung ulang.');

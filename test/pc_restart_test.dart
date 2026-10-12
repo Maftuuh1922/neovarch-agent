@@ -57,9 +57,11 @@ void main() {
       expect(r.statusLabel, 'terhubung');
       expect(g.resumed, ['s-1']);
       final n = g.reconnects;
-      await tester.pump(const Duration(seconds: 10));
+      // Past the gateway's 15 s call timeout of the refresh fired on reconnect.
+      await tester.pump(const Duration(seconds: 20));
       expect(g.reconnects, n); // retries stop once back
       r.dispose();
+      await tester.pump(const Duration(seconds: 20));
   });
 
   testWidgets('a PC that never comes back ends with a clear message after the window', (tester) async {
