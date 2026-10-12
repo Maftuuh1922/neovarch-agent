@@ -222,6 +222,11 @@ def test_skill_similar_auto_save_and_repair(home):
 
 
 def _pytest_project(tmp_path, expect=2):
+    # The second call rewrites the test (and the agent rewrites m.py) within the same second at the same size;
+    # a stale __pycache__ (mtime+size match) then made the verify gate pass on CI. Drop the caches.
+    import shutil
+    for cache in (tmp_path / "__pycache__", tmp_path / "tests" / "__pycache__"):
+        shutil.rmtree(cache, ignore_errors=True)
     (tmp_path / "tests").mkdir(exist_ok=True)
     (tmp_path / "tests" / "test_m.py").write_text(
         "import sys, pathlib\nsys.path.insert(0, str(pathlib.Path(__file__).parent.parent))\n"
@@ -250,6 +255,7 @@ async def test_agent_offers_skill_after_verified_multistep_task(home, tmp_path, 
 async def test_agent_auto_skill_and_failed_skill_repair_hint(home, tmp_path, monkeypatch):
     _cfg({"harness_mode": "tempest", "tempest_skill_min_steps": 2, "tempest_skill_learn": "auto",
           "tempest_memory_nudge": False, "tempest_verify_retries": 1, "tempest_checkpoints": False})
+    monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "1")  # same-second rewrites below: no stale bytecode
     _pytest_project(tmp_path)
     seen = []
     script = [("", [_call("w", "write_file", path="m.py", content="def f():\n    return 2\n")]),
