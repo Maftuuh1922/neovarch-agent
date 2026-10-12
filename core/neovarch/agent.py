@@ -23,6 +23,7 @@ from neovarch import tempest_progress
 from neovarch import tempest_search
 from neovarch import tempest_skills
 from neovarch import tempest_diet
+from neovarch import tempest_ground
 from neovarch import turn_budget
 from neovarch.llm import Completion, LLMError, stream_chat
 from neovarch.store import SessionStore
@@ -337,8 +338,11 @@ class Agent:
             endpoint = session_settings.effective_endpoint(cfg, self.rec)
         else:
             endpoint = modelsmod.endpoint_for(cfg, "session:" + str(self.rec.get("id") or ""))
-        self._effort = session_settings.wire_effort(session_settings.effective_effort(cfg, self.rec))
+        self._level = session_settings.effective_effort(cfg, self.rec)
+        self._effort = session_settings.wire_effort(self._level)
+        self._base_effort = self._effort  # Tempest v2 adapts self._effort per step (tempest.step_effort)
         self._skipped_notice = False
+        self._web_texts: list[str] = []   # what web_search/web_fetch returned this turn (grounding check)
         vision = uploads.supports_vision(cfg, endpoint)
         self.ctx.approvals_mode = str(cfgmod.get_path(cfg, "approvals.mode", "ask") or "ask")
         budget = turn_budget.TurnBudget.from_config(lambda k, d: cfgmod.get_path(cfg, k, d))
@@ -356,6 +360,9 @@ class Agent:
         verify_attempts = 0
         lint_attempts = 0
         claim_attempts = 0
+        ground_attempts = 0
+        last_failed = False
+        prefetched: dict[str, asyncio.Future] = {}
         harness_verified = False
         verify_failed = False
         claim_left = ""
@@ -380,6 +387,8 @@ class Agent:
                         user_msg["wire_tail"] += "\n\n" + note
             for note in self._tempest_notes(st):  # memory reminder / skill offer / skill repair (cache-safe tail)
                 user_msg["wire_tail"] += "\n\n" + note
+            if st.get("adaptive_effort") and self._level in ("ultra", "max", "xhigh"):
+                user_msg["wire_tail"] += "\n\n" + tempest.PLAN_ONCE  # plan once, then execute
         if attachments:
             user_msg["attachments"] = [dict(a) for a in attachments]
             if not vision and any(a.get("kind") == "image" for a in attachments):
@@ -510,7 +519,14 @@ class Agent:
                                                       tokens=budget.tokens)
                     error = error_info["message"]
                     break
+                extension = budget.take_extension()
+                if extension:  # the step limit grew: say so instead of silently running past it
+                    self.emit("status.update", {"kind": "budget", "text": extension})
                 self.emit("turn.progress", budget.progress_payload())
+                nudge = budget.nudge() if st else None
+                if nudge:  # diminishing returns on search: one hidden "answer with what you have"
+                    messages.append({"role": "user", "content": nudge, "ts": time.time(), "hidden": True,
+                                     "kind": "nudge"})
                 wire = [{"role": "system", "content": sys_prompt}] + wire_messages(messages, vision, self.ctx.cwd)
                 if not st:  # Tempest has its own cache-safe compaction below
                     wire = scaffold.compact_wire(wire, ctx_len)
@@ -548,6 +564,12 @@ class Agent:
                         self.emit("status", {"kind": "notice", "text": (
                             "Agen buntu di langkah ini. Kamu bisa menyalakan \"Naik ke model lebih kuat saat buntu\" di "
                             "Pengaturan \u25b8 Agen.")})
+                if st and st.get("adaptive_effort") and not breakpoints and self._base_effort:
+                    # Ultra/high: full effort to plan (first step) and after a failure, lighter on routine
+                    # tool-result steps. Not on cache-breakpoint (Anthropic-style) endpoints, where a
+                    # thinking change would break the prompt cache.
+                    self._effort = tempest.step_effort(self._level, self._base_effort, messages, last_failed,
+                                                       budget.steps == 1)
                 comp: Completion = await self._cancellable(self._complete(use, wire, pinned and use is active))
                 usage = comp.usage or usage
                 budget.add_usage(comp.usage)
@@ -664,7 +686,22 @@ class Agent:
                         if problem:
                             claim_left = problem
                             final_text += tempest_claims.unverified_note(problem)
+                    if st and st.get("ground_check") and self._web_texts and not self.interrupted:
+                        missing = tempest_ground.unsupported(comp.text, self._web_texts, user_text)
+                        if missing and ground_attempts < 1 and verify_attempts < st["verify_retries"]:
+                            ground_attempts += 1
+                            verify_attempts += 1  # same retry budget as the other gates
+                            self.emit("status.update", {"kind": "ground", "text": "Mencocokkan angka dengan sumber"})
+                            messages.append({"role": "user", "kind": "ground", "ts": time.time(), "hidden": True,
+                                             "content": tempest_ground.prompt(missing)})
+                            self.store.save(self.rec)
+                            continue
+                        if missing:
+                            final_text += tempest_ground.note(missing)
                     break
+                if st and st.get("parallel_tools") and len(comp.tool_calls) > 1 and not self.interrupted:
+                    prefetched = self._prefetch_read_only(comp.tool_calls, all_schemas)
+                last_failed = False
                 for call in comp.tool_calls:
                     sent_before = len(self.ctx.outbox)
                     # Prompt diet: a deferred tool called directly by name still runs (lenient), and
@@ -706,14 +743,20 @@ class Agent:
                         if st and st.get("memory_dedup") and prep.name in tempest_memory.MEMORY_TOOLS:
                             args = tempest_memory.guard_write(prep.name, args, cfgmod.neovarch_home() / "memory")[0]
                         try:
-                            result = await self._cancellable(run_tool(prep.name, args, self.ctx))
+                            if call.id in prefetched:  # started together with the other reads of this message
+                                result = await self._cancellable(_await(prefetched.pop(call.id)))
+                            else:
+                                result = await self._cancellable(run_tool(prep.name, args, self.ctx))
                         except TurnInterrupted:
                             result = "interrupted: dihentikan oleh pengguna"
                         if st and prep.name in tempest_memory.MEMORY_TOOLS and str(args.get("action")) in (
                                 "append", "write", "replace") and not str(result).startswith(("error", "denied")):
                             tempest_memory.note_memory_write(self.rec)
+                    if st and prep.name in tempest_ground.WEB_TOOLS and not str(result).startswith(("error", "tidak ditemukan")):
+                        self._web_texts.append(str(result))
                     if st:
-                        result = tempest.offload(result, prep.name, call.id, obs_dir, st["offload_tokens"])
+                        result = tempest.offload(result, prep.name, call.id, obs_dir, st["offload_tokens"],
+                                                 str(args.get("query") or ""))
                     dur = time.monotonic() - t0
                     ledger.record(prep.name, args, result)
                     _log.info("tool %s session=%s %.2fs%s", prep.name, self.rec.get("id"), dur,
@@ -727,6 +770,7 @@ class Agent:
                                                 "duration_s": round(dur, 2)})
                     for meta in self.ctx.outbox[sent_before:]:
                         self._emit_attachment(meta)
+                    last_failed = last_failed or not ledger.tools[-1]["ok"]
                     halt = budget.record_tool(prep.name, args, result, bool(ledger.tools[-1]["ok"]))
                     if halt and not error_info:
                         error_info = turn_budget.describe(halt, steps=budget.steps, tool=budget.loop_tool)
@@ -739,6 +783,8 @@ class Agent:
             detail = _explain(str(exc), active, self.tried)
             error_info = turn_budget.describe(turn_budget.classify_llm_error(str(exc) + " " + detail), detail=detail)
             error = error_info["message"]
+        for fut in prefetched.values():  # reads started for calls that never ran (Stop / error)
+            fut.cancel()
         verification = None
         if st:
             verification = tempest_claims.status(harness_verified, verify_failed, ledger, bool(claim_left))
@@ -1175,8 +1221,24 @@ class Agent:
             return comp
         raise last
 
+    def _prefetch_read_only(self, calls, schemas: list[dict]) -> dict[str, asyncio.Future]:
+        """Start the read-only calls (web, file reads, note search) of one model message at the same time.
+
+        The per-call loop then awaits each one in order, so results, logs, gates and events are exactly
+        as if they ran one after another; only the waiting overlaps. Fewer than two: nothing to gain."""
+        from neovarch.tools import READ_ONLY_TOOLS
+        ready = []
+        for call in calls:
+            prep = scaffold.prepare_call(call.name, call.arguments, schemas)
+            if not prep.error and prep.name in READ_ONLY_TOOLS and prep.name != "session_search":
+                ready.append((call.id, prep))
+        if len(ready) < 2:
+            return {}
+        return {cid: asyncio.ensure_future(run_tool(prep.name, prep.args, self.ctx)) for cid, prep in ready}
+
     def _note_reasoning_skipped(self, comp: Completion) -> None:
         if getattr(comp, "reasoning_skipped", False):
+            self._base_effort = None
             self._effort = None  # the model rejected it; do not resend this turn
             session_settings.mark_no_reasoning(str(self.rec.get("model") or ""))
             if not getattr(self, "_skipped_notice", False):
@@ -1236,6 +1298,10 @@ def _explain(error: str, endpoint: dict, tried: list[str] | None = None) -> str:
 
 
 REWIND_COMMAND = re.compile(r"^\s*/rewind(?:\s+([0-9a-fA-F]{4,40}|last-green))?\s*$")
+
+
+async def _await(fut: asyncio.Future):
+    return await fut
 
 
 def wire_messages(messages: list[dict], vision: bool, cwd: Path) -> list[dict]:

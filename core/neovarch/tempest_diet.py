@@ -34,7 +34,7 @@ from typing import Any
 PROXY = "extra_tool"
 
 # Always sent as full schemas. Everything else built-in is deferred behind ``extra_tool``.
-CORE_TOOLS = ("shell", "read_file", "write_file", "edit_file", "skill", "memory", "web_fetch",
+CORE_TOOLS = ("shell", "read_file", "write_file", "edit_file", "skill", "memory", "web_search", "web_fetch",
               "send_file", "plan_update", "session_search", "update_plan")
 
 # Short one-liners for the deferred catalog (fallback: first clause of the tool's description).

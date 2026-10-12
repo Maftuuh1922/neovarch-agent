@@ -36,6 +36,14 @@ DEFAULT_MINUTES = 90          # agent.max_turn_minutes
 DEFAULT_TOKENS = 4_000_000    # agent.max_turn_tokens (prompt + completion, summed over calls)
 LOOP_REPEATS = 5
 NO_PROGRESS_FAILS = 12
+# Diminishing returns: after this many web calls in one turn the model is told (once) to answer with what
+# it has; after STALL_CALLS tool calls in a row that found nothing new, the same nudge.
+WEB_NUDGE_CALLS = 8
+STALL_CALLS = 6
+WEB_TOOLS = ("web_search", "web_fetch")
+NUDGE_TEXT = ("[Tempest] Pencarian sudah {n} kali dan hasil baru makin sedikit. Jawab sekarang dari sumber yang sudah "
+              "diambil (sebut URL-nya); bagian yang tidak ditemukan katakan terus terang. Cari lagi hanya bila benar-"
+              "benar ada petunjuk baru yang spesifik.")
 
 # One-tap actions the clients render as a button (same labels everywhere).
 ACTIONS = {
@@ -83,6 +91,11 @@ class TurnBudget:
     _segment_progress: bool = False
     _fails: int = 0
     loop_tool: str = ""
+    extended: int = 0          # how often the checkpoint was extended (made visible, never silent)
+    web_calls: int = 0
+    _stall: int = 0
+    _nudged: bool = False
+    _announce: bool = False
 
     @classmethod
     def from_config(cls, cfg_get, clock=time.monotonic) -> "TurnBudget":
@@ -111,9 +124,31 @@ class TurnBudget:
         if self.steps >= self.checkpoint * self.segments:
             if not self._segment_progress:
                 return "step_limit"
-            self.segments += 1          # still making progress: continue silently
+            self.segments += 1          # still making progress: extend, and say so (see take_extension)
             self._segment_progress = False
+            self.extended += 1
+            self._announce = True
         self.steps += 1
+        return None
+
+    def take_extension(self) -> str | None:
+        """A one-line notice when the last :meth:`before_call` extended the step limit (else None).
+
+        The counter shown as ``langkah n/limit`` never runs past its limit: the limit grows first, and the
+        user sees why."""
+        if not self._announce:
+            return None
+        self._announce = False
+        return (f"Batas langkah diperpanjang ke {self.limit} (langkah {self.steps}): masih ada kemajuan. "
+                f"Batas keras {self.hard_steps}.")
+
+    def nudge(self) -> str | None:
+        """Diminishing returns: one hidden 'answer now' note, or None."""
+        if self._nudged:
+            return None
+        if self.web_calls >= WEB_NUDGE_CALLS or (self.web_calls >= 3 and self._stall >= STALL_CALLS):
+            self._nudged = True
+            return NUDGE_TEXT.format(n=self.web_calls)
         return None
 
     def add_usage(self, usage: dict | None) -> None:
@@ -125,13 +160,19 @@ class TurnBudget:
         sig = _sig(name, args)
         rsig = sig + ":" + hashlib.sha1((result or "")[:4000].encode("utf-8", "replace")).hexdigest()[:12]
         self._repeats[rsig] = self._repeats.get(rsig, 0) + 1
+        if name in WEB_TOOLS:
+            self.web_calls += 1
         if ok:
             self._fails = 0
             if sig not in self._seen_ok:
                 self._seen_ok.add(sig)
                 self._segment_progress = True
+                self._stall = 0
+            else:
+                self._stall += 1
         else:
             self._fails += 1
+            self._stall += 1
         if self._repeats[rsig] >= LOOP_REPEATS:
             self.loop_tool = name
             return "loop"
@@ -140,7 +181,8 @@ class TurnBudget:
         return None
 
     def progress_payload(self) -> dict:
-        return {"step": self.steps, "limit": self.limit, "max": self.hard_steps}
+        limit = max(self.limit, self.steps)  # never "9/3": the limit is extended before a step passes it
+        return {"step": self.steps, "limit": limit, "max": self.hard_steps, "extended": self.extended}
 
 
 def is_continue(text: str) -> bool:

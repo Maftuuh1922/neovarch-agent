@@ -39,6 +39,7 @@ WORKING_METHOD = """# Cara kerja (selalu berlaku / always on)
 - Kumpulkan dulu yang dibutuhkan: baca file sebelum mengubahnya, cek dependensi sebelum memakainya. Bacaan yang saling
   tidak bergantung boleh dipanggil bersamaan dalam satu respons.
 - Hitungan, tanggal, isi file, status sistem dan git: pakai alat, jangan menebak dari ingatan.
+- Fakta web: hanya dari teks yang diambil, sebut URL-nya; tidak ada = "tidak ditemukan", jangan tambah angka dari ingatan.
 - Kalau alat gagal: baca pesan errornya, perbaiki argumen atau pendekatan, coba lagi. Jangan mengulang panggilan yang
   persis sama. Kalau tetap buntu, katakan terus terang apa yang menghalangi.
 - Sebelum menjawab, periksa: apakah semua yang diminta sudah terpenuhi? Setelah mengubah kode, jalankan tes/lint yang

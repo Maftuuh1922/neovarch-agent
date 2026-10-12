@@ -268,16 +268,69 @@ def _html_to_text(raw: str) -> str:
     return re.sub(r"\n\s*\n+", "\n\n", raw).strip()
 
 
+def _cfg_get():
+    """A ``(dotted key, default) -> value`` reader over config.yaml (empty dict when it can't load)."""
+    try:
+        from neovarch import config as cfgmod
+        cfg = cfgmod.load_config()
+        return lambda k, d=None: cfgmod.get_path(cfg, k, d)
+    except Exception:
+        return lambda k, d=None: d
+
+
+# Tools that only read (files, web, notes): Tempest runs several of them from one model message at
+# the same time and never moves their output to a file (they clip themselves in context).
+READ_ONLY_TOOLS = frozenset({"read_file", "web_fetch", "web_search", "session_search", "obsidian_search",
+                             "obsidian_read", "obsidian_links", "report_search", "office_status"})
+
+
 async def tool_web_fetch(args: dict, ctx: ToolContext) -> str:
-    url = str(args.get("url") or "")
+    from neovarch import web
+    url = str(args.get("url") or "").strip()
     if not re.match(r"^https?://", url):
         return "error: url must start with http:// or https://"
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45)) as s:
-        async with s.get(url, headers={"User-Agent": "NeovarchAgent/0.1 (+https://github.com/Maftuuh1922/neovrach_Agent)"}) as r:
-            body = await r.text(errors="replace")
-            ctype = r.headers.get("Content-Type", "")
-            text = _html_to_text(body) if "html" in ctype else body
-            return _clip(f"HTTP {r.status} {ctype}\n{text}")
+    render = str(args.get("render") or "auto").lower()
+    if render not in ("auto", "always", "never"):
+        render = "auto"
+    page = await web.fetch(url, session=getattr(ctx, "session_id", "") or "", render=render, cfg_get=_cfg_get())
+    if page.get("error") and not page.get("text"):
+        return f"error: {page['error']} ({url})"
+    return web.format_page(page, str(args.get("query") or ""), web.FETCH_CHARS)
+
+
+async def tool_web_search(args: dict, ctx: ToolContext) -> str:
+    """Search the web and (by default) read the top results in the same call."""
+    from neovarch import web
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return "error: query is required"
+    try:
+        n = max(1, min(int(args.get("n") or 6), 10))
+    except (TypeError, ValueError):
+        n = 6
+    try:
+        n_fetch = max(0, min(int(args.get("fetch") if args.get("fetch") is not None else 2), 4))
+    except (TypeError, ValueError):
+        n_fetch = 2
+    get = _cfg_get()
+    session = getattr(ctx, "session_id", "") or ""
+    results, backend = await web.search(query, get, session=session, n=n)
+    if not results:
+        return (f"tidak ditemukan: pencarian '{query}' tidak memberi hasil ({backend}). Coba kata kunci lain, "
+                "atau web_fetch URL yang kamu tahu. Jangan menebak jawabannya.")
+    lines = [f"Hasil pencarian '{query}' (sumber: {backend}):"]
+    for i, r in enumerate(results, 1):
+        lines.append(f"{i}. {r['title']}\n   {r['url']}" + (f"\n   {r['snippet'][:300]}" if r.get("snippet") else ""))
+    if n_fetch:
+        pages = await asyncio.gather(*(web.fetch(r["url"], session=session, cfg_get=get) for r in results[:n_fetch]),
+                                     return_exceptions=True)
+        for r, page in zip(results[:n_fetch], pages):
+            if isinstance(page, BaseException) or (page.get("error") and not page.get("text")):
+                continue
+            lines.append("\n--- Isi halaman (dipotong di bagian yang cocok dengan kueri) ---\n"
+                         + web.format_page(page, query, web.SEARCH_PAGE_CHARS))
+    lines.append("\nJawab fakta hanya dari teks di atas dan sebut URL-nya; kalau tidak ada, bilang tidak ditemukan.")
+    return "\n".join(lines)
 
 
 async def tool_memory(args: dict, ctx: ToolContext) -> str:
@@ -860,9 +913,17 @@ TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
         "parameters": {"type": "object", "properties": {
             "path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"},
             "replace_all": {"type": "boolean"}}, "required": ["path", "old_text", "new_text"]}}),
+    "web_search": (tool_web_search, {
+        "description": "Search the web (no key) and read the top `fetch` pages (default 2, clipped to the query). "
+                       "Use it for facts you do not know.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string"}, "n": {"type": "integer"}, "fetch": {"type": "integer"}},
+            "required": ["query"]}}),
     "web_fetch": (tool_web_fetch, {
-        "description": "Fetch a web page or API URL and return its text.",
-        "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}}),
+        "description": "Fetch a URL as readable text (JS pages rendered); `query` keeps the matching parts of long pages.",
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string"}, "query": {"type": "string"},
+            "render": {"type": "string", "enum": ["auto", "always", "never"]}}, "required": ["url"]}}),
     "memory": (tool_memory, {
         "description": "Long-term memory notes. action: list | read | append | write; name: note name.",
         "parameters": {"type": "object", "properties": {
@@ -970,7 +1031,8 @@ def _allowed_builtin(ctx: "ToolContext | None") -> set[str]:
     names -= set(_orch.TOOLS) - _orch.EMPLOYEE_ALLOWED  # nor change the install
     allowed = company.allowed_tools() if hasattr(company, "allowed_tools") else None
     if allowed:
-        names &= set(allowed) | {"office_status", "send_file"}
+        allowed = set(allowed) | ({"web_search"} if "web_fetch" in allowed else set())
+        names &= allowed | {"office_status", "send_file"}
     return names
 
 
