@@ -730,7 +730,16 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
                       child: ComposerSendButton(key: const ValueKey('composer-queue'), onPressed: r.connected ? _send : null),
                     ),
             ),
-            ComposerSendButton(key: const ValueKey('composer-stop'), stop: true, onPressed: r.stop),
+            ComposerSendButton(
+              key: const ValueKey('composer-stop'),
+              stop: true,
+              onPressed: r.stopping
+                  ? null
+                  : () async {
+                      final err = await r.stop();
+                      if (err != null && context.mounted) toast(context, err);
+                    },
+            ),
           ] else
             ComposerSendButton(key: const ValueKey('composer-send'), onPressed: r.connected ? _send : null),
         ]),

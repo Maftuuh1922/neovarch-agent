@@ -572,6 +572,11 @@ class RemoteController extends ChangeNotifier {
     }
     if (f.type == 'sessions.changed' || f.type == 'session.title') unawaited(loadSessions());
     if (f.sessionId != null && f.sessionId == runtimeId) {
+      if (stopping && (f.type == 'message.complete' || f.type == 'error' ||
+          (f.type == 'session.status' && f.payload['status'] == 'idle'))) {
+        stopping = false;
+        _stopFallback?.cancel();
+      }
       final count = transcript.messages.length;
       final wasRunning = transcript.running;
       if (transcript.apply(f)) {
@@ -1080,12 +1085,46 @@ class RemoteController extends ChangeNotifier {
     return g.socialFriend(login);
   }
 
-  Future<void> stop() async {
+  /// Stop pressed and the PC has not confirmed yet ("Menghentikan…").
+  bool stopping = false;
+  Timer? _stopFallback;
+
+  /// How long the phone waits for the PC to confirm a stop before it ends the
+  /// turn on screen by itself (the PC cancels the model/tool/commands at once).
+  static Duration stopConfirmTimeout = const Duration(seconds: 8);
+
+  /// Stop the running turn on the PC: the core cancels the model request, the
+  /// running tool and every process a command started. Returns an error to show,
+  /// or null. Works after a reconnect too (the session id is re-read).
+  Future<String?> stop() async {
     final rid = runtimeId;
-    if (rid == null) return;
+    final g = gateway;
+    if (rid == null || g == null) {
+      if (transcript.running) _endStoppedLocally();
+      return null;
+    }
+    stopping = true;
+    notifyListeners();
+    _stopFallback?.cancel();
+    _stopFallback = Timer(stopConfirmTimeout, () {
+      if (stopping && transcript.running) _endStoppedLocally();
+    });
     try {
-      await gateway?.interrupt(rid);
-    } catch (_) {}
+      await g.interrupt(rid);
+      return null;
+    } catch (e) {
+      stopping = false;
+      _stopFallback?.cancel();
+      notifyListeners();
+      return _friendly('$e');
+    }
+  }
+
+  void _endStoppedLocally() {
+    stopping = false;
+    _stopFallback?.cancel();
+    transcript.apply(GatewayEventFrame('message.complete', runtimeId, const {'text': '', 'status': 'interrupted'}));
+    notifyListeners();
   }
 
   Future<String?> respond(RemoteApproval a, String choice) async {
@@ -1160,6 +1199,7 @@ class RemoteController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _stopFallback?.cancel();
     _streamTimer?.cancel();
     _restartTimer?.cancel();
     streamTick.dispose();

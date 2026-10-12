@@ -285,6 +285,10 @@ def _preview(args: dict) -> str:
     return json.dumps(args, ensure_ascii=False)[:200]
 
 
+class TurnInterrupted(Exception):
+    """Stop cancelled the model request or tool that was running."""
+
+
 class Agent:
     def __init__(self, rec: dict, store: SessionStore, ctx: ToolContext, emit: EmitFn):
         self.rec = rec
@@ -292,9 +296,36 @@ class Agent:
         self.ctx = ctx
         self.emit = emit
         self.interrupted = False
+        # The model request / tool call running right now: Stop cancels it instead
+        # of waiting for it to finish (v1.4.7 "Stop benar-benar berhenti").
+        self._inflight: asyncio.Task | None = None
 
     def interrupt(self) -> None:
         self.interrupted = True
+        task = self._inflight
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _cancellable(self, coro):
+        """Run one model call or tool call so Stop cancels it mid-flight. A cancel that
+        came from Stop becomes TurnInterrupted; any other cancel (gateway shutdown)
+        propagates unchanged. Shell commands kill their whole process group on cancel."""
+        if self.interrupted:
+            coro.close()
+            raise TurnInterrupted()
+        task = asyncio.ensure_future(coro)
+        self._inflight = task
+        try:
+            return await task
+        except asyncio.CancelledError:
+            cur = asyncio.current_task()
+            outer_cancelled = cur is not None and hasattr(cur, "cancelling") and cur.cancelling()
+            if self.interrupted and task.cancelled() and not outer_cancelled:
+                raise TurnInterrupted() from None
+            raise
+        finally:
+            if self._inflight is task:
+                self._inflight = None
 
     async def run_turn(self, user_text: str, attachments: list[dict] | None = None) -> str:
         from neovarch import uploads
@@ -514,7 +545,7 @@ class Agent:
                         self.emit("status", {"kind": "notice", "text": (
                             "Agen buntu di langkah ini. Kamu bisa menyalakan \"Naik ke model lebih kuat saat buntu\" di "
                             "Pengaturan \u25b8 Agen.")})
-                comp: Completion = await self._complete(use, wire, pinned and use is active)
+                comp: Completion = await self._cancellable(self._complete(use, wire, pinned and use is active))
                 usage = comp.usage or usage
                 budget.add_usage(comp.usage)
                 self._track_usage(use, comp.usage, ctx_len)
@@ -647,7 +678,10 @@ class Agent:
                     else:
                         if st and st.get("memory_dedup") and prep.name in tempest_memory.MEMORY_TOOLS:
                             args = tempest_memory.guard_write(prep.name, args, cfgmod.neovarch_home() / "memory")[0]
-                        result = await run_tool(prep.name, args, self.ctx)
+                        try:
+                            result = await self._cancellable(run_tool(prep.name, args, self.ctx))
+                        except TurnInterrupted:
+                            result = "interrupted: dihentikan oleh pengguna"
                         if st and prep.name in tempest_memory.MEMORY_TOOLS and str(args.get("action")) in (
                                 "append", "write", "replace") and not str(result).startswith(("error", "denied")):
                             tempest_memory.note_memory_write(self.rec)
@@ -672,6 +706,8 @@ class Agent:
                 if error_info:
                     error = error_info["message"]
                     break
+        except TurnInterrupted:
+            error = "interrupted"
         except LLMError as exc:
             detail = _explain(str(exc), active, self.tried)
             error_info = turn_budget.describe(turn_budget.classify_llm_error(str(exc) + " " + detail), detail=detail)
