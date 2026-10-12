@@ -948,31 +948,26 @@ TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
                        "about the Kantor instead of searching files.",
         "parameters": {"type": "object", "properties": {}}}),
     "shell": (tool_shell, {
-        "description": "Run a shell command on the user's computer and return its output. Dangerous commands ask the "
-                       "user first. background=true starts it in the background (servers, watchers, long builds) "
-                       "and returns a job id for shell_job.",
+        "description": "Run a shell command and return its output. Dangerous commands ask the user first. "
+                       "background=true for servers/long jobs (then shell_job).",
         "parameters": {"type": "object", "properties": {
             "command": {"type": "string"}, "workdir": {"type": "string"},
-            "timeout": {"type": "number", "description": "seconds, default 60, max 600"},
+            "timeout": {"type": "number", "description": "seconds, default 60"},
             "background": {"type": "boolean"}}, "required": ["command"]}}),
     "grep": (tool_grep, {
-        "description": "Search file contents with a regex (ripgrep; .gitignore respected). Returns file:line:text, "
-                       "capped. Prefer it over shell grep/find.",
+        "description": "Regex search in files (ripgrep, .gitignore respected), capped. Use instead of shell grep.",
         "parameters": {"type": "object", "properties": {
-            "pattern": {"type": "string"}, "path": {"type": "string", "description": "file or folder, default cwd"},
-            "glob": {"type": "string", "description": "file filter, e.g. *.py or src/**/*.ts"},
+            "pattern": {"type": "string"}, "path": {"type": "string"}, "glob": {"type": "string"},
             "output": {"type": "string", "enum": ["content", "files", "count"]},
-            "ignore_case": {"type": "boolean"}, "literal": {"type": "boolean"},
-            "context": {"type": "integer", "description": "lines around each match, max 5"},
-            "limit": {"type": "integer", "description": "max lines, default 100"}}, "required": ["pattern"]}}),
-    "glob": (tool_glob, {
-        "description": "Find files by name pattern (e.g. **/*.py, *test*), newest first, capped.",
-        "parameters": {"type": "object", "properties": {
-            "pattern": {"type": "string"}, "path": {"type": "string"}, "limit": {"type": "integer"}},
+            "ignore_case": {"type": "boolean"}, "context": {"type": "integer"}, "limit": {"type": "integer"}},
             "required": ["pattern"]}}),
+    "glob": (tool_glob, {
+        "description": "Find files by name pattern (e.g. **/*.py), newest first.",
+        "parameters": {"type": "object", "properties": {
+            "pattern": {"type": "string"}, "path": {"type": "string"}}, "required": ["pattern"]}}),
     "shell_job": (tool_shell_job, {
-        "description": "Background shell jobs started with shell(background=true). action: list | output (new output "
-                       "since last read) | wait (until done or timeout s) | kill.",
+        "description": "Background jobs from shell(background=true). action: list | output (new output) | "
+                       "wait (until done or timeout s) | kill.",
         "parameters": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["list", "output", "wait", "kill"]}, "id": {"type": "string"},
             "timeout": {"type": "number"}}, "required": ["action"]}}),
@@ -985,15 +980,12 @@ TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
         "parameters": {"type": "object", "properties": {
             "path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}),
     "edit_file": (tool_edit_file, {
-        "description": "Replace text in a file. old_text must match one place (copy it from read_file without the "
-                       "line numbers; whitespace/indent differences are tolerated if still unique) unless "
-                       "replace_all. Several changes to one file: pass edits=[{old_text,new_text},...] (all or nothing).",
+        "description": "Replace text in a file; old_text must match one place (whitespace/indent tolerated) unless "
+                       "replace_all. Many changes: edits=[{old_text,new_text}] (all or nothing).",
         "parameters": {"type": "object", "properties": {
             "path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"},
-            "replace_all": {"type": "boolean"},
-            "edits": {"type": "array", "items": {"type": "object", "properties": {
-                "old_text": {"type": "string"}, "new_text": {"type": "string"}, "replace_all": {"type": "boolean"}},
-                "required": ["old_text", "new_text"]}}}, "required": ["path"]}}),
+            "replace_all": {"type": "boolean"}, "edits": {"type": "array", "items": {"type": "object"}}},
+            "required": ["path"]}}),
     "web_search": (tool_web_search, {
         "description": "Search the web (no key) and read the top `fetch` pages (default 2, clipped to the query). "
                        "Use it for facts you do not know.",
