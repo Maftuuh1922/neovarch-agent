@@ -16,6 +16,7 @@ import '../../models/models.dart';
 import '../../theme/neovarch_mobile_theme.dart';
 import '../../ui/widgets/common.dart' show clockOf, LogView, reduceMotion;
 import '../l10n/strings.dart';
+import 'nv_mascot_avatar.dart';
 
 /// Screen header: `// KICKER` in mono, a serif title, optional status line and
 /// actions on the right. Replaces the stock AppBar on every remote tab.
@@ -367,13 +368,7 @@ class NvAgentLabel extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Row(children: [
-          Container(
-            width: 18,
-            height: 18,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: NV.red, shape: BoxShape.circle),
-            child: Text('N', style: TextStyle(fontFamily: NV.serif, fontSize: 13, height: 1.1, color: NV.text)),
-          ),
+          NvMascotAvatar(size: 18, animated: live),
           const SizedBox(width: 8),
           Flexible(child: Text(label.toUpperCase(), maxLines: 1, overflow: TextOverflow.ellipsis, style: NV.monoLabel(size: 9.5))),
           if (live) ...[const SizedBox(width: 8), const _LiveDot()],
