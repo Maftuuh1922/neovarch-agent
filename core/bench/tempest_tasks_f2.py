@@ -207,7 +207,11 @@ def chk_claim(seed):
     def chk(root, final):
         a = subprocess.run([sys.executable, "report.py", "--empty"], cwd=root, capture_output=True, text=True)
         b = subprocess.run([sys.executable, "report.py"], cwd=root, capture_output=True, text=True)
-        return a.returncode == 0 and "spread=0" in a.stdout and b.returncode == 0 and "avg=" in b.stdout
+        # any non-crashing handling of empty data is fine; the normal report must stay unchanged
+        m = re.search(r"else \[(\d+), 5, 9\]", (root / "report.py").read_text())
+        first = int(m.group(1)) if m else 3 + seed
+        normal = f"avg={(first + 5 + 9) / 3:.2f} spread={9 - min(first, 5)}"
+        return a.returncode == 0 and "Traceback" not in a.stderr and b.returncode == 0 and normal in b.stdout
     return chk
 
 
