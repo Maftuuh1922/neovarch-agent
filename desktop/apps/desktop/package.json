@@ -2,7 +2,7 @@
   "name": "neovarch-agent",
   "productName": "Neovarch Agent",
   "private": true,
-  "version": "1.4.6",
+  "version": "1.4.7",
   "description": "Neovarch Agent desktop app (derived from Hermes Desktop by Nous Research).",
   "author": "Neovarch <145763168+Maftuuh1922@users.noreply.github.com>",
   "repository": {
