@@ -93,17 +93,19 @@ describe('AboutSettings', (): void => {
 
     expect(screen.getByRole('heading', { name: en.updates.appName })).toBeTruthy()
     expect(screen.getByText(en.updates.versionDetailsInstallId)).toBeTruthy()
-    expect(screen.getByText(en.updates.latestBody)).toBeTruthy()
+    // The app itself updates from GitHub Releases (Neovarch card), never the upstream feed.
+    expect(screen.getByTestId('neovarch-update-card')).toBeTruthy()
     expect(screen.queryByText(en.updates.latestBodyBackend)).toBeNull()
     expect(refreshDesktopVersion).toHaveBeenCalledTimes(1)
     expect(checkBackendUpdates).not.toHaveBeenCalled()
+    expect(checkUpdates).not.toHaveBeenCalled()
 
     $connection.set(connection('remote'))
     rerender(<AboutSettings />)
 
     expect(screen.getByText(en.updates.latestBodyBackend)).toBeTruthy()
     expect(checkBackendUpdates).toHaveBeenCalledTimes(1)
-    expect(screen.getAllByRole('link', { name: en.updates.releaseNotes })).toHaveLength(1)
+    expect(screen.queryAllByRole('link', { name: en.updates.releaseNotes })).toHaveLength(0)
 
     $connection.set({ ...connection('remote'), baseUrl: 'http://other-gateway:9119' })
     rerender(<AboutSettings />)
@@ -119,35 +121,26 @@ describe('AboutSettings', (): void => {
     expect(screen.queryByRole('combobox')).toBeNull()
   })
 
-  it('a commit client refuses updates without hiding an unrelated backend update', (): void => {
-    const message: string = "This build doesn't get updates. Ask the developer who gave it to you for a new build."
+  it('keeps a remote backend update reachable next to the Neovarch card', (): void => {
     $connection.set(connection('remote'))
-    $desktopVersion.set({ ...$desktopVersion.get()!, source: 'commit-build' })
-    $updateStatus.set({ supported: false, mechanism: 'external', reason: 'commit-build', message })
+    $updateStatus.set({ supported: false, reason: 'neovarch-github-releases' })
     $backendUpdateStatus.set({ supported: true, behind: 3 })
     render(<AboutSettings />)
-    expect(screen.getByText(message)).toBeTruthy()
+    expect(screen.getByTestId('neovarch-update-card')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: en.updates.checkNow })).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: en.updates.updateNow }))
     expect(startActiveUpdate).toHaveBeenCalledWith('backend')
   })
 
-  it('forces a fresh check only for the card the user checks', async (): Promise<void> => {
+  it('checks the backend card without touching the upstream app updater', async (): Promise<void> => {
     $connection.set(connection('remote'))
     render(<AboutSettings />)
     vi.mocked(checkBackendUpdates).mockClear()
 
-    const buttons = screen.getAllByRole('button', { name: en.updates.checkNow })
-    fireEvent.click(buttons[0])
-    await waitFor((): void => {
-      expect(checkUpdates).toHaveBeenCalledWith({ force: true })
-    })
-    expect(checkBackendUpdates).not.toHaveBeenCalled()
-
-    fireEvent.click(buttons[1])
+    fireEvent.click(screen.getByRole('button', { name: en.updates.checkNow }))
     await waitFor((): void => {
       expect(checkBackendUpdates).toHaveBeenCalledWith({ force: true })
     })
-    expect(checkUpdates).toHaveBeenCalledTimes(1)
+    expect(checkUpdates).not.toHaveBeenCalled()
   })
 })

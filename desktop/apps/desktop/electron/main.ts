@@ -427,6 +427,7 @@ import {
 import { runNativeLogin } from './native-oauth-login'
 import { loadNativeTokenSet, type NativeTokenStoreIo, persistNativeTokenSet } from './native-token-store'
 import { createRemoteController } from './neovarch-remote'
+import { registerNeovarchUpdateIpc } from './neovarch-update-ipc'
 import { createWallpaperStore, WALLPAPER_EXTENSIONS } from './neovarch-wallpaper'
 import { execGit, killTimedGitChildren, setNoConsoleGitRoots } from './no-console-git'
 import { registerNativeNotifications } from './notification-ipc'
@@ -3764,7 +3765,21 @@ function emitUpdateProgress(payload) {
   }
 }
 
+// Neovarch updates through GitHub Releases (neovarch-update-ipc.ts). The
+// upstream feed/App Installer/MSIX/mac updater only runs when explicitly
+// opted in with NEOVARCH_UPSTREAM_UPDATER=1.
+const UPSTREAM_UPDATER_ENABLED = process.env.NEOVARCH_UPSTREAM_UPDATER === '1'
+const UPSTREAM_UPDATER_OFF = {
+  supported: false,
+  reason: 'neovarch-github-releases',
+  message: 'Neovarch updates come from GitHub Releases (Settings > About).'
+}
+
 async function checkUpdates(opts: { force?: boolean } = {}): Promise<UpdaterStatusWire> {
+  if (!UPSTREAM_UPDATER_ENABLED) {
+    return { ...UPSTREAM_UPDATER_OFF, fetchedAt: Date.now() }
+  }
+
   // A packaged install delegates to the update owner named by its stamp.
   let strategy: UpdaterStrategy | null = null
 
@@ -4808,6 +4823,10 @@ async function releaseBackendLock(updateRoot: string, tag: string): Promise<{ un
 // Detection (checkUpdates / commit changelog / "N behind") stays in the UI;
 // only this apply action changed.
 async function applyUpdates(): Promise<UpdaterApplyResultWire> {
+  if (!UPSTREAM_UPDATER_ENABLED) {
+    return { ok: false, error: 'unsupported', message: UPSTREAM_UPDATER_OFF.message }
+  }
+
   return updateOperation.apply(async (): Promise<UpdaterApplyResultWire> => {
     updateInFlight = true
     let handedOff: boolean = false
@@ -19114,6 +19133,15 @@ ipcMain.handle('hermes:version', async (_event, scope?: { connectionId?: string;
 // load the already-swapped bundle without asking the user to quit manually.
 // app.relaunch() re-executes by path, so the fresh process picks up whatever
 // bundle now lives there.
+registerNeovarchUpdateIpc({
+  log: rememberLog,
+  relaunch: () => {
+    rememberLog('[neovarch-update] relaunching after update')
+    app.relaunch({ args: buildNoSandboxRelaunchArgs(process.argv.slice(1)) })
+    void exitAfterBackendShutdown(0)
+  }
+})
+
 ipcMain.handle('hermes:app:relaunch', async () => {
   rememberLog('[updates] renderer requested an app relaunch (swapped bundle pending)')
   app.relaunch({ args: buildNoSandboxRelaunchArgs(process.argv.slice(1)) })

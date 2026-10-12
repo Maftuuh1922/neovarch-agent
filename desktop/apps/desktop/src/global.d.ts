@@ -6,6 +6,7 @@ import type { ChallengeOutcome } from '../electron/challenge-window'
 import type { ScreenshotApi } from '../electron/command-screenshot-types'
 import type { HudModifierApi } from '../electron/hud-modifier-types'
 import type { MachineProfile } from '../electron/machine-profile'
+import type { NeovarchApplyResult, NeovarchUpdateProgress, NeovarchUpdateStatus } from '../electron/neovarch-update'
 import type { HermesNotification } from '../electron/notification-types'
 import type { PoolLimits } from '../electron/pool-limits'
 import type { KeepAwakeMode } from '../electron/power-save'
@@ -107,6 +108,14 @@ declare global {
   }
 
   interface Window {
+    /** Neovarch updater (GitHub Releases), electron/neovarch-update-ipc.ts. Absent outside Electron. */
+    neovarchUpdate?: {
+      check: (opts?: { quiet?: boolean }) => Promise<NeovarchUpdateStatus>
+      apply: () => Promise<NeovarchApplyResult>
+      openReleasePage: (url?: string) => Promise<void>
+      relaunch: () => Promise<void>
+      onProgress: (callback: (progress: NeovarchUpdateProgress) => void) => () => void
+    }
     /** Settings ▸ Tampilan ▸ Latar belakang: copies images into userData. Absent outside Electron. */
     neovarchWallpaper?: {
       pick: () => Promise<NeovarchWallpaperImport>

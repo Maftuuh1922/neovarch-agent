@@ -3981,6 +3981,34 @@ export const en: Translations = {
     versionDetailsUncommittedChanges: 'uncommitted changes'
   },
 
+  nvUpdate: {
+    title: 'Neovarch updates',
+    installedVersion: 'Installed version {version}',
+    checkNow: 'Check for updates',
+    checking: 'Checking GitHub Releases…',
+    upToDate: 'You are on the latest version.',
+    available: 'Neovarch {version} is available',
+    checkFailed: 'Could not check for updates. Check your connection and try again.',
+    updateNow: 'Update now',
+    downloadInstall: 'Download & install',
+    openRelease: 'Open release page',
+    fullNotes: 'Full release notes',
+    installing: 'Installing the update…',
+    downloading: 'Downloading the installer… {percent}',
+    installedRestart: 'Update installed. Restart Neovarch to use it.',
+    restartNow: 'Restart now',
+    later: 'Later',
+    launched: 'The installer is open. Neovarch will close so it can finish.',
+    failed: 'Update failed',
+    fellBack: 'The release page is open so you can download it manually.',
+    manualHint: 'This install (AppImage or .deb) is updated from the release page.',
+    unsupportedHint: 'Updates for this system come from the release page.',
+    noticeTitle: 'Update available',
+    noticeBody: 'Neovarch {version} is ready to install.',
+    noticeAction: 'View',
+    log: 'Installer log'
+  },
+
   handoffTour: enHandoffTour,
   install: {
     stageStates: {

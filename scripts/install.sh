@@ -32,6 +32,8 @@
 #                       NEOVARCH_VERSION when set, else v1.4.7.
 #   NEOVARCH_CORE_SRC   local checkout of this repo (or its core/ dir) to
 #                       install the core from instead of downloading.
+#   NEOVARCH_KEEP_RUNNING  set (to anything) to not close a running desktop app
+#                       (used by the app's own updater, which restarts itself).
 
 set -eu
 
@@ -459,7 +461,9 @@ install_desktop() {
   src=$(dirname "$src"); chmod 755 "$src/$EXE"
 
   # Close a running Neovarch desktop (only ours: matched by its install path).
-  if have pkill; then pkill -f "$APP_DIR/$EXE" >/dev/null 2>&1 || true; fi
+  # The desktop's own "Update sekarang" sets NEOVARCH_KEEP_RUNNING=1: it shows
+  # this log and asks the user to restart when the install finishes.
+  if [ -z "${NEOVARCH_KEEP_RUNNING:-}" ] && have pkill; then pkill -f "$APP_DIR/$EXE" >/dev/null 2>&1 || true; fi
 
   mkdir -p "$DATA_HOME" "$BIN_DIR" "$APPS_DIR" "$ICON_DIR"
   rm -rf "$APP_DIR"; mv "$src" "$APP_DIR"

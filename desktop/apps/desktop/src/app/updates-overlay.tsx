@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useState } from 'react'
 
 import { BrandMark } from '@/components/brand-mark'
+import { NeovarchUpdateCard } from '@/components/neovarch-update-card'
 import { SyncStatusCard } from '@/components/sync-status-card'
 import { Button } from '@/components/ui/button'
 import { CopyButton, writeClipboardText } from '@/components/ui/copy-button'
@@ -55,6 +56,42 @@ function totalItems(groups: readonly CommitGroup[]) {
   return groups.reduce((sum, g) => sum + g.items.length, 0)
 }
 
+/**
+ * The app's own updates ("Check for Updates…", the startup notice, the
+ * command palette) go to Neovarch's GitHub-Releases card; the upstream
+ * overlay remains only for a remote backend's updates.
+ */
+export function AppUpdatesOverlay() {
+  const target = useStore($updateOverlayTarget)
+
+  return target === 'backend' ? <UpdatesOverlay /> : <NeovarchUpdatesDialog />
+}
+
+function NeovarchUpdatesDialog() {
+  const open = useStore($updateOverlayOpen)
+  const desktopVersion = useStore($desktopVersion)
+
+  return (
+    <Dialog onOpenChange={setUpdateOverlayOpen} open={open}>
+      <DialogContent
+        bodyClassName="overflow-hidden p-0 gap-0"
+        className="max-w-md"
+        onOpenAutoFocus={preventCloseButtonAutoFocus}
+      >
+        <VersionHero
+          renderHeading={heading => <DialogTitle className="text-lg font-semibold tracking-tight">{heading}</DialogTitle>}
+          version={desktopVersion}
+        />
+        <DialogDescription className="sr-only">GitHub Releases</DialogDescription>
+        <div className="px-5 pt-2 pb-5">
+          <NeovarchUpdateCard autoCheck onLater={() => setUpdateOverlayOpen(false)} />
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** The upstream overlay (remote backend updates; its tests drive it directly). */
 export function UpdatesOverlay() {
   const open = useStore($updateOverlayOpen)
   const target = useStore($updateOverlayTarget)
