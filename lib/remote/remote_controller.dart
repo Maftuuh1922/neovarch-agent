@@ -233,13 +233,53 @@ class RemoteController extends ChangeNotifier {
   List<RemoteApproval>? debugApprovals;
   bool get running => transcript.running;
 
-  String get statusLabel => switch (status) {
+  /// The PC core announced a restart (`core.restarting`, or a restart picked on
+  /// this phone): show "PC sedang restart… menyambung ulang" instead of an
+  /// error and keep reconnecting until it is back (max [kRestartWindow]).
+  bool pcRestarting = false;
+  Timer? _restartTimer;
+  DateTime? _restartSince;
+  static const kRestartWindow = Duration(seconds: 120);
+  static const kRestartPoll = Duration(seconds: 2);
+
+  void notePcRestarting() {
+    pcRestarting = true;
+    _restartSince = DateTime.now();
+    error = null;
+    _restartTimer?.cancel();
+    _restartTimer = Timer.periodic(kRestartPoll, (_) => _restartTick());
+    notifyListeners();
+  }
+
+  void _restartTick() {
+    if (!pcRestarting) {
+      _restartTimer?.cancel();
+      return;
+    }
+    if (connected) return; // the socket may still be up for a moment before the PC goes down
+    final since = _restartSince ?? DateTime.now();
+    if (DateTime.now().difference(since) > kRestartWindow) {
+      _restartTimer?.cancel();
+      pcRestarting = false;
+      error = tr('PC belum kembali setelah restart. Pastikan aplikasi Neovarch di PC berjalan, lalu tarik untuk menyambung ulang.');
+      notifyListeners();
+      return;
+    }
+    // Short, steady retries while the PC boots (the gateway's own backoff would
+    // otherwise stretch to 30 s).
+    final g = gateway;
+    if (g != null && status != RemoteStatus.connecting) unawaited(g.reconnect().catchError((_) {}));
+  }
+
+  String get statusLabel => pcRestarting && status != RemoteStatus.connected
+      ? tr('PC sedang restart… menyambung ulang')
+      : switch (status) {
         RemoteStatus.connected => 'terhubung',
         RemoteStatus.connecting => 'menghubungkan…',
         RemoteStatus.reconnecting => 'menyambung ulang…',
         RemoteStatus.failed => 'gagal terhubung',
         RemoteStatus.disconnected => 'terputus',
-      };
+        };
 
   /// Called once at start: reconnect to the last desktop.
   Future<void> start() async {
@@ -419,6 +459,12 @@ class RemoteController extends ChangeNotifier {
     status = s;
     if (s == RemoteStatus.connected) {
       error = null;
+      if (pcRestarting && was != RemoteStatus.connected) {
+        // Back after the restart: reopen the chat (new process, no replay).
+        pcRestarting = false;
+        _restartTimer?.cancel();
+        if (storedId != null) unawaited(openSession(storedId!, quiet: true));
+      }
       final d = desktop, g = gateway;
       if (d != null && g != null) desktops.updateRoutes(d, lastUrl: g.activeUrl);
       unawaited(refreshAll());
@@ -429,7 +475,7 @@ class RemoteController extends ChangeNotifier {
       }
     } else if (s == RemoteStatus.reconnecting || s == RemoteStatus.failed) {
       transcript.interrupted();
-      if (s == RemoteStatus.failed) error ??= _friendly(gateway?.lastError ?? 'gagal terhubung');
+      if (s == RemoteStatus.failed && !pcRestarting) error ??= _friendly(gateway?.lastError ?? 'gagal terhubung');
     }
     notifyListeners();
   }
@@ -437,6 +483,10 @@ class RemoteController extends ChangeNotifier {
   /// Tests: feed a gateway event exactly as the WebSocket subscription does.
   @visibleForTesting
   void debugEvent(GatewayEventFrame f) => _onEvent(f);
+
+  /// Tests: feed a connection status change exactly as the gateway does.
+  @visibleForTesting
+  void debugStatus(RemoteStatus s) => _onStatus(s);
 
   /// Back in the foreground: phones may have slept through pushes, so take
   /// fresh snapshots (office, board, live sessions) once; from there the PC
@@ -509,6 +559,8 @@ class RemoteController extends ChangeNotifier {
               items: queue.items.where((i) => i.id != '${f.payload['id']}').toList(), paused: false);
           notifyListeners();
         }
+      case 'core.restarting':
+        notePcRestarting();
       case 'resync.required':
         unawaited(refreshAll());
         if (storedId != null) unawaited(openSession(storedId!, quiet: true));
@@ -1044,6 +1096,7 @@ class RemoteController extends ChangeNotifier {
   @override
   void dispose() {
     _streamTimer?.cancel();
+    _restartTimer?.cancel();
     streamTick.dispose();
     unawaited(_teardown());
     super.dispose();

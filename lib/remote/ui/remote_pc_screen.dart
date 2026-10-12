@@ -150,7 +150,7 @@ class RemotePcScreen extends ConsumerWidget {
           ],
           if (ok && r.gateway != null) ...[
             const NvSection('layanan latar'),
-            PcBackgroundPanel(api: r.gateway!),
+            PcBackgroundPanel(api: r.gateway!, onRestarting: r.notePcRestarting),
           ],
           NvSection('pc tersimpan',
               trailing: TextButton.icon(
