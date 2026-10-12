@@ -27,6 +27,9 @@ from typing import Any
 from neovarch.paths import neovarch_home
 
 MAX_BYTES = 25 * 1024 * 1024
+# v1.4.7 multi-lampiran: one chat message carries at most this many files/images.
+MAX_PER_MESSAGE = 10
+TOO_MANY = f"Maksimal {MAX_PER_MESSAGE} lampiran per pesan."
 TEXT_LIMIT = 20_000          # characters of extracted text per file sent to the model
 IMAGE_HISTORY = 3            # images are re-sent for at most the last N user turns that had them
 _SAFE = re.compile(r"[^A-Za-z0-9._ -]+")

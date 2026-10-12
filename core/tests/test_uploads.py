@@ -281,3 +281,53 @@ async def test_upload_is_not_swallowed_by_the_quiet_fallback(capture, monkeypatc
         await ws.close()
     finally:
         await c.close()
+
+
+async def test_one_message_carries_several_images_and_files(capture, monkeypatch, home):
+    """v1.4.7 multi-lampiran: several images + a file in one prompt.submit reach the
+    model as one user turn (one image_url part per image, file text inline)."""
+    gw, c = await _client(monkeypatch)
+    try:
+        ws, call, sid = await _session(c)
+        ids = []
+        for i in range(3):
+            ids.append((await (await _upload(c, sid, f"foto-{i}.png", PNG, "image/png")).json())["id"])
+        ids.append((await (await _upload(c, sid, "catatan.md", b"# Catatan\nisi catatan multi", "text/markdown")).json())["id"])
+        res = await call("prompt.submit", {"session_id": sid, "text": "bandingkan", "attachments": ids})
+        assert res["result"]["ok"] and len(res["result"]["attachments"]) == 4
+        await _wait_idle(gw, sid)
+        user = capture[-1]["messages"][-1]
+        assert [p["type"] for p in user["content"]] == ["text", "image_url", "image_url", "image_url"]
+        assert "isi catatan multi" in user["content"][0]["text"]
+        msgs = (await (await c.get(f"/api/sessions/{sid}/messages", headers=H)).json())["messages"]
+        users = [m for m in msgs if m["role"] == "user"]
+        assert len(users) == 1 and [a["id"] for a in users[0]["attachments"]] == ids
+        await ws.close()
+    finally:
+        await c.close()
+
+
+async def test_attachment_count_limit_is_clear(capture, monkeypatch, home):
+    from neovarch import uploads as upmod
+    gw, c = await _client(monkeypatch)
+    try:
+        ws, call, sid = await _session(c)
+        ids = [(await (await _upload(c, sid, f"f{i}.txt", b"x%d" % i, "text/plain")).json())["id"]
+               for i in range(upmod.MAX_PER_MESSAGE + 1)]
+        res = await call("prompt.submit", {"session_id": sid, "text": "kebanyakan", "attachments": ids})
+        assert "error" in res and res["error"]["message"] == upmod.TOO_MANY
+        assert "Maksimal 10 lampiran" in res["error"]["message"]
+        ok = await call("prompt.submit", {"session_id": sid, "text": "pas", "attachments": ids[:upmod.MAX_PER_MESSAGE]})
+        assert ok["result"]["ok"]
+        await _wait_idle(gw, sid)
+        # desktop staging stops at the same limit with the same plain message
+        b64 = base64.b64encode(PNG).decode()
+        for i in range(upmod.MAX_PER_MESSAGE):
+            r = await call("image.attach_bytes", {"session_id": sid, "content_base64": b64, "filename": f"p{i}.png"})
+            assert r["result"]["attached"] and r["result"]["count"] == i + 1
+        over = await call("image.attach_bytes", {"session_id": sid, "content_base64": b64, "filename": "lagi.png"})
+        assert over["result"]["attached"] is False and over["result"]["message"] == upmod.TOO_MANY
+        assert len(gw.live[sid].pending_attachments) == upmod.MAX_PER_MESSAGE
+        await ws.close()
+    finally:
+        await c.close()

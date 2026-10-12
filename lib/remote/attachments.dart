@@ -5,6 +5,11 @@ import 'dart:typed_data';
 
 const int kMaxAttachmentBytes = 25 * 1024 * 1024;
 
+/// One message carries at most this many files/images (the PC core enforces the
+/// same number: `uploads.MAX_PER_MESSAGE`).
+const int kMaxAttachmentsPerMessage = 10;
+const String kTooManyAttachments = 'Maksimal $kMaxAttachmentsPerMessage lampiran per pesan.';
+
 /// An upload stored on the PC (`/api/uploads` response / message attachments).
 class RemoteAttachment {
   const RemoteAttachment({required this.id, required this.name, this.mime = 'application/octet-stream', this.size = 0, this.kind = 'file', this.url});

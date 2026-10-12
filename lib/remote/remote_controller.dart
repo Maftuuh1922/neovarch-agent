@@ -951,6 +951,7 @@ class RemoteController extends ChangeNotifier {
     if (g == null || !connected) return 'Belum terhubung ke PC.';
     if (bytes.isEmpty) return 'File kosong.';
     if (bytes.length > kMaxAttachmentBytes) return '$name terlalu besar (maks 25 MB).';
+    if (pendingAttachments.length >= kMaxAttachmentsPerMessage) return kTooManyAttachments;
     if (runtimeId == null) await newChat();
     final rid = runtimeId;
     if (rid == null) return error ?? 'Gagal membuat sesi di PC.';
@@ -983,6 +984,25 @@ class RemoteController extends ChangeNotifier {
       notifyListeners();
       return p.error;
     }
+  }
+
+  /// Several picked files at once (multi-select gallery / file picker): one chat
+  /// session is made first, then every file gets its own chip and uploads in
+  /// parallel. Files past [kMaxAttachmentsPerMessage] are skipped with one
+  /// clear message. Returns the errors to show (joined), or null.
+  Future<String?> addAttachments(List<({String name, Uint8List bytes, String? mime})> files) async {
+    if (files.isEmpty) return null;
+    final g = gateway;
+    if (g == null || !connected) return 'Belum terhubung ke PC.';
+    if (runtimeId == null) await newChat();
+    if (runtimeId == null) return error ?? 'Gagal membuat sesi di PC.';
+    final room = kMaxAttachmentsPerMessage - pendingAttachments.length;
+    final take = room <= 0 ? const <({String name, Uint8List bytes, String? mime})>[] : files.take(room).toList();
+    final errors = <String>[];
+    if (files.length > take.length) errors.add('$kTooManyAttachments ${files.length - take.length} file dilewati.');
+    final results = await Future.wait([for (final f in take) addAttachment(f.name, f.bytes, mime: f.mime)]);
+    errors.insertAll(0, results.whereType<String>().toSet());
+    return errors.isEmpty ? null : errors.join('\n');
   }
 
   void removeAttachment(String localId) {
