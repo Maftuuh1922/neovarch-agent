@@ -98,7 +98,7 @@ vi.mock('../session-picker-overlay', () => ({ SessionPickerOverlay: () => null }
 vi.mock('../session-switcher', () => ({ SessionSwitcher: () => null }))
 vi.mock('../settings/plugin-install-modal', () => ({ PluginInstallModal: () => null }))
 vi.mock('../shell/titlebar-controls', () => ({ TitlebarControls: () => null }))
-vi.mock('../updates-overlay', () => ({ UpdatesOverlay: () => null }))
+vi.mock('../updates-overlay', () => ({ AppUpdatesOverlay: () => null, UpdatesOverlay: () => null }))
 vi.mock('./mcp-install-deeplink-dialog', () => ({ McpInstallDeepLinkDialog: () => null }))
 vi.mock('./surfaces', () => ({
   ChatRoutesSurface: () => null,

@@ -151,7 +151,7 @@ import {
 } from '../shell/titlebar'
 import { TitlebarControls } from '../shell/titlebar-controls'
 import { WslgWindowControls } from '../shell/wslg-window-controls'
-import { UpdatesOverlay } from '../updates-overlay'
+import { AppUpdatesOverlay } from '../updates-overlay'
 
 import { ContribWiringContext } from './context'
 import {
@@ -1340,7 +1340,7 @@ export function ContribWiring({ children }: { children: ReactNode }) {
         ownerConnectionId={activeConnectionId || undefined}
         profile={activeGatewayProfile}
       />
-      <UpdatesOverlay />
+      <AppUpdatesOverlay />
       <GatewayConnectingOverlay />
       <BootFailureOverlay />
       <UpdateHoldOverlay />

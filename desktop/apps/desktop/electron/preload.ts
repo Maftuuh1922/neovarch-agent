@@ -743,6 +743,21 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   }
 })
 
+// Neovarch updater (GitHub Releases): menu "Check for Updates…", Settings ▸
+// Tentang, and the quiet startup check. Its own global, like the wallpaper one.
+contextBridge.exposeInMainWorld('neovarchUpdate', {
+  check: (opts?: { quiet?: boolean }) => ipcRenderer.invoke('neovarch:update:check', opts),
+  apply: () => ipcRenderer.invoke('neovarch:update:apply'),
+  openReleasePage: (url?: string) => ipcRenderer.invoke('neovarch:update:open-release', url),
+  relaunch: () => ipcRenderer.invoke('neovarch:update:relaunch'),
+  onProgress: (callback: (progress: unknown) => void) => {
+    const listener = (_event: unknown, payload: unknown) => callback(payload)
+    ipcRenderer.on('neovarch:update:progress', listener)
+
+    return () => ipcRenderer.removeListener('neovarch:update:progress', listener)
+  }
+})
+
 // Neovarch wallpaper bridge (Settings ▸ Tampilan ▸ Latar belakang). Its own
 // global, so the renderer's wallpaper code never needs the legacy bridge.
 contextBridge.exposeInMainWorld('neovarchWallpaper', {

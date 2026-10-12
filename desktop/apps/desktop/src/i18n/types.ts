@@ -3419,6 +3419,35 @@ export interface Translations extends NoticeTranslations {
     versionDetailsUncommittedChanges: string
   }
 
+  /** Neovarch's GitHub Releases updater. `{version}` / `{percent}` are filled in by the UI. */
+  nvUpdate: {
+    title: string
+    installedVersion: string
+    checkNow: string
+    checking: string
+    upToDate: string
+    available: string
+    checkFailed: string
+    updateNow: string
+    downloadInstall: string
+    openRelease: string
+    fullNotes: string
+    installing: string
+    downloading: string
+    installedRestart: string
+    restartNow: string
+    later: string
+    launched: string
+    failed: string
+    fellBack: string
+    manualHint: string
+    unsupportedHint: string
+    noticeTitle: string
+    noticeBody: string
+    noticeAction: string
+    log: string
+  }
+
   handoffTour: HandoffTourTranslations
   install: {
     stageStates: Record<string, string>

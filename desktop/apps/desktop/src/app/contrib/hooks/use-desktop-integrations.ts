@@ -23,6 +23,7 @@ import {
   respondToApprovalAction
 } from '@/store/native-notifications'
 import { requestPluginCatalogInstallFromDeepLink } from '@/store/plugin-catalog-install'
+import { startNeovarchUpdateWatch, stopNeovarchUpdateWatch } from '@/store/neovarch-update'
 import { openPluginInstallRequest } from '@/store/plugin-install-request'
 import { openFolderAsProject } from '@/store/projects'
 import {
@@ -41,7 +42,7 @@ import {
 import { $botChatScopes, $sessionTiles, storedSessionIdForRuntimeId } from '@/store/session-states'
 import { onSessionsChanged } from '@/store/session-sync'
 import { requestSkillInstallFromDeepLink } from '@/store/skill-deeplink-install'
-import { openUpdatesWindow, startUpdatePoller, stopUpdatePoller } from '@/store/updates'
+import { openUpdatesWindow, refreshDesktopVersion } from '@/store/updates'
 import { isBrowserWindow, isHudWindow, isPeerInstanceWindow, isSecondaryWindow } from '@/store/windows'
 import type { SessionInfo } from '@/types/hermes'
 
@@ -91,7 +92,11 @@ export function useDesktopIntegrations({
   // statusbar version pill and the update toasts. Also honors the main
   // process's "open updates" menu request.
   useEffect(() => {
-    startUpdatePoller()
+    // Neovarch: the app updates from GitHub Releases (quiet check at most once
+    // per 24h, small notice when a newer release exists). The upstream feed
+    // poller stays off; only the version pill needs the desktop version.
+    void refreshDesktopVersion()
+    startNeovarchUpdateWatch({ onOpen: () => openUpdatesWindow('client') })
     // Background MCP health: HTTP/SSE servers only (never spawns stdio),
     // notifies on transitions into needs-auth/error with a Sign in action.
     startMcpHealthChecker()
@@ -104,7 +109,7 @@ export function useDesktopIntegrations({
 
     return () => {
       unsubscribe?.()
-      stopUpdatePoller()
+      stopNeovarchUpdateWatch()
       stopMcpHealthChecker()
     }
   }, [])
