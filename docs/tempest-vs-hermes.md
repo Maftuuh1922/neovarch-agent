@@ -119,10 +119,20 @@ Desainnya ditulis sendiri. Gagasan umumnya (memuat skema alat sesuai kebutuhan) 
 ### 6b. Benchmark live ulang: Hermes vs Tempest F2 vs Tempest diet vs legacy
 
 - 12 Okt 2026 (WIB). Model `claude-haiku-5.5` lewat zRouter, sama untuk semua arm. Maks 25 panggilan, budget 300 dtk, fixture segar per run, check deterministik (pytest + tes tersembunyi / verifikasi brute-force).
-- 7 tugas coding lama × 2 seed + **9 tugas penalaran baru** × 3 seed, plus 9 tugas penalaran × 1 seed dengan `reasoning_effort=high` = 50 sel × 4 arm = **200 run**, total 8542273 runs: 200 token.
+- 7 tugas coding lama × 2 seed + **9 tugas penalaran baru** × 3 seed, plus 9 tugas penalaran × 1 seed dengan `reasoning_effort=high` = 50 sel × 4 arm = **200 run**, total 8.542.273 token (semua arm). Total pembanding di bawah memakai 41 sel effort default (7 coding × 2 seed + 9 penalaran × 3 seed); 9 sel effort=high ditabel terpisah.
 - Tugas penalaran: ksatria/pembohong (instans acak, solusi unik dicek brute force), penjadwalan 7 rapat dengan batasan, peluang (pecahan), debug interval merge (3 bug, tes tersembunyi), debug LRU cache (3 bug), debug dari log tanpa tes (split tagihan), ember air jumlah langkah minimum (BFS), rute terpendek dengan syarat urutan, hitung harga bertingkat (diskon, voucher, PPN, ongkir).
 - 4 arm dari satu sel jalan **bersamaan**, jadi kondisi router sama. Setiap run lewat relay lokal sendiri yang mencatat `usage` provider per panggilan untuk semua arm (Hermes juga; sama persis dengan penghitung sesi Hermes).
 - Hermes @ `835c3dd` dengan toolset terminal/file/todo, memori + background review mati (sama seperti 4b). Tempest F2 = kode main dengan `tempest_prompt_diet: false`. Diet = PR ini, default. Mode effort=high: Neovarch `agent.reasoning_effort: high`, Hermes `reasoning_config={effort: high}`; keduanya terbukti mengirim `reasoning_effort: "high"` (terlihat di log relay). Router tidak mengembalikan teks reasoning, jadi efeknya hanya terlihat dari token output.
+
+![Tempest diet benchmark: lulus, total token, median waktu per run untuk Hermes, Tempest F2, Tempest diet, legacy](assets/tempest-diet-bench.png)
+
+*Grafik: baris atas 7 tugas coding × 2 seed, baris bawah 9 tugas penalaran × 3 seed (effort default). Model `claude-haiku-5.5`, 12 Okt 2026.*
+
+**Batasan (baca dulu):**
+- Model satu saja: `claude-haiku-5.5` lewat zRouter. Hasil bisa beda di model lain.
+- Tugas penalaran terlalu mudah untuk model ini: semua arm 100% (27/27 dan 9/9), jadi tidak membedakan kemampuan penalaran; yang terbukti hanya bahwa diet tidak menurunkan apa pun.
+- Router dipakai bersama oleh 4 arm yang jalan bersamaan, jadi angka waktu hanya indikatif. Angka token (dari `usage` provider) yang bisa dipegang.
+- Sampel kecil: 41 sel effort default + 9 sel effort high; satu kegagalan Hermes (`defect-missing-import` seed 1) sudah cukup menggeser persentase coding.
 
 #### coding, reasoning effort=default, seeds=[0, 1]
 
