@@ -342,10 +342,14 @@ async def search(query: str, cfg_get=None, *, session: str = "", n: int = 6) -> 
     if brave:
         chain.append(("brave", lambda: _brave(brave, query)))
     chain += [("duckduckgo", lambda: _ddg_http(query)), ("bing", lambda: _bing_http(query))]
+    browser_note = ""
     if str(get("web.browser", "auto") or "auto").lower() not in ("off", "never", "false"):
-        chain.append(("browser", lambda: browser_search(query)))
+        if browser_ready():
+            chain.append(("browser", lambda: browser_search(query)))
+        else:  # never block a search on a download: install in the background, use it next time
+            browser_note = start_browser_install()
     chain.append(("wikipedia", lambda: _wikipedia(query)))
-    tried = []
+    tried = [browser_note] if browser_note else []
     for name, fn in chain:
         try:
             res = await fn()
@@ -381,6 +385,14 @@ async def fetch(url: str, *, session: str = "", render: str = "auto", cfg_get=No
         return {**hit, "cached": True}
     get = cfg_get or (lambda k, d=None: d)
     browser_ok = str(get("web.browser", "auto") or "auto").lower() not in ("off", "never", "false")
+    if browser_ok and not browser_ready():
+        browser_ok = False
+        if render == "always" or render == "auto":
+            out_note = start_browser_install()
+        else:
+            out_note = ""
+    else:
+        out_note = ""
     out: dict[str, Any] = {"url": url, "status": 0, "title": "", "text": "", "rendered": False, "error": ""}
     html = ""
     if render != "always":
@@ -406,6 +418,8 @@ async def fetch(url: str, *, session: str = "", render: str = "auto", cfg_get=No
         except Exception as exc:
             if not out["text"]:
                 out["error"] = (out["error"] + "; " if out["error"] else "") + f"render: {type(exc).__name__}: {exc}"[:200]
+    if out_note and (not out["text"] or (html and looks_js_shell(html, out["text"]))):
+        out["note"] = out_note  # the page likely needs JS; the renderer is being installed for next time
     if out["text"] and not out["error"]:
         cache_put(session, key, out)
     return out
@@ -442,6 +456,56 @@ def system_browser() -> str | None:
         if p and os.path.exists(p):
             return p
     return None
+
+
+_install_task: "asyncio.Task | None" = None
+_install_error = ""
+
+
+def _tools_site() -> Path:
+    return tools_dir() / "py"
+
+
+def browser_ready() -> bool:
+    """Playwright importable and a browser to drive (system Chrome/Edge/Chromium or the installed shell)."""
+    import importlib.util
+    import sys
+    site = str(_tools_site())
+    if site not in sys.path and Path(site).is_dir():
+        sys.path.insert(0, site)
+    try:
+        if importlib.util.find_spec("playwright") is None:
+            return False
+    except (ImportError, ValueError):
+        return False
+    if system_browser():
+        return True
+    shells = tools_dir() / "ms-playwright"
+    return shells.is_dir() and any(d.name.startswith("chromium") for d in shells.iterdir())
+
+
+def start_browser_install() -> str:
+    """Kick off the one-time Playwright (+ headless shell) install in the background; a note for the result."""
+    global _install_task
+    if _install_error:
+        return f"browser: pemasangan gagal ({_install_error[:80]})"
+    if _install_task is not None and not _install_task.done():
+        return "browser: sedang dipasang di latar belakang"
+
+    async def go() -> None:
+        global _install_error
+        try:
+            await _ensure_playwright()
+            if not system_browser():
+                await _install_headless_shell()
+        except Exception as exc:  # remembered: no retry storm in this process
+            _install_error = f"{type(exc).__name__}: {exc}"
+
+    try:
+        _install_task = asyncio.get_running_loop().create_task(go())
+    except RuntimeError:
+        return "browser: belum terpasang"
+    return "browser: belum terpasang, dipasang di latar belakang untuk pencarian berikutnya"
 
 
 async def _ensure_playwright() -> Any:
@@ -563,6 +627,8 @@ def format_page(page: dict, query: str, limit: int) -> str:
     flags = [x for x in ("dirender browser" if page.get("rendered") else "", "cache" if page.get("cached") else "") if x]
     if page.get("status"):
         head += f"\nHTTP {page['status']}" + (f" ({', '.join(flags)})" if flags else "")
+    if page.get("note"):
+        head += f"\n({page['note']}; halaman ini mungkin butuh JavaScript)"
     if page.get("error") and not page.get("text"):
         return head + f"\nerror: {page['error']}"
     return head + "\n\n" + smart_clip(page.get("text", ""), query, limit)

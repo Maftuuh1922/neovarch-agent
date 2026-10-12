@@ -117,10 +117,27 @@ async def test_fetch_renders_js_shell_and_caches(monkeypatch):
 
     monkeypatch.setattr(web, "http_get", fake_get)
     monkeypatch.setattr(web, "browser_html", fake_render)
+    monkeypatch.setattr(web, "browser_ready", lambda: True)
     page = await web.fetch("https://spa.example/umk", session="s")
     assert page["rendered"] and "Rp4.482.914" in page["text"]
     again = await web.fetch("https://spa.example/umk", session="s")
     assert again["cached"] and len(gets) == 1
+
+
+async def test_missing_browser_never_blocks_a_search(monkeypatch):
+    started = []
+
+    async def fake_get(url, *, data=None, timeout=20):
+        if "wikipedia" in url:
+            return 200, "application/json", '{"query": {"search": [{"title": "Rafiq Tarar", "snippet": "born"}]}}'
+        return 202, "text/html", ""
+
+    monkeypatch.setattr(web, "http_get", fake_get)
+    monkeypatch.setattr(web, "browser_ready", lambda: False)
+    monkeypatch.setattr(web, "start_browser_install", lambda: started.append(1) or "browser: dipasang")
+    t0 = time.monotonic()
+    res, backend = await web.search("Rafiq Tarar born", lambda k, d=None: d)
+    assert backend == "wikipedia" and started == [1] and time.monotonic() - t0 < 1
 
 
 async def test_web_search_tool_reads_top_pages_in_parallel(monkeypatch, tmp_path):
