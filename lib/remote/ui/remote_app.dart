@@ -3,7 +3,7 @@
 import 'dart:async' show unawaited;
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart' show kDebugMode, LicenseEntryWithLineBreaks, LicenseRegistry;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kDebugMode, kIsWeb, LicenseEntryWithLineBreaks, LicenseRegistry, TargetPlatform;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -18,6 +18,7 @@ import '../appearance.dart';
 import '../l10n/app_language.dart';
 import '../remote_controller.dart';
 import '../saved_desktops.dart';
+import '../tailscale_setup.dart' show TailscalePhone;
 import '../apk_update.dart' show notifyUpdateAvailable;
 import '../changelog.dart' show WhatsNew;
 import '../update_check.dart';
@@ -56,6 +57,11 @@ Future<void> runRemoteApp(
   final desktops = SavedDesktops(prefs)..load();
   final remote = RemoteController(desktops)..updateChecker = UpdateChecker(prefs: prefs);
   remote.onNewUpdate = notifyUpdateAvailable;
+  // Tailscale-first (v1.4.7): with the phone's VPN off, try the LAN first.
+  if (defaultTargetPlatform == TargetPlatform.android && !kIsWeb) {
+    final ts = TailscalePhone();
+    remote.vpnProbe = () async => (await ts.status()).vpn;
+  }
   final look = AppearanceController(prefs);
   final corners = CornerRadiusController(prefs);
   final language = AppLanguageController(prefs);

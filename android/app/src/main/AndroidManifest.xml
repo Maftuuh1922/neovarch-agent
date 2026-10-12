@@ -267,6 +267,12 @@
         <package android:name="org.telegram.messenger" />
         <package android:name="org.telegram.messenger.web" />
         <package android:name="org.thunderdog.challegram" />
+        <!-- Tailscale: the primary remote path to the PC (lib/remote/tailscale_setup.dart) -->
+        <package android:name="com.tailscale.ipn" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="market" />
+        </intent>
         <intent>
             <action android:name="com.instagram.share.ADD_TO_STORY" />
             <data android:mimeType="image/*" />

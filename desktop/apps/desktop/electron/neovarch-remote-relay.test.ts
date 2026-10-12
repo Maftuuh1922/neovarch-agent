@@ -8,7 +8,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { buildPairingUri, createRemoteController } from './neovarch-remote'
-import { DEFAULT_RELAY_URL, DEFAULT_RELAY_URL_BUILTIN, normalizeRelayUrl } from './relay-defaults'
+import { DEFAULT_RELAY_URL, DEFAULT_RELAY_URL_BUILTIN, effectiveRelayUrl, isUsableRelayUrl, normalizeRelayUrl } from './relay-defaults'
 
 const LINK = {
   pc_id: 'hkPbq-MaVpvc2ZsNQZYXL6',
@@ -29,6 +29,15 @@ describe('relay defaults', () => {
     expect(normalizeRelayUrl('r.example.com')).toBe('wss://r.example.com')
     expect(normalizeRelayUrl('ftp://x')).toBeNull()
     expect(normalizeRelayUrl('')).toBeNull()
+  })
+
+  it('v1.4.7: no built-in relay; the never-deployed default counts as "not configured"', () => {
+    expect(DEFAULT_RELAY_URL_BUILTIN).toBe('')
+    expect(isUsableRelayUrl('wss://relay.neovarchlabs.web.id')).toBe(false)
+    expect(isUsableRelayUrl('https://relay.neovarchlabs.web.id/')).toBe(false)
+    expect(effectiveRelayUrl('wss://relay.neovarchlabs.web.id')).toBeNull()
+    expect(effectiveRelayUrl(null)).toBeNull()
+    expect(effectiveRelayUrl('https://relay.mine.test')).toBe('wss://relay.mine.test')
   })
 })
 
@@ -70,26 +79,42 @@ describe('remote controller relay settings', () => {
     return { ctl, dir }
   }
 
-  it('defaults: relay on with the built-in URL, Bluetooth off, no devices yet', () => {
+  it('defaults: no relay configured (stays off), Bluetooth off, no devices yet', () => {
     const { ctl } = makeController((async () => new Response('{}', { status: 404 })) as typeof fetch)
     const s = ctl.status()
-    expect(s.relay.enabled).toBe(true)
-    expect(s.relay.url).toBe(DEFAULT_RELAY_URL)
-    expect(s.relay.state).toBe('off') // remote access itself is off
+    expect(s.relay.configured).toBe(false)
+    expect(s.relay.url).toBe('')
+    expect(s.relay.state).toBe('off')
     expect(s.bluetooth.enabled).toBe(false)
     expect(s.devices).toEqual([])
   })
 
-  it('persists a custom relay URL, rejects a bad one, empty restores the default', async () => {
+  it('a saved setting with the old built-in URL is treated as no relay', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nv-relay-old-'))
+    fs.writeFileSync(path.join(dir, 'remote.json'), JSON.stringify({ relayEnabled: true, relayUrl: 'wss://relay.neovarchlabs.web.id' }))
+    const ctl = createRemoteController({
+      settingsPath: path.join(dir, 'remote.json'),
+      resolveSpawn: async () => ({ command: process.execPath, args: ['-e', ''], env: {} }),
+      currentProfile: () => null,
+      log: () => {},
+      portInUse: async () => false,
+      listProcesses: async () => []
+    })
+    expect(ctl.status().relay.configured).toBe(false)
+  })
+
+  it('persists a custom relay URL, rejects a bad one, empty turns the relay off', async () => {
     const { ctl, dir } = makeController((async () => new Response('{}', { status: 404 })) as typeof fetch)
     let s = await ctl.setRelay({ url: 'https://relay.mine.test' })
     expect(s.relay.url).toBe('wss://relay.mine.test')
+    expect(s.relay.configured).toBe(true)
     expect(JSON.parse(fs.readFileSync(path.join(dir, 'remote.json'), 'utf8')).relayUrl).toBe('wss://relay.mine.test')
     s = await ctl.setRelay({ url: 'ftp://nope' })
     expect(s.error).toMatch(/wss:\/\//)
     expect(s.relay.url).toBe('wss://relay.mine.test')
     s = await ctl.setRelay({ url: '' })
     expect(s.relay.url).toBe(DEFAULT_RELAY_URL)
+    expect(s.relay.configured).toBe(false)
     s = await ctl.setRelay({ enabled: false })
     expect(s.relay.enabled).toBe(false)
     s = await ctl.setBluetooth(true)

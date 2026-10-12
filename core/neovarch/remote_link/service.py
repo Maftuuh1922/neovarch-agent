@@ -2,8 +2,8 @@
 
 Environment (set by the desktop app when it starts the remote gateway)::
 
-    NEOVARCH_RELAY=1|0          relay on/off (default on)
-    NEOVARCH_RELAY_URL=wss://…  relay to use (default: DEFAULT_RELAY_URL)
+    NEOVARCH_RELAY=1|0          relay on/off (default on, but only runs with a relay URL)
+    NEOVARCH_RELAY_URL=wss://…  relay to use (default: none; Tailscale is the primary path)
     NEOVARCH_BT=1|0             Bluetooth on/off (default off)
     NEOVARCH_REMOTE_NAME=…      PC name shown on the phone
 
@@ -31,7 +31,7 @@ from typing import Any
 
 from aiohttp import web
 
-from . import DEFAULT_RELAY_URL
+from . import DEFAULT_RELAY_URL, usable_relay_url
 from .crypto import PROTOCOL, b64d, device_id
 from .peer import PeerLink
 from .relay_client import RelayClient, normalize_relay_url
@@ -52,7 +52,8 @@ class LinkService:
         self.gw = gw
         self.store = store or LinkStore()
         self.relay_enabled = _flag("NEOVARCH_RELAY", True)
-        self.relay_url = normalize_relay_url(os.environ.get("NEOVARCH_RELAY_URL") or DEFAULT_RELAY_URL) or DEFAULT_RELAY_URL
+        # "" = no relay configured: the relay stays off (want_relay below).
+        self.relay_url = usable_relay_url(os.environ.get("NEOVARCH_RELAY_URL") or DEFAULT_RELAY_URL)
         self.bluetooth_enabled = _flag("NEOVARCH_BT", False)
         self.pc_name = (os.environ.get("NEOVARCH_REMOTE_NAME") or socket.gethostname() or "PC Neovarch").strip()[:64]
         self.relay: RelayClient | None = None
@@ -119,10 +120,13 @@ class LinkService:
         if relay_enabled is not None:
             self.relay_enabled = bool(relay_enabled)
         if relay_url is not None:
-            n = normalize_relay_url(relay_url) if relay_url.strip() else DEFAULT_RELAY_URL
-            if not n:
-                raise ValueError("Relay URL harus diawali wss:// atau https://")
-            self.relay_url = n
+            if relay_url.strip():
+                n = normalize_relay_url(relay_url)
+                if not n:
+                    raise ValueError("Relay URL harus diawali wss:// atau https://")
+                self.relay_url = usable_relay_url(n)
+            else:
+                self.relay_url = usable_relay_url(DEFAULT_RELAY_URL)
         if bluetooth_enabled is not None:
             self.bluetooth_enabled = bool(bluetooth_enabled)
         await self._apply()
@@ -163,7 +167,7 @@ class LinkService:
         return {**extra, "device": device["id"], "expires_at": device.get("expires_at"),
                 "idle_days": self.store.idle_days, "pc_id": self.store.pc_id, "pc_pk": self.store.pc_public,
                 "name": self.pc_name, "protocol": PROTOCOL,
-                "relay_url": self.relay_url if self.relay_enabled else None,
+                "relay_url": (self.relay_url or None) if self.relay_enabled else None,
                 "bluetooth": {"address": t["bluetooth"].get("address"), "channel": t["bluetooth"].get("channel"),
                               "uuid": t["bluetooth"].get("uuid")} if self.bluetooth_enabled else None}
 

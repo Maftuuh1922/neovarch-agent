@@ -187,7 +187,7 @@ Try: *"Make a folder called test-neovarch, write a file notes.md with 3 project 
 |---|---|
 | **1. Download** | From [Releases](https://github.com/Maftuuh1922/neovrach_Agent/releases/latest) get `neovarch-agent-android-arm64.apk` (most phones) or `neovarch-agent-android-universal.apk` |
 | **2. Install** | Open the file, allow **install unknown apps**, tap **Install** (it's signed with a test key, so Android may warn) |
-| **3. Network** | Nothing to set up: same Wi-Fi connects directly; away from home the app goes through the free end-to-end-encrypted relay automatically ([how it works / self-host](docs/relay.md)) |
+| **3. Network** | Install [Tailscale](https://tailscale.com/download) on the PC and the phone and sign in with the **same account**: the phone then reaches the PC from anywhere. Without Tailscale it still works on the same Wi-Fi. The app and Pengaturan ▸ Remote show the steps when Tailscale is missing. |
 | **4. On the PC** | **Pengaturan ▸ Remote / Perangkat** (Settings ▸ Remote / Devices) → turn on **Aktifkan akses remote** (Enable remote access) |
 | **5. On the phone** | **Pindai QR dari PC** (Scan QR from PC), or **Masukkan alamat & token** (e.g. `192.168.1.5:9319` + token) → **Hubungkan** (Connect) |
 
@@ -198,7 +198,13 @@ Try: *"Make a folder called test-neovarch, write a file notes.md with 3 project 
 | **Setujui** | Approve risky commands |
 | **PC** | Status, switch or forget the PC |
 
-**Remote dari mana saja (from anywhere):** scan the QR once. The phone tries the LAN first (also works over a phone/PC hotspot without internet), then Bluetooth if you turned it on, then the relay — no extra app, no VPN, no account. The relay only forwards encrypted messages and can be self-hosted for free on Cloudflare (`cd relay && npx wrangler deploy`) or with Docker. See [docs/relay.md](docs/relay.md).
+**Remote dari mana saja (from anywhere) = Tailscale:** scan the QR once. The phone tries the PC's Tailscale address first (`100.x` / MagicDNS, works on mobile data and any Wi-Fi), then the LAN (also over a phone/PC hotspot without internet), then Bluetooth if you turned it on. If Tailscale is missing, the phone's **PC** tab shows **Siapkan Tailscale** (install from Play Store → sign in with the same account as the PC → turn it on → **Coba lagi**) and the PC's **Pengaturan ▸ Remote ▸ Tailscale** shows the install commands for your OS with a **Periksa lagi** button. There is no built-in relay any more; if you run your own ([docs/relay.md](docs/relay.md), e.g. `cd relay && npx wrangler deploy`), paste its `wss://` URL in Pengaturan ▸ Remote ▸ Relay URL.
+
+| PC | Install Tailscale |
+|---|---|
+| Linux (Debian/Ubuntu/Fedora/…) | `curl -fsSL https://tailscale.com/install.sh \| sh` then `sudo tailscale up` |
+| Arch / Omarchy | `sudo pacman -S tailscale && sudo systemctl enable --now tailscaled && sudo tailscale up` |
+| Windows / macOS | Download from <https://tailscale.com/download>, then **Log in** from the tray / menu bar icon |
 
 **Lost your phone?** On the PC open **Remote ▸ Perangkat terpasang** and press **Cabut** (Revoke) next to it, and press **Buat token baru** (Create new token) to cut LAN access for every paired phone. Treat the QR code like a password.
 
@@ -243,7 +249,8 @@ Risky commands (deleting with `rm -rf`, `sudo`, formatting disks, shutting down,
 | No answer, or **HTTP 401** | API key wrong, expired or missing. Run `neovarch setup` and paste a fresh key. |
 | **HTTP 404** from provider | Usually a wrong model name or Base URL. Re-run `neovarch setup`; check with `neovarch config show`. |
 | "Add model" in desktop app doesn't work | Known issue in v1.3.0. Use `neovarch setup` instead. |
-| Phone can't connect | Same Wi-Fi (or both on Tailscale) · desktop app open with **Aktifkan akses remote** on · allow port **9319** in the PC firewall (never open it to the internet) · use the PC's home address (often `192.168.x.x`) · token renewed? scan the new QR. |
+| Phone can't connect | Tailscale on in **both** the phone and the PC, signed in to the **same** account (phone: PC tab ▸ Siapkan Tailscale; PC: Pengaturan ▸ Remote ▸ Tailscale ▸ Periksa lagi) · or same Wi-Fi · desktop app open with **Aktifkan akses remote** on · token renewed? scan the new QR. |
+| Phone can't connect over Tailscale | On the PC run `tailscale status` (must say the PC is online) and `tailscale ip -4` (a `100.x` address). On the phone the Tailscale app must show **Connected** with the same account. After turning Tailscale on at the PC, scan a **new** QR so it carries the PC's Tailscale address first. |
 | Phone connects only over Tailscale, not on the same Wi-Fi | The PC firewall drops port **9319** on the Wi-Fi (Tailscale traffic arrives on `tailscale0`, which is let in). Linux distros with a default-deny firewall (e.g. Omarchy's ufw, Fedora's firewalld): press **Periksa koneksi** in Pengaturan ▸ Remote to open the port for private LAN ranges only (one password prompt), or run `sudo ufw allow in proto tcp from 192.168.0.0/16 to any port 9319`. Windows: accept the firewall prompt (v1.4.7+ adds the rule for every network profile). Guest Wi-Fi with client isolation never works over LAN. |
 | Android won't install the APK | Allow "install unknown apps" for your browser/file manager. If an older APK won't update, uninstall it first. |
 | Linux desktop app won't open | Install GTK 3, NSS, ALSA, libsecret. For the AppImage, `chmod +x` the file first. |

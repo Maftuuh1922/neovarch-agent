@@ -107,7 +107,30 @@ def test_relay_url_normalization_and_default():
     assert normalize_relay_url("ftp://x") is None
     ts = REPO / "desktop" / "apps" / "desktop" / "electron" / "relay-defaults.ts"
     if ts.exists():  # single default, mirrored in the desktop app
-        assert f"'{DEFAULT_RELAY_URL}'" in ts.read_text()
+        assert f"DEFAULT_RELAY_URL_BUILTIN = '{DEFAULT_RELAY_URL}'" in ts.read_text()
+
+
+def test_no_builtin_relay_and_undeployed_default_ignored(monkeypatch):
+    """v1.4.7: Tailscale is primary; the relay only runs with a configured URL."""
+    from neovarch.remote_link import usable_relay_url
+    from neovarch.remote_link.service import LinkService
+
+    assert DEFAULT_RELAY_URL == ""
+    assert usable_relay_url("wss://relay.neovarchlabs.web.id") == ""
+    assert usable_relay_url("https://relay.neovarchlabs.web.id/") == ""
+    assert usable_relay_url("https://relay.mine.test") == "wss://relay.mine.test"
+
+    class _Gw:
+        port = 9319
+
+    monkeypatch.delenv("NEOVARCH_RELAY_URL", raising=False)
+    monkeypatch.setenv("NEOVARCH_RELAY", "1")
+    svc = LinkService(_Gw(), store=object())
+    assert svc.relay_url == ""
+    monkeypatch.setenv("NEOVARCH_RELAY_URL", "wss://relay.neovarchlabs.web.id")
+    assert LinkService(_Gw(), store=object()).relay_url == ""
+    monkeypatch.setenv("NEOVARCH_RELAY_URL", "wss://relay.mine.test")
+    assert LinkService(_Gw(), store=object()).relay_url == "wss://relay.mine.test"
 
 
 # ------------------------------------------------------------------- store --

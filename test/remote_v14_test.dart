@@ -460,13 +460,13 @@ void main() {
   });
 
   group('Pairing routes', () {
-    test('QR with fallback addresses: LAN first, then MagicDNS, then tailnet IP', () {
+    test('QR with fallback addresses: Tailscale first (tailnet IP, MagicDNS), then LAN', () {
       final p = GatewayPairing.parse(jsonEncode({
         'url': 'http://100.101.2.3:9319',
         'token': 't',
         'urls': ['http://100.101.2.3:9319', 'pc.tail1234.ts.net', 'http://192.168.1.20:9319'],
       }))!;
-      expect(p.allUrls, ['http://192.168.1.20:9319', 'http://pc.tail1234.ts.net:9319', 'http://100.101.2.3:9319']);
+      expect(p.allUrls, ['http://100.101.2.3:9319', 'http://pc.tail1234.ts.net:9319', 'http://192.168.1.20:9319']);
       final u = GatewayPairing.parse('neovarch://pair?v=1&url=http%3A%2F%2F192.168.1.20%3A9319&token=t&alt=http%3A%2F%2F100.64.0.7%3A9319')!;
       expect(u.alternates, ['http://100.64.0.7:9319']);
       expect(GatewayPairing.parse(u.toUri())!.alternates, ['http://100.64.0.7:9319']);

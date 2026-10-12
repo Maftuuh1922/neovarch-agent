@@ -13889,6 +13889,7 @@ ipcMain.handle('neovarch:remote:set-relay', (_event, patch) =>
 )
 ipcMain.handle('neovarch:remote:set-bluetooth', (_event, on) => neovarchRemote.setBluetooth(on === true))
 ipcMain.handle('neovarch:remote:revoke-device', (_event, id) => neovarchRemote.revokeDevice(String(id ?? '')))
+ipcMain.handle('neovarch:remote:recheck-tailscale', () => neovarchRemote.recheckTailscale())
 
 function backgroundStatus(): BackgroundStatus {
   return {

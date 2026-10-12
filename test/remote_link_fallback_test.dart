@@ -138,8 +138,8 @@ void main() {
       expect(p.link!.pairCode, 'code123');
       expect(p.link!.bluetooth!.address, 'AA:BB:CC:DD:EE:FF');
       expect(p.link!.bluetooth!.channel, 3);
-      // LAN first, MagicDNS after it
-      expect(p.allUrls, ['http://192.168.1.5:9319', 'http://pc.tail1.ts.net:9319']);
+      // Tailscale first (v1.4.7): MagicDNS before the LAN
+      expect(p.allUrls, ['http://pc.tail1.ts.net:9319', 'http://192.168.1.5:9319']);
       final round = GatewayPairing.parse(p.toUri())!;
       expect(round.link!.pcPk, pk);
 
@@ -152,7 +152,7 @@ void main() {
       const raw = "ClientException with SocketException: Failed host lookup: 'pc.tailfd5434.ts.net' (OS Error: No address associated with hostname, errno = 7), uri=http://pc.tailfd5434.ts.net:9319/api/models/default";
       expect(isNetworkError(raw), isTrue);
       final msg = friendlyRemoteError(raw, relayAvailable: true);
-      expect(msg, startsWith('PC tidak terjangkau lewat Wi-Fi maupun relay.'));
+      expect(msg, startsWith('PC tidak terjangkau lewat Tailscale, Wi-Fi maupun relay.'));
       expect(msg, isNot(contains('Exception')));
       expect(friendlyRemoteError(raw), contains('PC tidak terjangkau'));
     });

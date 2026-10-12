@@ -1,10 +1,16 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import {
   buildPairingUri,
+  createRemoteController,
   decodeSecret,
   FALLBACK_DEVICE_NAME,
   fallbackUrls,
+  orderedPairHosts,
   isTailnetIp,
   lanAddresses,
   mintAccessToken,
@@ -15,6 +21,7 @@ import {
   resolveDeviceName,
   verifyAccessToken
 } from './neovarch-remote'
+import type { TailscaleDetect } from './tailscale-detect'
 
 // Vector produced by the Hermes core's own signer (plugins/dashboard_auth/basic `_sign`):
 // urlsafe_b64encode(json.dumps(payload, separators=(",", ":")) + hmac_sha256(secret, json)).
@@ -97,7 +104,7 @@ describe('neovarch remote token', () => {
     expect(FALLBACK_DEVICE_NAME).toBe('PC Neovarch')
   })
 
-  it('adds Tailscale fallbacks (MagicDNS, then tailnet IP) to the pairing URI', () => {
+  it('Tailscale first (v1.4.7): tailnet IP, MagicDNS, then LAN in the pairing order', () => {
     expect(isTailnetIp('100.64.0.1')).toBe(true)
     expect(isTailnetIp('100.127.255.1')).toBe(true)
     expect(isTailnetIp('100.128.0.1')).toBe(false)
@@ -114,12 +121,58 @@ describe('neovarch remote token', () => {
       docker0: [{ address: '172.17.0.1', family: 'IPv4', internal: false } as never]
     })
     expect(addresses.find(a => a.address === '100.84.12.7')?.kind).toBe('tailscale')
-    const alt = fallbackUrls({ primary: '192.168.1.5', addresses, tailscale: ts, port: 9319 })
-    expect(alt).toEqual(['http://10.0.0.7:9319', 'http://pc-kantor.tail1234.ts.net:9319', 'http://100.84.12.7:9319'])
-    const uri = buildPairingUri({ url: 'http://192.168.1.5:9319', token: 't', name: 'PC', profile: null, alt })
+    expect(orderedPairHosts({ addresses, tailscale: ts, lanPrimary: '192.168.1.5' })).toEqual([
+      '100.84.12.7',
+      'pc-kantor.tail1234.ts.net',
+      '192.168.1.5',
+      '10.0.0.7'
+    ])
+    // Without Tailscale the chosen LAN address stays first.
+    expect(orderedPairHosts({ addresses: addresses.filter(a => a.kind !== 'tailscale'), tailscale: null, lanPrimary: '10.0.0.7' })).toEqual([
+      '10.0.0.7',
+      '192.168.1.5'
+    ])
+    const alt = fallbackUrls({ primary: '100.84.12.7', addresses, tailscale: ts, port: 9319 })
+    expect(alt).toEqual(['http://pc-kantor.tail1234.ts.net:9319', 'http://192.168.1.5:9319', 'http://10.0.0.7:9319'])
+    const uri = buildPairingUri({ url: 'http://100.84.12.7:9319', token: 't', name: 'PC', profile: null, alt })
     const q = new URL(uri.replace('neovarch://', 'http://x/')).searchParams
-    expect(q.get('url')).toBe('http://192.168.1.5:9319')
+    expect(q.get('url')).toBe('http://100.84.12.7:9319')
     expect(q.getAll('alt')).toEqual(alt)
     expect(q.get('token')).toBe('t')
+  })
+
+  it('QR: the Tailscale IP is the first address once Tailscale is up; setup steps when it is not', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nv-ts-'))
+    let detect: TailscaleDetect = { state: 'not-installed', bin: null, backendState: null, dnsName: null, ips: [], account: null }
+
+    const ctl = createRemoteController({
+      settingsPath: path.join(dir, 'remote.json'),
+      resolveSpawn: async () => ({ command: process.execPath, args: ['-e', ''], env: {} }),
+      currentProfile: () => null,
+      log: () => {},
+      portInUse: async () => false,
+      listProcesses: async () => [],
+      fetch: (async () => new Response('{}', { status: 404 })) as typeof fetch,
+      detectTailscale: async () => detect
+    })
+
+    let s = await ctl.recheckTailscale()
+    expect(s.tailscaleSetup?.state).toBe('not-installed')
+    expect(s.tailscaleSetup?.steps.length).toBeGreaterThan(0)
+    expect(s.tailscale).toBeNull()
+
+    detect = {
+      state: 'running',
+      bin: 'tailscale',
+      backendState: 'Running',
+      dnsName: 'pc-kantor.tail1234.ts.net',
+      ips: ['100.84.12.7'],
+      account: 'andi@example.com'
+    }
+    s = await ctl.recheckTailscale()
+    expect(s.tailscaleSetup?.state).toBe('running')
+    expect(s.tailscaleSetup?.steps).toEqual([])
+    expect(s.pairUrl).toBe('http://100.84.12.7:9319')
+    expect(s.altUrls[0]).toBe('http://pc-kantor.tail1234.ts.net:9319')
   })
 })

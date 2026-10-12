@@ -1,6 +1,6 @@
 // What a phone needs to reach the desktop's Neovarch core gateway: the
 // gateway base URL (the HTTP origin that serves `/api/ws`), its auth token,
-// and optional fallback addresses (LAN first, then Tailscale MagicDNS / 100.x). The Neovarch desktop shows this as a
+// and optional fallback addresses (Tailscale 100.x / MagicDNS first, then LAN). The Neovarch desktop shows this as a
 // pairing QR; it can also be typed by hand. Pure Dart.
 //
 // Accepted forms (see docs/remote-protocol.md):
@@ -38,7 +38,7 @@ class GatewayPairing {
 
   const GatewayPairing({required this.url, this.token = '', this.name = '', this.profile, this.headers = const {}, this.alternates = const [], this.link});
 
-  /// [url] first, then the alternates, LAN before Tailscale, no duplicates.
+  /// Every address in connect order: Tailscale first, then LAN, no duplicates.
   List<String> get allUrls => orderedGatewayUrls([url, ...alternates]);
 
   String get displayName => name.trim().isNotEmpty ? name.trim() : (Uri.tryParse(url)?.host ?? url);
@@ -177,13 +177,17 @@ String gatewayRoute(String url) {
   return 'other';
 }
 
-/// LAN first (fastest), then Tailscale MagicDNS, then tailnet IPs, then the
-/// rest; the order within a group is kept and duplicates are dropped.
-List<String> orderedGatewayUrls(Iterable<String> urls) {
+/// Connect order (v1.4.7, Tailscale is the primary path): tailnet IPs
+/// (100.64/10), then the MagicDNS name (*.ts.net), then LAN, then the rest.
+/// With [tailscaleFirst] false (the phone knows its VPN is off) the LAN goes
+/// first and the Tailscale addresses follow. The order within a group is kept
+/// and duplicates are dropped.
+List<String> orderedGatewayUrls(Iterable<String> urls, {bool tailscaleFirst = true}) {
   int rank(String u) {
     final r = gatewayRoute(u);
-    if (r == 'lan') return 0;
-    if (r == 'tailscale') return (Uri.tryParse(u)?.host ?? '').endsWith('.ts.net') ? 1 : 2;
+    final magic = (Uri.tryParse(u)?.host ?? '').endsWith('.ts.net');
+    if (r == 'tailscale') return (tailscaleFirst ? 0 : 1) + (magic ? 1 : 0);
+    if (r == 'lan') return tailscaleFirst ? 2 : 0;
     return 3;
   }
   final seen = <String>{};

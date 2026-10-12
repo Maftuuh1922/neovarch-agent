@@ -496,8 +496,8 @@ void main() {
       expect(g.activeUrl, 'http://127.0.0.1:${mock.port}');
       final learned = await routes.timeout(const Duration(seconds: 5));
       expect(learned, contains('http://pc.tail1234.ts.net:${mock.port}'));
-      // LAN, then MagicDNS, then the tailnet IP
-      expect(g.candidates.indexOf('http://pc.tail1234.ts.net:${mock.port}'), lessThan(g.candidates.indexOf('http://100.101.2.3:${mock.port}')));
+      // v1.4.7 Tailscale first: the tailnet IP, then MagicDNS, then the LAN
+      expect(g.candidates.indexOf('http://100.101.2.3:${mock.port}'), lessThan(g.candidates.indexOf('http://pc.tail1234.ts.net:${mock.port}')));
       await g.close();
     });
 
