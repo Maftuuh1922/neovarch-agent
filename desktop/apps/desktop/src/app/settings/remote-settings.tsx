@@ -323,8 +323,8 @@ export function RemoteSettings() {
 
           <p className={`${CAPTION} mt-3`}>
             Token = kendali penuh atas agen di PC ini. Di Wi‑Fi tanpa enkripsi token bisa disadap; di luar rumah HP
-            memakai relay yang terenkripsi ujung‑ke‑ujung. Izinkan port {status.port} di firewall bila HP tidak bisa
-            terhubung lewat LAN.
+            memakai relay yang terenkripsi ujung‑ke‑ujung. Bila HP hanya bisa lewat Tailscale, firewall PC memblokir
+            port {status.port} di Wi‑Fi: tekan Periksa koneksi untuk membukanya (khusus jaringan lokal).
           </p>
         </>
       )}

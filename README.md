@@ -244,6 +244,7 @@ Risky commands (deleting with `rm -rf`, `sudo`, formatting disks, shutting down,
 | **HTTP 404** from provider | Usually a wrong model name or Base URL. Re-run `neovarch setup`; check with `neovarch config show`. |
 | "Add model" in desktop app doesn't work | Known issue in v1.3.0. Use `neovarch setup` instead. |
 | Phone can't connect | Same Wi-Fi (or both on Tailscale) · desktop app open with **Aktifkan akses remote** on · allow port **9319** in the PC firewall (never open it to the internet) · use the PC's home address (often `192.168.x.x`) · token renewed? scan the new QR. |
+| Phone connects only over Tailscale, not on the same Wi-Fi | The PC firewall drops port **9319** on the Wi-Fi (Tailscale traffic arrives on `tailscale0`, which is let in). Linux distros with a default-deny firewall (e.g. Omarchy's ufw, Fedora's firewalld): press **Periksa koneksi** in Pengaturan ▸ Remote to open the port for private LAN ranges only (one password prompt), or run `sudo ufw allow in proto tcp from 192.168.0.0/16 to any port 9319`. Windows: accept the firewall prompt (v1.4.7+ adds the rule for every network profile). Guest Wi-Fi with client isolation never works over LAN. |
 | Android won't install the APK | Allow "install unknown apps" for your browser/file manager. If an older APK won't update, uninstall it first. |
 | Linux desktop app won't open | Install GTK 3, NSS, ALSA, libsecret. For the AppImage, `chmod +x` the file first. |
 
