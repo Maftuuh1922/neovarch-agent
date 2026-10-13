@@ -209,18 +209,30 @@ class AppearanceController extends ChangeNotifier {
   void _bindGlass() {
     NV.glassStyle = glassStyle;
     NV.liteMode = liteMode;
-    NvGlassFx.reduceTransparency.value = glassStyle == NvGlassStyle.tanpa || liteMode;
+    NvGlassFx.reduceTransparency.value = reduceTransparency;
   }
 
-  /// Turns "Mode ringan" on/off (persisted; every glass widget repaints).
-  void setLiteMode(bool v) {
-    if (v == liteMode) return;
+  /// Whether glass surfaces drop transparency/blur: the "Tanpa" glass style
+  /// (a deliberate choice that stays when Mode ringan goes off) or Mode ringan.
+  bool get reduceTransparency => glassStyle == NvGlassStyle.tanpa || liteMode;
+
+  /// Turns "Mode ringan" on/off: applied app-wide at once (every glass
+  /// widget repaints, no restart) and persisted. The write is awaited so a
+  /// switch-off survives the app being closed right after.
+  Future<void> setLiteMode(bool v) async {
+    if (v == liteMode) {
+      // re-assert the app-wide flags anyway: a stale NV.liteMode (or a
+      // missed write) must never keep the app in the solid look
+      _bindGlass();
+      if (_prefs.getBool(kLite) != v) await _prefs.setBool(kLite, v);
+      return;
+    }
     onBeforeChange?.call();
     liteMode = v;
     _bindGlass();
-    _prefs.setBool(kLite, v);
     revision++;
     notifyListeners();
+    await _prefs.setBool(kLite, v);
   }
 
   void setGlassStyle(NvGlassStyle s) {

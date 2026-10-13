@@ -89,6 +89,19 @@ const enStrings = <String, String>{
   'Panggil agen dengan suara (opsional)': 'Call the agent by voice (optional)',
   'Tampilan': 'Appearance',
   'Tema, aksen, wallpaper, sudut, mode ringan': 'Theme, accent, wallpaper, corners, lite mode',
+  'Mode ringan, tema, aksen, wallpaper, sudut': 'Lite mode, theme, accent, wallpaper, corners',
+  'Mode ringan': 'Lite mode',
+  'Mode ringan aktif': 'Lite mode on',
+  'Matikan': 'Turn off',
+  'Mode ringan aktif. Ketuk untuk mematikan.': 'Lite mode is on. Tap to turn it off.',
+  'Aktif: efek kaca (blur) dimatikan, permukaan solid. Matikan untuk mengembalikan kaca dan blur.':
+      'On: glass effects (blur) are off, surfaces are solid. Turn it off to bring the glass and blur back.',
+  'Matikan efek kaca (blur) supaya aplikasi lebih lancar di HP dengan RAM kecil.':
+      'Turn off glass effects (blur) so the app runs smoother on phones with little RAM.',
+  'HP ini punya RAM {ram}. ': 'This phone has {ram} of RAM. ',
+  'Aktifkan Mode ringan agar aplikasi lebih lancar? Bisa dimatikan lagi di Profil (paling atas).':
+      'Turn on Lite mode so the app runs smoother? You can turn it off again at the top of Profile.',
+  'Aktifkan': 'Turn on',
   'Gaya kaca': 'Glass style',
   'Reguler, bening, gelap, warna, tanpa': 'Regular, clear, dark, tinted, none',
   'Ikon aplikasi': 'App icon',
