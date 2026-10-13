@@ -146,7 +146,10 @@ async def _stream_chat(base_url, api_key, model, messages, tools, on_text, on_re
                 if event.get("error"):
                     raise LLMError(str(event["error"].get("message") if isinstance(event["error"], dict) else event["error"]))
                 if event.get("usage"):
-                    out.usage = event["usage"]
+                    # Merge, never replace: a split stream sends the prompt counts in an early
+                    # chunk and the completion in the last one (see usage_stats.merge_stream_usage).
+                    from neovarch.usage_stats import merge_stream_usage
+                    out.usage = merge_stream_usage(out.usage, event["usage"]) or {}
                 for choice in event.get("choices") or []:
                     delta = choice.get("delta") or {}
                     text = delta.get("content")

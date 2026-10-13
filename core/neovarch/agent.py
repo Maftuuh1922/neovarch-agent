@@ -575,8 +575,10 @@ class Agent:
                 budget.add_usage(comp.usage)
                 self._track_usage(use, comp.usage, ctx_len)
                 if st:
-                    self._turn_prompt += int((comp.usage or {}).get("prompt_tokens") or 0)
-                    self._turn_cached += tempest.cached_tokens(comp.usage)
+                    from neovarch import usage_stats as _us
+                    _n = _us.normalize(comp.usage) or {}
+                    self._turn_prompt += int(_n.get("input") or 0)
+                    self._turn_cached += int(_n.get("cached") or 0)
                 assistant: dict[str, Any] = {"role": "assistant", "content": comp.text, "ts": time.time()}
                 if comp.reasoning:
                     assistant["reasoning"] = comp.reasoning
@@ -808,6 +810,10 @@ class Agent:
         self.store.save(self.rec)
         sent = self._finish_attachments(messages, first_new, final_text, user_text, turn_started)
         elapsed = max(time.monotonic() - started, 1e-6)
+        from neovarch import usage_stats as _us
+        _norm = _us.normalize(usage)
+        if _norm:  # one meaning for every provider shape: prompt = uncached + cache read + cache write
+            usage = {**usage, "prompt_tokens": _norm["input"], "completion_tokens": _norm["output"]}
         out_tokens = int(usage.get("completion_tokens") or 0)
         cache_stats = {}
         if st:
@@ -845,7 +851,8 @@ class Agent:
         from neovarch import usage_stats
         try:
             counts = usage_stats.record(str(endpoint.get("model") or ""), usage,
-                                        provider=str(endpoint.get("provider") or ""))
+                                        provider=str(endpoint.get("provider") or ""),
+                                        session=str(self.rec.get("id") or ""))
         except Exception:  # counting must never break a turn
             counts = None
         if counts is None:

@@ -412,6 +412,11 @@ async def _ask_model(vm: VisionModel, meta: dict, prompt: str, timeout_s: float)
         stream_chat(base_url=vm.base_url, api_key=vm.api_key, model=vm.model, messages=messages,
                     extra_headers=vm.headers or None, verify_ssl=vm.verify_ssl, timeout_s=timeout_s),
         timeout=timeout_s)
+    try:  # the vision model's tokens count too (day / lifetime / model); never breaks a reply
+        from neovarch import usage_stats
+        usage_stats.record(vm.model, comp.usage, provider="vision")
+    except Exception:
+        pass
     text = (comp.text or "").strip()
     if not text:
         raise LLMError("model vision membalas kosong")

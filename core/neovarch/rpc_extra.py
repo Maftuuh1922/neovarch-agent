@@ -164,6 +164,11 @@ async def handle(gw: "Gateway", method: str, p: dict) -> Any:
                                      verify_ssl=ep.get("verify_ssl", True), timeout_s=120)
         except LLMError as exc:
             raise RpcError(-32000, str(exc))
+        try:  # one-shot calls count too (day / lifetime / model)
+            from neovarch import usage_stats
+            usage_stats.record(str(ep["model"] or ""), comp.usage, provider=str(ep.get("provider") or ""))
+        except Exception:
+            pass
         return {"text": comp.text, "model": ep["model"]}
 
     if method == "process.stop":
