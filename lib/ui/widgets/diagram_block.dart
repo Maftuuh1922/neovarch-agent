@@ -1,5 +1,5 @@
-// Live diagram blocks in chat: ```mermaid, ```svg and inline <svg> content
-// render as a picture with a "Pratinjau | Kode" toggle. Rendering happens in
+// Live diagram blocks in chat: ```mermaid, ```svg, inline <svg> content and
+// whole-page ```html documents render as a picture with a "Pratinjau | Kode" toggle. Rendering happens in
 // a small WebView that loads a bundled page (assets/diagram/host.html with a
 // bundled mermaid.min.js), so it works offline. Tap the picture for a
 // fullscreen view with pinch-zoom and pan. If anything goes wrong (no WebView
@@ -31,7 +31,19 @@ DiagramKind? diagramKindFor(String? lang, String code) {
   if (l.isEmpty || l == 'xml' || l == 'html') {
     if (looksLikeSvg(code)) return DiagramKind.svg;
   }
+  // A whole HTML page in a ```html fence (Mode Desain artifacts) previews in a
+  // sandboxed iframe; snippets stay plain code.
+  if (l == 'html' && looksLikeHtmlDocument(code)) return DiagramKind.html;
   return null;
+}
+
+/// A complete HTML document: `<!doctype html>` or `<html` first, `</html>` last.
+bool looksLikeHtmlDocument(String code) {
+  var t = code.trimLeft();
+  t = t.replaceFirst(RegExp(r'^(<!--[\s\S]*?-->\s*)+'), '');
+  final head = t.length > 64 ? t.substring(0, 64).toLowerCase() : t.toLowerCase();
+  return (head.startsWith('<!doctype html') || head.startsWith('<html')) &&
+      code.trimRight().toLowerCase().endsWith('</html>');
 }
 
 /// A whole SVG document (optionally after an XML prolog / comments).

@@ -152,6 +152,9 @@ def system_sections(cfg: dict, cwd: Path, query: str = "", persona: str = "",
     project = context_files(cwd)
     if project:
         parts.append(("project", project))
+    design_ctx = _design_prompt(cwd)
+    if design_ctx:  # Mode Desain: the project's design system rides along for every UI change
+        parts.append(("design", design_ctx))
     home = cfgmod.neovarch_home()
     notes = sorted((home / "memory").glob("*.md")) if (home / "memory").exists() else []
     if notes:
@@ -239,6 +242,14 @@ def platform_prompt(platform: str | None = None) -> str:
             "`chromium --headless=new --window-size=1280,800 --screenshot=/path/shot.png file:///path/index.html` "
             "(or google-chrome / chromium-browser); of the screen: `grim`, `gnome-screenshot -f` or `scrot`. "
             "Then deliver the PNG with `send_file`.")
+
+
+def _design_prompt(cwd: Path) -> str:
+    try:
+        from neovarch import design
+        return design.prompt_section(cwd)
+    except Exception:  # a broken design folder must never break a turn
+        return ""
 
 
 def _skill_hint(query: str, skills: list[dict]) -> str:
@@ -1114,7 +1125,7 @@ class Agent:
         return tools
 
     def _command(self, user_text: str) -> tuple[str, str, str] | None:
-        """Chat commands answered without the model: /undo (and "Pulihkan versi sebelumnya"), /perbaiki, /fix.
+        """Chat commands answered without the model: /undo (and "Pulihkan versi sebelumnya"), /perbaiki, /fix, /desain.
 
         Returns (kind, reply, follow_up_for_the_model_or_empty)."""
         from neovarch import selfedit
@@ -1135,6 +1146,10 @@ class Agent:
             if res.get("ok") and res.get("kind") in ("skill", "config", "persona"):
                 text += " Perubahan langsung berlaku di giliran berikutnya."
             return "undo", text, ""
+        from neovarch import design
+        res = design.command(user_text or "", Path(self.ctx.cwd))
+        if res is not None:
+            return res
         m = selfedit.FIX_COMMAND.match(user_text or "")
         if m:
             from neovarch import diagnose

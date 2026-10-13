@@ -56,6 +56,8 @@ from neovarch import router9
 from neovarch.tools import ToolContext, list_skills, tool_schemas
 
 APPROVAL_TIMEOUT_S = 300
+# Slash commands the agent turn answers (see Agent._command); the desktop sends them as messages.
+CORE_CHAT_COMMANDS = ("desain", "perbaiki", "fix")
 STT_UNAVAILABLE = ("Dikte suara di PC belum tersedia di Neovarch core. Ketik pesan, atau pakai mik di aplikasi HP. "
                    "/ Voice typing on the PC is not available in the Neovarch core yet. Type your message, "
                    "or use the mic in the phone app.")
@@ -512,6 +514,7 @@ class Gateway:
                 "skills": [{"name": s["name"], "description": s["description"]} for s in list_skills()],
                 "commands": [{"name": "new", "description": "Mulai percakapan baru"},
                              {"name": "perbaiki", "description": "Diagnosis & perbaikan diri"},
+                             {"name": "desain", "description": "Mode Desain: brief → design system → pratinjau → kode"},
                              {"name": "undo", "description": "Pulihkan versi sebelumnya"}],
                 "snippets": [], "mentions": [],
                 "models": {"model": ep.get("model") or "", "provider": ep.get("provider") or "", "providers": provs},
@@ -988,6 +991,8 @@ class Gateway:
                                  {"name": "model", "description": "Show the configured model"},
                                  {"name": "perbaiki", "description": "Diagnosis & perbaikan diri / self-diagnose and fix"},
                                  {"name": "fix", "description": "Self-diagnose and fix (sama dengan /perbaiki)"},
+                                 {"name": "desain", "description": "Mode Desain: brief → design system → pratinjau → "
+                                                                   "kode / design mode"},
                                  {"name": "undo", "description": "Pulihkan versi sebelumnya / undo the agent's last change"}],
                     "skills": list_skills()}
         if method == "self.changes":
@@ -1012,6 +1017,18 @@ class Gateway:
             return {"items": self._complete_path(str(p.get("prefix") or p.get("text") or ""))}
         if method == "complete.slash":
             return {"items": []}
+        if method in ("slash.exec", "command.dispatch"):
+            # Core chat commands (/desain, /perbaiki, /fix) are answered by the agent turn itself:
+            # tell the desktop to send the typed line as a normal message to this session.
+            name = str(p.get("name") or "").strip().lower()
+            arg = str(p.get("arg") or "").strip()
+            if not name:
+                name, _, arg = str(p.get("command") or "").lstrip("/").partition(" ")
+                name, arg = name.strip().lower(), arg.strip()
+            if name in CORE_CHAT_COMMANDS:
+                line = f"/{name}" + (f" {arg}" if arg else "")
+                return {"type": "send", "message": line, "display": line}
+            raise RpcError(-32601, f"not a quick/plugin/skill command: /{name}")
         if method == "reload.mcp":
             return {"ok": True, "servers": []}
         # ---- boot / readiness: the renderer asks these before it shows the composer
