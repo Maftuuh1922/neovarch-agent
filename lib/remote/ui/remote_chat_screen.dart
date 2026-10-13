@@ -21,6 +21,7 @@ import '../composer.dart';
 import '../home_widget.dart' show remoteLaunchAction;
 import '../remote_controller.dart';
 import '../remote_gateway.dart';
+import 'chat_focus.dart';
 import 'nv_glass_text.dart';
 import 'glass/backdrop_luminance.dart';
 import 'glass/glass_chat.dart';
@@ -64,12 +65,51 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
   int _seenCount = 0;
   String _seenSig = '';
 
+  // Mode fokus (1.4.8): scrolling down shrinks the header and the bottom
+  // chrome; scrolling up or reaching the top restores them.
+  final _focusTracker = ChatFocusTracker();
+  bool _focusMode = false;
+  /// Padding the list keeps for the floating header (its expanded height +
+  /// the approvals chip). Only grows within a session, so a status line that
+  /// wraps on one step and not the next never makes the list jump.
+  double _headFullH = 0;
+  double _chipH = 0;
+
+  /// The composer chips and the nav pill tuck away only when nobody is typing.
+  bool get _bottomCompact => _focusMode && _lastKb == 0 && !_focus.hasFocus;
+
+  void _setFocusMode(bool v) {
+    if (v == _focusMode) return;
+    if (mounted) setState(() => _focusMode = v);
+    _publishFocus();
+  }
+
+  void _publishFocus() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final v = _bottomCompact;
+      final n = ref.read(chatFocusProvider.notifier);
+      if (n.state != v) n.state = v;
+    });
+  }
+
+  void _onFocusNode() {
+    if (!mounted) return;
+    setState(() {});
+    _publishFocus();
+  }
+
   void _followNewest(RemoteController r) {
     final msgs = r.transcript.messages;
     final key = '${r.storedId}|${r.runtimeId}|${r.opening}';
     if (key != _followKey) {
-      // (re)opened session: land on the newest message
+      // (re)opened session: land on the newest message, full header
       _followKey = key;
+      _focusTracker.reset();
+      if (_focusMode) {
+        _focusMode = false;
+        _publishFocus();
+      }
       _follow = true;
       _unread = 0;
       _seenCount = msgs.length;
@@ -101,7 +141,13 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
   }
 
   void _onScroll() {
-    if (_settling || !_scroll.hasClients) return;
+    if (!_scroll.hasClients) return;
+    final p = _scroll.position;
+    // only the user's own scrolling (drag or its fling) toggles focus mode;
+    // auto-follow and jump-to-latest are programmatic (direction idle)
+    final user = !_settling && p.userScrollDirection != ScrollDirection.idle;
+    if (_focusTracker.update(pixels: p.pixels, maxExtent: p.maxScrollExtent, user: user)) _setFocusMode(_focusTracker.focused);
+    if (_settling) return;
     final near = _near;
     // only the user's own scrolling changes whether we follow
     if (_scroll.position.userScrollDirection != ScrollDirection.idle || near) _follow = near;
@@ -201,6 +247,7 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
     super.initState();
     _input.addListener(_onInput);
     _scroll.addListener(_onScroll);
+    _focus.addListener(_onFocusNode);
     remoteLaunchAction.addListener(_onLaunchAction);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onLaunchAction());
   }
@@ -236,6 +283,7 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
     _input.removeListener(_onInput);
     _input.dispose();
     _scroll.dispose();
+    _focus.removeListener(_onFocusNode);
     _focus.dispose();
     super.dispose();
   }
@@ -432,32 +480,22 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
     // both at once double-counted it and left the composer half a screen
     // above the keyboard (1.4.1 bug). Keep the newest message in view.
     final kb = MediaQuery.viewInsetsOf(context).bottom;
-    if ((kb > 0) != (_lastKb > 0)) WidgetsBinding.instance.addPostFrameCallback((_) => _toBottom());
+    if ((kb > 0) != (_lastKb > 0)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _toBottom());
+      _lastKb = kb;
+      _publishFocus(); // keyboard up: the nav pill and chips stay put
+    }
     _lastKb = kb;
-    return GlassBackdrop(child: Scaffold(
-      resizeToAvoidBottomInset: false,
-      body: Column(children: [
-        if (empty)
-          _MinimalTopBar(
-            onHistory: r.connected ? _sessions : null,
-            onNew: r.connected ? r.newChat : null,
-          )
-        else ...[
-        GlassChatHeader(
-          kicker: 'chat · $pc',
-          title: r.title.isNotEmpty ? r.title : (r.storedId == null ? 'Sesi baru' : 'Percakapan'),
-          online: r.connected,
-          status: '${r.statusLabel}${r.running ? ' · agen bekerja' : ''}${r.transcript.stepLabel != null ? ' · ${r.transcript.stepLabel}' : ''}${r.transcript.contextLabel != null ? ' · ${r.transcript.contextLabel}' : (tps != null ? ' · ${tps.toStringAsFixed(0)} tok/s' : '')}',
-          actions: [
-            GlassHeaderAction(tooltip: 'Riwayat sesi di PC', icon: CupertinoIcons.clock, onPressed: r.connected ? _sessions : null),
-            GlassHeaderAction(tooltip: 'Sesi baru', icon: CupertinoIcons.add, onPressed: r.connected ? r.newChat : null),
-          ],
-        ),
-        ],
-        // 1.4.2: approvals live in Chat. Inline cards for this session sit
-        // above the composer; this pinned glass chip opens the full list.
-        if (r.approvals.isNotEmpty)
-          Padding(
+    if (empty && _focusMode) {
+      _focusMode = false;
+      _focusTracker.reset();
+      _publishFocus();
+    }
+    final compactHeader = _focusMode && !empty;
+    final headPad = empty ? 0.0 : _headFullH + (r.approvals.isNotEmpty ? _chipH : 0);
+    final approvalsChip = r.approvals.isEmpty
+        ? null
+        : Padding(
             padding: EdgeInsets.fromLTRB(16, empty ? 8 : 10, 16, 0),
             child: Center(
               child: NvGlassChip(
@@ -468,21 +506,33 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
                 onTap: widget.onOpenApprovals,
               ),
             ),
+          );
+    final step = r.transcript.stepShort;
+    return GlassBackdrop(child: Scaffold(
+      resizeToAvoidBottomInset: false,
+      body: Column(children: [
+        if (empty)
+          _MinimalTopBar(
+            onHistory: r.connected ? _sessions : null,
+            onNew: r.connected ? r.newChat : null,
           ),
+        if (empty && approvalsChip != null) approvalsChip,
         // Messages run under the composer and the glass nav bar (both are
         // liquid glass), padded so the last message clears them at rest.
         Expanded(
           child: Stack(children: [
             Positioned.fill(
               child: r.opening
-              ? const CenterLoader(label: 'membuka sesi di PC…')
+              ? Padding(padding: EdgeInsets.only(top: headPad), child: const CenterLoader(label: 'membuka sesi di PC…'))
               : msgs.isEmpty
                   ? _empty(context, r)
                   : NotificationListener<ScrollMetricsNotification>(
                     onNotification: _onMetrics,
                     child: BackdropGroup(child: ListView.builder(
                       controller: _scroll,
-                      padding: EdgeInsets.fromLTRB(16, 16, 16, 12 + _dockH),
+                      // the glass header floats over the list (messages
+                      // slide under it in focus mode); pad for its full size
+                      padding: EdgeInsets.fromLTRB(16, 16 + headPad, 16, 12 + _dockH),
                       itemCount: items.length,
                       itemBuilder: (context, i) {
                         final item = items[i];
@@ -550,6 +600,43 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
                 ]),
               ),
             ),
+            if (!empty)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  GlassChatHeader(
+                    kicker: 'chat · $pc',
+                    title: r.title.isNotEmpty ? r.title : (r.storedId == null ? 'Sesi baru' : 'Percakapan'),
+                    online: r.connected,
+                    status: joinStatus(chatStatusSegments(
+                      status: r.statusLabel,
+                      running: r.running,
+                      step: r.transcript.stepLabel,
+                      context: r.transcript.contextLabel,
+                      tokensPerSecond: tps,
+                    )),
+                    compactStatus: r.running ? (step != null ? 'bekerja · $step' : 'bekerja') : null,
+                    compact: compactHeader,
+                    onExpand: () => _setFocusMode(false),
+                    onFullHeight: (h) {
+                      if (h > _headFullH + 0.5 && mounted) setState(() => _headFullH = h);
+                    },
+                    actions: [
+                      GlassHeaderAction(tooltip: 'Riwayat sesi di PC', icon: CupertinoIcons.clock, onPressed: r.connected ? _sessions : null),
+                      GlassHeaderAction(tooltip: 'Sesi baru', icon: CupertinoIcons.add, onPressed: r.connected ? r.newChat : null),
+                    ],
+                  ),
+                  if (approvalsChip != null)
+                    NvSizeReporter(
+                      onHeight: (h) {
+                        if ((h - _chipH).abs() > 0.5 && mounted) setState(() => _chipH = h);
+                      },
+                      child: approvalsChip,
+                    ),
+                ]),
+              ),
           ]),
         ),
       ]),
@@ -639,9 +726,21 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
     // Keyboard open: 8px above the keyboard top (pill hidden).
     final bottom = MediaQuery.paddingOf(context).bottom;
     final kb = MediaQuery.viewInsetsOf(context).bottom;
-    return Padding(
-      key: const ValueKey('chat-composer-dock'),
-      padding: EdgeInsets.fromLTRB(16, 6, 16, (kb > 0 ? kb : bottom) + 8),
+    // Mode fokus: the shell slides its nav pill away, so the composer glides
+    // down into the room the pill had; the chips fold away. Never while the
+    // keyboard is up or the field has focus (see [_bottomCompact]).
+    final compact = _bottomCompact;
+    final navShift = compact ? NavReserveScope.of(context) : 0.0;
+    final dur = MediaQuery.maybeDisableAnimationsOf(context) == true ? Duration.zero : GlassChatHeader.duration;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(end: navShift),
+      duration: dur,
+      curve: Curves.easeOutCubic,
+      builder: (context, shift, child) => Padding(
+        key: const ValueKey('chat-composer-dock'),
+        padding: EdgeInsets.fromLTRB(16, 6, 16, (kb > 0 ? kb : math.max(0.0, bottom - shift)) + 8),
+        child: child,
+      ),
       // themed liquid glass: the field's text / hint follow the glass tone
       child: LiquidGlass(
         key: const ValueKey('chat-composer'),
@@ -651,11 +750,18 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         QueueStrip(queue: r.queue, onAction: r.queueAction, onError: (m) => toast(context, m)),
         AttachmentStrip(items: r.pendingAttachments, onRemove: r.removeAttachment),
-        ComposerChipsRow(
-          r: r,
-          onModel: () => showModelSheet(context, r),
-          onReasoning: () => showReasoningSheet(context, r),
-          onSkills: () => showSkillPicker(context, r),
+        AnimatedSize(
+          duration: dur,
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: compact
+              ? const SizedBox(key: ValueKey('composer-chips-folded'), width: double.infinity)
+              : ComposerChipsRow(
+                  r: r,
+                  onModel: () => showModelSheet(context, r),
+                  onReasoning: () => showReasoningSheet(context, r),
+                  onSkills: () => showSkillPicker(context, r),
+                ),
         ),
         if (_trigger != null && r.composer != null)
           ComposerSuggestionList(items: _suggestions, kind: _trigger!.kind, loading: _sugLoading, onPick: _pick),
@@ -664,7 +770,12 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
             padding: const EdgeInsets.fromLTRB(8, 2, 8, 4),
             child: Text(r.attachNotice!, key: const ValueKey('attach-notice'), style: TextStyle(fontSize: 12, color: NV.muted, height: 1.35)),
           ),
-        const Align(alignment: Alignment.centerLeft, child: ModelChip()),
+        AnimatedSize(
+          duration: dur,
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: compact ? const SizedBox(width: double.infinity) : const Align(alignment: Alignment.centerLeft, child: ModelChip()),
+        ),
         Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
           // "+": uploads, and on a PC with the composer catalog also skills,
           // model, reasoning, mentions, URL and snippets (desktop parity).

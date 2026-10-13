@@ -18,6 +18,7 @@ import '../remote_controller.dart';
 import '../remote_gateway.dart';
 import '../../data/device_tools.dart' show deviceCall;
 import 'remote_approvals_screen.dart' show showApprovalsSheet;
+import 'chat_focus.dart' show chatFocusProvider, NavReserveScope;
 import 'remote_chat_screen.dart';
 import 'remote_kantor_tab.dart';
 import 'remote_pc_screen.dart';
@@ -231,6 +232,11 @@ class _RemoteShellState extends ConsumerState<RemoteShell> with WidgetsBindingOb
     final keyboard = mq.viewInsets.bottom > 0;
     const barH = _barH, gap = _gap;
     final reserve = keyboard ? 0.0 : barH + gap;
+    // Chat "mode fokus" (1.4.8): scrolling down a conversation slides the nav
+    // pill away (the composer glides into its room); scrolling up brings it
+    // back. Only on the Chat tab, never with the keyboard up.
+    final focusHide = index == tabChat && !keyboard && ref.watch(chatFocusProvider);
+    final navDur = MediaQuery.maybeDisableAnimationsOf(context) == true ? Duration.zero : const Duration(milliseconds: 260);
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: (NV.palette.dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark).copyWith(
         statusBarColor: Colors.transparent,
@@ -256,7 +262,11 @@ class _RemoteShellState extends ConsumerState<RemoteShell> with WidgetsBindingOb
                   // one that reserves room for the floating nav bar), not the
                   // shell's own context, or the composer slides under the bar.
                   child: Builder(
-                    builder: (inner) => MediaQuery.removePadding(context: inner, removeTop: !remote.connected, child: themed),
+                    builder: (inner) => MediaQuery.removePadding(
+                      context: inner,
+                      removeTop: !remote.connected,
+                      child: NavReserveScope(reserve: reserve, child: themed),
+                    ),
                   ),
                 ),
               ]),
@@ -270,13 +280,27 @@ class _RemoteShellState extends ConsumerState<RemoteShell> with WidgetsBindingOb
               right: 16,
               bottom: mq.viewPadding.bottom + gap,
               height: barH,
-              child: NvNavBar(
+              child: IgnorePointer(
+                ignoring: focusHide,
+                child: AnimatedSlide(
+                key: const ValueKey('nav-focus-slide'),
+                offset: focusHide ? Offset(0, (mq.viewPadding.bottom + gap + barH) / barH) : Offset.zero,
+                duration: navDur,
+                curve: Curves.easeOutCubic,
+                child: AnimatedOpacity(
+                opacity: focusHide ? 0 : 1,
+                duration: navDur,
+                curve: Curves.easeOutCubic,
+                child: NvNavBar(
                 index: index,
                 onTap: (i) => setState(() => index = i),
                 items: [for (final d in _dest) (d.$1, d.$2, tr(d.$3))],
                 badges: {tabChat: pending},
                 avatars: {tabProfile: ref.watch(profileAvatarProvider)},
                 dots: {if (!remote.connected) tabPc: NV.warn},
+              ),
+              ),
+              ),
               ),
             ),
         ]),
