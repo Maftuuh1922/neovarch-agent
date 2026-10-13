@@ -1,7 +1,7 @@
 // 1.4.4: Profil tab, compact and GitHub-profile-like. Top to bottom:
 // [ProfileHeaderSlot] (photo + name/@login + bio, contribution graph, tech
 // stack), then the settings folded into compact expandable groups: Tampilan
-// (tema, aksen, wallpaper, sudut, mode ringan), Gaya kaca, Ikon aplikasi,
+// (mode ringan first, then tema, aksen, wallpaper, sudut), Gaya kaca, Ikon aplikasi,
 // Teman, then Aplikasi (Tentang aplikasi, Riwayat perubahan).
 //
 // The list reserves room for the floating nav bar (its height + gap + the
@@ -52,6 +52,8 @@ class RemoteProfileScreen extends StatelessWidget {
         padding: EdgeInsets.only(bottom: bottom),
         children: [
           const NvHeader(kicker: 'hp ini', title: 'Profil'),
+          // "Mode ringan aktif · Matikan" (only while it is on)
+          const LiteModeChip(),
           ProfileHeaderSlot(autoLoad: autoLoad),
           const PamerkanButton(),
           const NvSection('pengaturan'),
@@ -81,8 +83,10 @@ class RemoteProfileScreen extends StatelessWidget {
             id: 'appearance',
             icon: CupertinoIcons.paintbrush_fill,
             title: 'Tampilan',
-            subtitle: 'Tema, aksen, wallpaper, sudut, mode ringan',
-            children: [NvAppearanceSection(), SizedBox(height: 12), WallpaperColorsPanel(), SizedBox(height: 12), LiteModePanel()],
+            subtitle: 'Mode ringan, tema, aksen, wallpaper, sudut',
+            // Mode ringan first: easy to find again (and turn off) after the
+            // low-RAM suggestion switched it on.
+            children: [LiteModePanel(), SizedBox(height: 12), NvAppearanceSection(), SizedBox(height: 12), WallpaperColorsPanel()],
           ),
           const ProfileGroup(
             id: 'glass',
