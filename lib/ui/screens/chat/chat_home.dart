@@ -15,6 +15,7 @@ import '../../../models/models.dart';
 import '../../../state/app_controller.dart';
 import '../../../state/chat_controller.dart';
 import '../../../state/voice_service.dart';
+import '../../../remote/ui/dictation_strip.dart';
 import '../../../theme/app_theme.dart';
 import '../../widgets/common.dart';
 import '../../widgets/preview_sheet.dart';
@@ -505,12 +506,24 @@ class _ComposerState extends ConsumerState<Composer> {
     _baseBeforeDictation = _ctl.text.isEmpty ? '' : '${_ctl.text.trimRight()} ';
     await v.startDictation(
       locale: s.sttLocale,
+      rationale: () async => mounted && await micRationale(context),
       onText: (t, fin) {
+        if (!mounted) return;
         _ctl.text = '$_baseBeforeDictation$t';
         _ctl.selection = TextSelection.collapsed(offset: _ctl.text.length);
       },
     );
-    if (v.error != null && mounted) toast(context, v.error!);
+    // failures stay in the dictation strip above the input
+  }
+
+  Future<void> _dictationAction(DictationAction a) async {
+    if (a == DictationAction.retry) {
+      VoiceService.instance.dismissDictationError();
+      await _toggleMic();
+      return;
+    }
+    final ok = await openDictationFix(a);
+    if (!ok && mounted) toast(context, 'Tidak bisa membuka halaman itu di HP ini.');
   }
 
   @override
@@ -542,6 +555,8 @@ class _ComposerState extends ConsumerState<Composer> {
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
                   child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                     if (chat.queue.isNotEmpty) _Queue(chat: chat),
+                    if (canDictate)
+                      DictationStrip(voice: VoiceService.instance, onStop: VoiceService.instance.stopDictation, onAction: _dictationAction),
                     AnimatedSize(
                       duration: const Duration(milliseconds: 180),
                       curve: Curves.easeOutCubic,

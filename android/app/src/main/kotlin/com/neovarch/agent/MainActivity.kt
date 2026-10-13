@@ -46,6 +46,9 @@ import java.util.TimeZone
 class MainActivity : FlutterActivity() {
     private val channelName = "neovarch/device"
     private val permRequests = HashMap<Int, MethodChannel.Result>()
+    // Dictation mic permission (1.4.8): its own map so the result can say
+    // "denied permanently" (Android won't show the dialog again).
+    private val micRequests = HashMap<Int, MethodChannel.Result>()
     private val docRequests = HashMap<Int, MethodChannel.Result>()
     private val uploadRequests = HashMap<Int, MethodChannel.Result>()
     // Multi-select pickers (v1.4.7 multi-lampiran): request code -> (result, max files).
@@ -151,7 +154,57 @@ class MainActivity : FlutterActivity() {
             "intent" to intentOk,
             "vosk" to (java.io.File(d, "am").exists() || java.io.File(d, "conf").exists()),
             "mic" to granted(Manifest.permission.RECORD_AUDIO),
+            "googleApp" to installed("com.google.android.googlequicksearchbox"),
+            "speechServices" to installed("com.google.android.tts"),
         )
+    }
+
+    private fun micPrefs() = getSharedPreferences("neovarch_mic", Context.MODE_PRIVATE)
+
+    /** {granted, rationale, asked}: asked && !rationale && !granted = Android
+     *  will not show the permission dialog again (Settings only). */
+    private fun micPermission(): Map<String, Any> = mapOf(
+        "granted" to granted(Manifest.permission.RECORD_AUDIO),
+        "rationale" to shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO),
+        "asked" to micPrefs().getBoolean("asked", false),
+    )
+
+    private fun installed(pkg: String): Boolean = try {
+        packageManager.getPackageInfo(pkg, 0); true
+    } catch (e: Exception) { false }
+
+    /** Package of the phone's speech recogniser (Settings "voice_recognition_service"),
+     *  else the Google app / Speech Services when installed. */
+    private fun recognizerPackage(): String? {
+        val comp = try {
+            Settings.Secure.getString(contentResolver, "voice_recognition_service")
+        } catch (e: Exception) { null }
+        val fromSettings = comp?.let { ComponentName.unflattenFromString(it)?.packageName }
+        if (!fromSettings.isNullOrEmpty() && installed(fromSettings)) return fromSettings
+        return listOf("com.google.android.googlequicksearchbox", "com.google.android.tts").firstOrNull { installed(it) }
+    }
+
+    /** "install": Play Store / GetApps page of Speech Services by Google.
+     *  "settings": the recogniser app's details page (to give IT the mic),
+     *  else Android's voice input settings, else the store page. */
+    private fun openSpeechServices(kind: String): Boolean {
+        val pkg = "com.google.android.tts"
+        val tries = ArrayList<() -> Intent>()
+        if (kind == "settings") {
+            recognizerPackage()?.let { p ->
+                tries += { Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$p")) }
+            }
+            tries += { Intent(Settings.ACTION_VOICE_INPUT_SETTINGS) }
+        }
+        tries += { Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$pkg")) }
+        tries += { Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$pkg")) }
+        for (t in tries) {
+            try {
+                startActivity(t().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return true
+            } catch (e: Exception) { /* next */ }
+        }
+        return false
     }
 
     private fun speechEmit(method: String, args: Map<String, Any?>) =
@@ -354,6 +407,20 @@ class MainActivity : FlutterActivity() {
             }
             "wakeStatus" -> result.success(NvWakeService.status(this))
             "speechCaps" -> result.success(speechCaps())
+            // Dictation (1.4.8): RECORD_AUDIO state / request with "permanent"
+            // denial, and the Speech Services install / settings page.
+            "micPermission" -> result.success(micPermission())
+            "requestMic" -> {
+                if (granted(Manifest.permission.RECORD_AUDIO)) {
+                    result.success(mapOf("granted" to true, "permanent" to false))
+                } else {
+                    val code = nextCode++
+                    micRequests[code] = result
+                    micPrefs().edit().putBoolean("asked", true).apply()
+                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), code)
+                }
+            }
+            "openSpeechServices" -> result.success(openSpeechServices(call.argument<String>("kind") ?: "install"))
             "recognizeSpeechIntent" -> {
                 val code = nextCode++
                 speechRequests[code] = result
@@ -395,9 +462,22 @@ class MainActivity : FlutterActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        val mic = micRequests.remove(requestCode)
+        if (mic != null) {
+            // Empty results = the request was interrupted (another dialog, the
+            // activity restarted): not granted, and not a permanent denial.
+            val ok = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            val permanent = !ok && grantResults.isNotEmpty() &&
+                !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+            mic.success(mapOf("granted" to ok, "permanent" to permanent))
+            return
+        }
         val r = permRequests.remove(requestCode) ?: return
         val out = HashMap<String, Boolean>()
         for (i in permissions.indices) out[permissions[i]] = grantResults.getOrNull(i) == PackageManager.PERMISSION_GRANTED
+        // interrupted request (empty arrays): report "not granted", not an
+        // empty map that Dart would read as "all granted"
+        if (out.isEmpty()) out["interrupted"] = false
         r.success(out)
     }
 
