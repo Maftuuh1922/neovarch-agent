@@ -86,9 +86,10 @@ def _fuzzy(text: str, old: str, norm) -> list[tuple[int, int, str]]:
 def _reindent(new: str, old: str, file_first: str) -> str:
     """Shift ``new`` by the indentation difference between ``old`` and the file."""
     first_old = next((x for x in old.splitlines() if x.strip()), "")
+    first_new = next((x for x in new.splitlines() if x.strip()), "")
     have, want = _indent(first_old), _indent(file_first)
-    if have == want:
-        return new
+    if have == want or _indent(first_new) != have:
+        return new  # same indent, or new_text already carries its own (e.g. only old_text was dedented)
     out = []
     for line in new.splitlines(keepends=True):
         if not line.strip():

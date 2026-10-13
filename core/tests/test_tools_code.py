@@ -39,6 +39,14 @@ async def test_edit_tolerates_indentation_and_reindents(home, tmp_path):
     assert "        x = 2\n        return x * 10\n" in (tmp_path / "a.py").read_text()
 
 
+async def test_edit_dedented_old_but_indented_new_is_not_shifted_twice(home, tmp_path):
+    (tmp_path / "a.py").write_text(SRC)
+    out = await run_tool("edit_file", {"path": "a.py", "old_text": "x = 1\nreturn x",
+                                       "new_text": "        x = 2\n        return x"}, _ctx(tmp_path))
+    assert out.startswith("edited")
+    assert "    def f(self):\n        x = 2\n        return x\n" in (tmp_path / "a.py").read_text()
+
+
 async def test_edit_tolerates_trailing_whitespace_and_smart_quotes(home, tmp_path):
     (tmp_path / "a.py").write_text("msg = 'hi'   \nprint(msg)\n")
     out = await run_tool("edit_file", {"path": "a.py", "old_text": "msg = \u2018hi\u2019\nprint(msg)",
