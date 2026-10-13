@@ -1,0 +1,131 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=0.25, maximum-scale=8, user-scalable=yes">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; color: #F4F2ED;
+    font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+  #out { display: flex; justify-content: center; align-items: flex-start; padding: 10px; box-sizing: border-box; }
+  #out > svg { max-width: 100%; height: auto; display: block; }
+  body.full #out { min-height: 100vh; align-items: center; }
+  body.full #out > svg { max-width: none; width: auto; }
+  #out > iframe { border: 0; width: 100%; min-height: 100vh; background: #fff; }
+</style>
+<!-- Bundled (offline) mermaid; see assets/diagram/MERMAID_LICENSE.txt -->
+<script src="mermaid.min.js"></script>
+</head>
+<body>
+<div id="out"></div>
+<script>
+  // Neovarch diagram host. Flutter loads this page from the app bundle, then
+  // calls nvRender({kind, code, theme, full}). Results go back over the
+  // `NV` JavaScript channel as JSON: {ready} | {ok, w, h} | {ok:false, error}.
+  function post(o) { try { NV.postMessage(JSON.stringify(o)); } catch (e) {} }
+
+  // Agent-made SVG is untrusted: drop scripts, event handlers and
+  // javascript: links before it touches the DOM.
+  function cleanSvg(text) {
+    var doc = new DOMParser().parseFromString(String(text).trim(), 'image/svg+xml');
+    if (doc.getElementsByTagName('parsererror').length) throw new Error('SVG tidak valid');
+    var svg = doc.documentElement;
+    if (!svg || svg.nodeName.toLowerCase() !== 'svg') throw new Error('bukan SVG');
+    var all = svg.querySelectorAll('*');
+    [svg].concat(Array.prototype.slice.call(all)).forEach(function (el) {
+      var tag = (el.nodeName || '').toLowerCase();
+      if (tag === 'script') { el.parentNode && el.parentNode.removeChild(el); return; }
+      Array.prototype.slice.call(el.attributes || []).forEach(function (a) {
+        var n = a.name.toLowerCase(), v = String(a.value || '').trim().toLowerCase();
+        if (n.indexOf('on') === 0) el.removeAttribute(a.name);
+        if ((n === 'href' || n === 'xlink:href') && v.indexOf('javascript:') === 0) el.removeAttribute(a.name);
+      });
+    });
+    if (!svg.getAttribute('viewBox')) {
+      var w = parseFloat(svg.getAttribute('width')), h = parseFloat(svg.getAttribute('height'));
+      if (w > 0 && h > 0) svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    }
+    return document.importNode(svg, true);
+  }
+
+  function report(full) {
+    var el = document.querySelector('#out > svg, #out > iframe');
+    if (!el) { post({ ok: false, error: 'tidak ada hasil' }); return; }
+    var r = el.getBoundingClientRect();
+    post({ ok: true, w: Math.ceil(r.width), h: Math.ceil(r.height + 20) });
+  }
+
+  function themeVars(t) {
+    return {
+      darkMode: !!t.dark,
+      background: t.bg,
+      fontFamily: 'Inter, system-ui, sans-serif',
+      fontSize: '14px',
+      primaryColor: t.node,
+      primaryTextColor: t.fg,
+      primaryBorderColor: t.accent,
+      secondaryColor: t.node2,
+      secondaryTextColor: t.fg,
+      secondaryBorderColor: t.line,
+      tertiaryColor: t.bg,
+      tertiaryTextColor: t.fg,
+      tertiaryBorderColor: t.line,
+      lineColor: t.line,
+      textColor: t.fg,
+      mainBkg: t.node,
+      nodeBorder: t.accent,
+      clusterBkg: t.bg,
+      clusterBorder: t.line,
+      titleColor: t.fg,
+      edgeLabelBackground: t.bg,
+      noteBkgColor: t.node2,
+      noteTextColor: t.fg,
+      noteBorderColor: t.line,
+      actorBkg: t.node,
+      actorBorder: t.accent,
+      actorTextColor: t.fg,
+      signalColor: t.fg,
+      signalTextColor: t.fg,
+      labelBoxBkgColor: t.node,
+      labelTextColor: t.fg,
+      pie1: t.accent
+    };
+  }
+
+  var seq = 0;
+  async function nvRender(p) {
+    try {
+      document.body.classList.toggle('full', !!p.full);
+      var out = document.getElementById('out');
+      out.innerHTML = '';
+      if (p.kind === 'mermaid') {
+        if (!window.mermaid) throw new Error('mermaid tidak termuat');
+        mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base',
+          themeVariables: themeVars(p.theme || {}), flowchart: { htmlLabels: true, curve: 'basis' } });
+        var id = 'nvd' + (++seq);
+        try {
+          var res = await mermaid.render(id, String(p.code));
+          out.innerHTML = res.svg;
+        } finally {
+          // mermaid leaves its scratch/error nodes in <body> on failure.
+          ['d' + id, id].forEach(function (x) { var n = document.getElementById(x); if (n && !out.contains(n)) n.remove(); });
+        }
+      } else if (p.kind === 'html') {
+        var f = document.createElement('iframe');
+        f.setAttribute('sandbox', 'allow-scripts');
+        f.srcdoc = String(p.code);
+        out.appendChild(f);
+      } else {
+        out.appendChild(cleanSvg(p.code));
+      }
+      requestAnimationFrame(function () { requestAnimationFrame(function () { report(!!p.full); }); });
+    } catch (e) {
+      post({ ok: false, error: String((e && (e.message || e.str)) || e) });
+    }
+  }
+  window.addEventListener('error', function (e) {
+    if (!document.querySelector('#out > *')) post({ ok: false, error: String(e.message || 'error') });
+  });
+  post({ ready: true });
+</script>
+</body>
+</html>

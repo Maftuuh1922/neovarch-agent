@@ -87,6 +87,8 @@ flutter:
     - assets/art/
     - assets/app_icons/
     - assets/office3d/
+    # Diagram previews in chat: host page + bundled mermaid (offline).
+    - assets/diagram/
     - assets/fonts/OFL-Inter.txt
     - assets/fonts/OFL-JetBrainsMono.txt
     - assets/fonts/OFL-InstrumentSerif.txt
