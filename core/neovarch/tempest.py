@@ -286,7 +286,7 @@ def est_tokens(text: str) -> int:
 ROUTINE_EFFORT = {"ultra": "medium", "max": "medium", "xhigh": "medium", "high": "low"}
 FAIL_KINDS = ("verify", "lint", "claim", "ground")
 PLAN_ONCE = ("[Tempest] Rencanakan sekali, di penalaran langkah pertama, dan panggil alat pertama di respons yang sama "
-             "(plan_update hanya untuk tugas >5 langkah, digabung dengan alat lain). Setelah itu eksekusi tanpa "
+             "(alat rencana hanya untuk tugas >5 langkah, digabung dengan alat lain). Setelah itu eksekusi tanpa "
              "merencanakan ulang, kecuali ada kegagalan atau temuan yang mengubah rencana.")
 
 

@@ -133,7 +133,7 @@ async def test_kantor_tool_only_for_the_main_agent(home):
     emp = ToolContext(cwd=home, approve=None, kantor=lambda a: "ok", company=Emp())
     names = {t["function"]["name"] for t in tool_schemas(emp)}
     # send_file: deliver files into the chat; grep/glob come with read_file (read-only search)
-    assert names == {"read_file", "grep", "glob", "office_status", "send_file"}
+    assert names == {"read_file", "grep", "glob", "repo_map", "office_status", "send_file"}
     assert (await run_tool("shell", {"command": "true"}, emp)).startswith("refused")
     assert (await run_tool("kantor", {}, emp)).startswith("refused")
     plain = ToolContext(cwd=home, approve=None)

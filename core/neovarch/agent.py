@@ -78,8 +78,14 @@ Aksi berisiko (menghapus data, mengubah kode, perintah di luar folder kerja, mem
 meminta persetujuan pengguna. Jangan pernah menampilkan API key, token, atau isi .env."""
 
 
-def context_files(cwd: Path, limit: int = 12000) -> str:
-    """Project instructions from AGENTS.md / NEOVARCH.md, git root down to the working folder."""
+CONTEXT_NAMES = ("NEOVARCH.md", ".neovarch/NEOVARCH.md", "AGENTS.md", "CLAUDE.md")
+
+
+def context_files(cwd: Path, limit: int = 12000, home: Path | None = None) -> str:
+    """Project instructions: the user's global ``~/.neovarch/AGENTS.md`` (or NEOVARCH.md), then per folder
+    from the git root down to the working folder the first of NEOVARCH.md, .neovarch/NEOVARCH.md,
+    AGENTS.md, CLAUDE.md (repos written for Codex/Claude Code work as they are). Deeper folders come last,
+    so their rules win."""
     try:
         cwd = Path(cwd).resolve()
         root = next((p for p in (cwd, *cwd.parents) if (p / ".git").exists()), None)
@@ -88,8 +94,16 @@ def context_files(cwd: Path, limit: int = 12000) -> str:
     except (OSError, ValueError):
         return ""
     parts, seen, used = [], set(), 0
-    for d in chain:
-        for name in ("NEOVARCH.md", "AGENTS.md"):
+    try:
+        home = Path(home) if home is not None else cfgmod.neovarch_home()
+    except Exception:
+        home = None
+    dirs: list[tuple[Path, tuple[str, ...]]] = []
+    if home is not None and home.resolve() not in chain:
+        dirs.append((home, ("NEOVARCH.md", "AGENTS.md")))
+    dirs += [(d, CONTEXT_NAMES) for d in chain]
+    for d, names in dirs:
+        for name in names:
             p = d / name
             try:
                 if not p.is_file():
@@ -311,6 +325,7 @@ class Agent:
         # The model request / tool call running right now: Stop cancels it instead
         # of waiting for it to finish (v1.4.7 "Stop benar-benar berhenti").
         self._inflight: asyncio.Task | None = None
+        self._plan_mode = False  # /rencana turn: read-only tools only
 
     def interrupt(self) -> None:
         self.interrupted = True
@@ -405,6 +420,10 @@ class Agent:
             if not vision and any(a.get("kind") == "image" for a in attachments):
                 from neovarch import vision as visionmod  # describe images with a vision fallback model
                 await visionmod.prepare_attachments(cfg, endpoint, user_msg["attachments"], self.emit)
+        self._plan_mode = bool(PLAN_COMMAND.match(user_text or "")) and getattr(self.ctx, "company", None) is None
+        if self._plan_mode:  # /rencana: research + plan only, nothing is changed this turn
+            user_msg["wire_tail"] = ((user_msg.get("wire_tail") or "") + "\n\n" + PLAN_MODE_NOTE).strip()
+            self.emit("status.update", {"kind": "plan", "text": "Mode rencana: hanya membaca, belum mengubah apa pun"})
         if turn_budget.is_continue(user_text) and self.rec.get("last_stop"):
             # "Lanjutkan" after a stopped turn: continue the same job, not start over.
             user_msg["wire_tail"] = ((user_msg.get("wire_tail") or "") + "\n\n" + turn_budget.CONTINUE_NOTE).strip()
@@ -515,6 +534,7 @@ class Agent:
         ledger = scaffold.TurnLedger()
         self.ledger = ledger
         ctx_len = int(cfgmod.get_path(cfg, "model.context_length", 128000) or 128000)
+        self.ctx.llm = self._sub_llm(active, ctx_len)  # `task` sub-agents use the turn's model
         escalation = _escalation_endpoint(cfg)
         stuck_notified = False
         schemas = self._tools()  # includes Tempest's update_plan when on
@@ -734,7 +754,8 @@ class Agent:
                                              "args_text": call.arguments, "preview": _preview(args)})
                     t0 = time.monotonic()
                     if st and st.get("checkpoints") and self._ckpt is None and not self.interrupted \
-                            and not prep.error and prep.name in ("write_file", "edit_file", "shell"):
+                            and not prep.error and not self._plan_mode \
+                            and prep.name in ("write_file", "edit_file", "shell", "apply_patch"):
                         await asyncio.to_thread(self._ckpt_start, st)
                     if self.interrupted:
                         result = "interrupted"
@@ -742,8 +763,13 @@ class Agent:
                         result = prep.error
                     elif proxy_reply is not None:
                         result = proxy_reply
+                    elif self._plan_mode and prep.name not in PLAN_MODE_TOOLS:
+                        result = PLAN_MODE_REFUSE.format(tool=prep.name)
                     elif st and prep.name == "update_plan" and self._progress is not None:
                         result = self._progress.update(args, str(self.rec.get("id") or ""))
+                        self._publish_plan(args)
+                    elif st and prep.name == "apply_patch":
+                        result = await self._checked_patch(args)
                     elif st and prep.name == "session_search" and st.get("session_search"):
                         result = await asyncio.to_thread(tempest_search.run, args, cfgmod.neovarch_home(),
                                                          str(self.rec.get("id") or ""))
@@ -798,6 +824,7 @@ class Agent:
             error = error_info["message"]
         for fut in prefetched.values():  # reads started for calls that never ran (Stop / error)
             fut.cancel()
+        self.ctx.llm = None
         verification = None
         if st:
             verification = tempest_claims.status(harness_verified, verify_failed, ledger, bool(claim_left))
@@ -1105,11 +1132,71 @@ class Agent:
         return (f"rejected: perubahan pada {path} membuat sintaks rusak, file dikembalikan ke isi sebelumnya.\n"
                 f"{err}\nPerbaiki lalu kirim ulang {name}.")
 
+    def _sub_llm(self, endpoint: dict, ctx_len: int):
+        """One silent model call for `task` sub-agents (no streaming to the chat; usage still counted)."""
+        async def call(wire: list[dict], tools: list[dict]) -> Completion:
+            comp = await stream_chat(
+                base_url=endpoint["base_url"], api_key=endpoint["api_key"], model=endpoint["model"],
+                messages=wire, tools=tools or None, extra_headers=endpoint.get("headers") or None,
+                verify_ssl=endpoint.get("verify_ssl", True),
+                reasoning_effort="low" if getattr(self, "_effort", None) else None)
+            try:
+                self._track_usage(endpoint, comp.usage, ctx_len)
+            except Exception:  # accounting must never break a sub-agent
+                pass
+            return comp
+        return call
+
+    def _publish_plan(self, args: dict) -> None:
+        """Tempest update_plan -> the same live checklist plan_update shows (phone + desktop)."""
+        setter = getattr(self.ctx, "set_plan", None)
+        if not callable(setter):
+            return
+        steps = [{"title": str(i.get("text") or "")[:160],
+                  "status": str(i.get("status") or "todo") if i.get("status") in ("todo", "doing", "done") else "todo"}
+                 for i in (args.get("items") or []) if isinstance(i, dict) and str(i.get("text") or "").strip()]
+        if steps:
+            try:
+                setter(steps[:12])
+            except Exception:  # the UI must never break a turn
+                pass
+
+    async def _checked_patch(self, args: dict) -> str:
+        """Tempest: apply_patch, then syntax-check every touched file; any broken file restores ALL of them."""
+        from neovarch import tools_patch
+        from neovarch.tools import _resolve
+        try:
+            changes, _ = tools_patch.plan(str(args.get("patch") or args.get("input") or ""),
+                                          lambda raw: _resolve(self.ctx, raw))
+            before = {p: (p.read_bytes() if p.is_file() else None) for p, _ in changes}
+        except Exception:
+            return await run_tool("apply_patch", args, self.ctx)  # the tool reports the error itself
+        result = await run_tool("apply_patch", args, self.ctx)
+        if not result.startswith("patched"):
+            return result
+        for p, content in changes:
+            err = None if content is None else await asyncio.to_thread(tempest.syntax_error, p)
+            if err:
+                for q, old in before.items():
+                    if old is None:
+                        q.unlink(missing_ok=True)
+                    else:
+                        q.parent.mkdir(parents=True, exist_ok=True)
+                        q.write_bytes(old)
+                return (f"rejected: patch membuat sintaks {p} rusak; semua file dikembalikan.\n{err}\n"
+                        "Perbaiki lalu kirim ulang apply_patch.")
+        for p, old in before.items():
+            self._changed.append(str(p))
+            self._before.setdefault(str(p), old)
+        return result
+
     def _tools(self) -> list[dict]:
         tools = tool_schemas(self.ctx)
         st = getattr(self, "_tempest", None)
         self._deferred: dict[str, dict] = {}
         if st and st.get("progress"):
+            # one plan tool: update_plan (persisted + shown live); plan_update would be a duplicate schema
+            tools = [t for t in tools if (t.get("function") or {}).get("name") != "plan_update"]
             tools = tools + [tempest_progress.SCHEMA]
         if st and st.get("session_search"):
             tools = tools + [tempest_search.SCHEMA]
@@ -1319,6 +1406,16 @@ def _explain(error: str, endpoint: dict, tried: list[str] | None = None) -> str:
     return error
 
 
+PLAN_COMMAND = re.compile(r"^\s*/(?:rencana|plan)\b", re.I)
+PLAN_MODE_TOOLS = frozenset({"read_file", "grep", "glob", "repo_map", "task", "web_search", "web_fetch",
+                             "session_search", "obsidian_search", "obsidian_read", "obsidian_links", "office_status",
+                             "skill", "update_plan", "plan_update", "extra_tool"})
+PLAN_MODE_NOTE = ("[Mode rencana /rencana] Giliran ini HANYA meneliti dan merencanakan: baca kode/web seperlunya "
+                  "(read_file, grep, glob, repo_map, task), lalu tulis rencana bernomor (file yang diubah, langkah, "
+                  "risiko, cara verifikasi) dan simpan dengan alat rencana. Jangan mengubah file atau menjalankan "
+                  "perintah. Akhiri dengan: \"Balas 'lanjut' untuk mengerjakan.\"")
+PLAN_MODE_REFUSE = ("refused: mode rencana (/rencana) hanya membaca; {tool} tidak dijalankan. Tulis rencananya; "
+                    "pengguna membalas 'lanjut' untuk mengerjakan.")
 REWIND_COMMAND = re.compile(r"^\s*/rewind(?:\s+([0-9a-fA-F]{4,40}|last-green))?\s*$")
 
 

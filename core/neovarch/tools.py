@@ -50,6 +50,9 @@ class ToolContext:
     gateway: Any = None
     # Receives the plan_update checklist (the gateway publishes it to the chat).
     set_plan: Callable[[list[dict]], None] | None = None
+    # One model call for read-only sub-agents (``task``): async (messages, tools) -> Completion.
+    # Set by the agent for the duration of a turn; None elsewhere (CLI tools, employees).
+    llm: Callable[[list[dict], list[dict]], Any] | None = None
 
 
 DANGEROUS = [
@@ -120,6 +123,10 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
     command = str(args.get("command") or "").strip()
     if not command:
         return "error: command is required"
+    from neovarch import tools_patch
+    heredoc = tools_patch.from_shell(command)
+    if heredoc is not None:  # Codex-trained models type `apply_patch <<'EOF' ... EOF` into the shell
+        return await tool_apply_patch({"patch": heredoc}, ctx)
     default_timeout = _setting("terminal.timeout", SHELL_DEFAULT_TIMEOUT, 1, SHELL_MAX_TIMEOUT)
     timeout = min(float(args.get("timeout") or default_timeout), SHELL_MAX_TIMEOUT)
     reason = danger_reason(command)
@@ -333,7 +340,8 @@ def _cfg_get():
 # Tools that only read (files, web, notes): Tempest runs several of them from one model message at
 # the same time and never moves their output to a file (they clip themselves in context).
 READ_ONLY_TOOLS = frozenset({"read_file", "grep", "glob", "web_fetch", "web_search", "session_search", "obsidian_search",
-                             "obsidian_read", "obsidian_links", "report_search", "office_status"})
+                             "obsidian_read", "obsidian_links", "report_search", "office_status", "repo_map",
+                             "task"})
 
 
 async def tool_web_fetch(args: dict, ctx: ToolContext) -> str:
@@ -1103,7 +1111,8 @@ def _allowed_builtin(ctx: "ToolContext | None") -> set[str]:
     allowed = company.allowed_tools() if hasattr(company, "allowed_tools") else None
     if allowed:
         allowed = set(allowed) | ({"web_search"} if "web_fetch" in allowed else set()) \
-            | ({"grep", "glob"} if "read_file" in allowed else set()) | ({"shell_job"} if "shell" in allowed else set())
+            | ({"grep", "glob", "repo_map"} if "read_file" in allowed else set()) \
+            | ({"shell_job"} if "shell" in allowed else set()) | ({"apply_patch"} if "edit_file" in allowed else set())
         names &= allowed | {"office_status", "send_file"}
     return names
 
@@ -1130,8 +1139,16 @@ async def run_tool(name: str, args: dict, ctx: ToolContext) -> str:
         return f"error: unknown tool {name}"
     if name not in _allowed_builtin(ctx):
         return f"refused: alat {name} tidak diizinkan untuk agen ini"
+    from neovarch import hooks
+    if hooks.load():
+        blocked = await hooks.pre_tool(name, args, ctx.cwd)
+        if blocked:
+            return blocked
     try:
-        return await entry[0](args, ctx)
+        result = await entry[0](args, ctx)
+        if hooks.load():
+            result = str(result) + await hooks.post_tool(name, args, str(result), ctx.cwd)
+        return result
     except ForeignPathError as exc:
         return f"refused: {exc}"
     except _vault_error() as exc:
@@ -1166,3 +1183,33 @@ def _register_design_tools() -> None:
 
 
 _register_design_tools()
+
+
+async def tool_apply_patch(args: dict, ctx: ToolContext) -> str:
+    """Codex V4A multi-file patch; all or nothing (see neovarch.tools_patch)."""
+    from neovarch import tools_patch
+    patch = args.get("patch") or args.get("input") or args.get("diff") or ""
+    try:
+        changes, summary = tools_patch.plan(str(patch), lambda raw: _resolve(ctx, raw))
+    except tools_patch.PatchError as exc:
+        return f"error: patch not applied (nothing written): {exc}"
+    tools_patch.write(changes)
+    return f"patched {len(summary)} file(s):\n" + "\n".join(summary)
+
+
+async def tool_repo_map(args: dict, ctx: ToolContext) -> str:
+    from neovarch import repomap
+    root = _resolve(ctx, str(args.get("path") or ".")) if args.get("path") else Path(ctx.cwd)
+    budget = max(200, min(int(args.get("budget") or 1500), 8000))
+    return await asyncio.to_thread(repomap.build, root, str(args.get("focus") or ""), budget)
+
+
+def _register_agent_upgrade_tools() -> None:
+    """apply_patch (Codex V4A), repo_map (symbol map), task (parallel read-only sub-agents)."""
+    from neovarch import repomap, subagent, tools_patch
+    TOOLS.setdefault("apply_patch", (tool_apply_patch, tools_patch.SCHEMA))
+    TOOLS.setdefault("repo_map", (tool_repo_map, repomap.SCHEMA))
+    TOOLS.setdefault("task", (subagent.tool_task, subagent.SCHEMA))
+
+
+_register_agent_upgrade_tools()

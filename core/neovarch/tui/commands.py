@@ -12,6 +12,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "reasoning": ("/reasoning [rendah|sedang|tinggi|ultra|mati]", "Atur tingkat penalaran"),
     "skill": ("/skill [nama] [pesan]", "Daftar skill, atau minta agen memakai satu skill"),
     "desain": ("/desain [brief|status|cek|katalog]", "Mode Desain: brief → design system → pratinjau → kode"),
+    "rencana": ("/rencana <tugas>", "Mode rencana: teliti dan susun rencana dulu, belum mengubah file"),
     "stop": ("/stop", "Hentikan giliran yang sedang berjalan"),
     "status": ("/status", "Model, penalaran, koneksi dan sesi"),
     "bukti": ("/bukti [n]", "Buka/tutup bagian Bukti (hasil alat) giliran terakhir"),
@@ -23,7 +24,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
 ALIASES = {
     "new": "baru", "reset": "baru", "clear": "baru",
     "models": "model", "reason": "reasoning", "penalaran": "reasoning", "effort": "reasoning",
-    "skills": "skill", "design": "desain", "batal": "stop", "interrupt": "stop", "hentikan": "stop",
+    "skills": "skill", "design": "desain", "plan": "rencana", "batal": "stop", "interrupt": "stop", "hentikan": "stop",
     "info": "status", "evidence": "bukti", "open": "buka",
     "help": "bantuan", "h": "bantuan", "?": "bantuan",
     "exit": "keluar", "quit": "keluar", "q": "keluar",
