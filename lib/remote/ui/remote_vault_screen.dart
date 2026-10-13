@@ -300,6 +300,13 @@ class _VaultNoteScreenState extends ConsumerState<VaultNoteScreen> {
                           label: const Text('Buka di Obsidian'),
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        key: const ValueKey('local-graph'),
+                        onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => VaultGraphScreen(center: n.path))),
+                        icon: const Icon(CupertinoIcons.circle_grid_hex, size: 18),
+                        label: const Text('Graf lokal'),
+                      ),
                     ]),
                   ),
                   if (n.tags.isNotEmpty)
@@ -338,7 +345,7 @@ class _VaultNoteScreenState extends ConsumerState<VaultNoteScreen> {
 // ------------------------------------------------------------------ graph --
 
 /// Force-directed layout (Fruchterman–Reingold), deterministic seed so the
-/// same vault always draws the same picture. Positions in a unit square.
+/// same vault always draws the same picture. Positions normalised into a unit square.
 Map<String, Offset> layoutGraph(VaultGraph g, {int iterations = 220, int seed = 7}) {
   final ids = [for (final n in g.nodes) n.id];
   final n = ids.length;
@@ -376,8 +383,9 @@ Map<String, Offset> layoutGraph(VaultGraph g, {int iterations = 220, int seed = 
       final c = (const Offset(0.5, 0.5) - pos[id]!) * 0.02;
       final d = disp[id]! + c;
       final len = d.distance;
-      final p = pos[id]! + (len > 0 ? d / len * math.min(len, temp) : Offset.zero);
-      pos[id] = Offset(p.dx.clamp(0.0, 1.0), p.dy.clamp(0.0, 1.0));
+      // no clamping here: clamping every step piled nodes up on the canvas edges;
+      // the result is normalised into the canvas once at the end
+      pos[id] = pos[id]! + (len > 0 ? d / len * math.min(len, temp) : Offset.zero);
     }
     temp = math.max(0.002, temp * 0.97);
   }
@@ -393,38 +401,89 @@ Map<String, Offset> layoutGraph(VaultGraph g, {int iterations = 220, int seed = 
   return {for (final e in pos.entries) e.key: Offset(0.05 + (e.value.dx - minX) / w * 0.9, 0.05 + (e.value.dy - minY) / h * 0.9)};
 }
 
+/// Colour groups — the same colours the PC writes to .obsidian/graph.json.
+Color? vaultKindColor(String kind) => switch (kind) {
+      'project' => const Color(0xFFE5484D),
+      'session' => const Color(0xFF3E9BF7),
+      'file' => const Color(0xFF46A758),
+      'memory' => const Color(0xFFF5A524),
+      'hub' => const Color(0xFFA78BFA),
+      _ => null,
+    };
+
+/// Labels fade in with zoom like Obsidian; well-linked notes earlier; the selected
+/// note and its neighbours always.
+double vaultLabelAlpha(double scale, int degree, bool highlighted) {
+  if (highlighted) return 1;
+  final start = 1.05 - math.min(degree, 24) * 0.025;
+  return ((scale - start) / 0.35).clamp(0.0, 1.0);
+}
+
 class VaultGraphScreen extends ConsumerStatefulWidget {
-  const VaultGraphScreen({super.key});
+  const VaultGraphScreen({super.key, this.center});
+
+  /// Show the local graph of this note (Obsidian's "local graph") instead of the whole vault.
+  final String? center;
   @override
   ConsumerState<VaultGraphScreen> createState() => _VaultGraphScreenState();
 }
 
 class _VaultGraphScreenState extends ConsumerState<VaultGraphScreen> {
+  VaultGraph? _all;
   VaultGraph? _g;
   Map<String, Offset> _pos = const {};
   String? _error;
   String? _selected;
   int _rev = -1;
+  int _depth = 1;
+  final _hidden = <String>{};
+  bool _orphans = true;
+  final _tc = TransformationController();
+  double _scale = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = widget.center;
+    _tc.addListener(() {
+      final s = _tc.value.getMaxScaleOnAxis();
+      if ((s - _scale).abs() > 0.05) setState(() => _scale = s);
+    });
+  }
+
+  @override
+  void dispose() {
+    _tc.dispose();
+    super.dispose();
+  }
+
+  void _relayout() {
+    final all = _all;
+    if (all == null) return;
+    var g = widget.center != null ? all.local(widget.center!, depth: _depth) : all;
+    g = g.filtered(hiddenKinds: _hidden, orphans: _orphans);
+    // Very large vaults: keep the best-connected notes so it stays legible.
+    if (g.nodes.length > 400) {
+      final keep = ([...g.nodes]..sort((a, b) => b.degree.compareTo(a.degree))).take(400).map((n) => n.id).toSet();
+      g = VaultGraph(
+        configured: g.configured,
+        nodes: g.nodes.where((n) => keep.contains(n.id)).toList(),
+        edges: g.edges.where((e) => keep.contains(e.$1) && keep.contains(e.$2)).toList(),
+      );
+    }
+    _g = g;
+    _pos = layoutGraph(g, iterations: g.nodes.length > 150 ? 90 : 220);
+  }
 
   Future<void> _load() async {
     final gw = ref.read(remoteProvider).vault;
     if (gw == null) return;
     try {
-      var g = await gw.vaultGraph();
-      // Very large vaults: keep the best-connected notes so it stays legible.
-      if (g.nodes.length > 400) {
-        final keep = ([...g.nodes]..sort((a, b) => b.degree.compareTo(a.degree))).take(400).map((n) => n.id).toSet();
-        g = VaultGraph(
-          configured: g.configured,
-          nodes: g.nodes.where((n) => keep.contains(n.id)).toList(),
-          edges: g.edges.where((e) => keep.contains(e.$1) && keep.contains(e.$2)).toList(),
-        );
-      }
-      final pos = layoutGraph(g, iterations: g.nodes.length > 150 ? 90 : 220);
+      final all = await gw.vaultGraph();
       if (mounted) {
         setState(() {
-          _g = g;
-          _pos = pos;
+          _all = all;
+          _relayout();
           _error = null;
         });
       }
@@ -442,13 +501,61 @@ class _VaultGraphScreenState extends ConsumerState<VaultGraphScreen> {
     }
     final g = _g;
     final sel = g?.nodes.where((n) => n.id == _selected).firstOrNull;
+    final present = {for (final n in _all?.nodes ?? const <VaultGraphNode>[]) n.kind};
     return Scaffold(
       body: Column(children: [
         NvHeader(
           kicker: g == null ? 'graf' : 'graf · ${g.nodes.length} catatan · ${g.edges.length} tautan',
-          title: 'Graf',
+          title: widget.center != null ? 'Graf lokal' : 'Graf',
           onBack: () => Navigator.of(context).maybePop(),
         ),
+        if (_all != null)
+          SizedBox(
+            height: 40,
+            child: ListView(
+              key: const ValueKey('vault-graph-filters'),
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              children: [
+                if (widget.center != null)
+                  for (final d in const [1, 2, 3])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text('$d lompatan'),
+                        selected: _depth == d,
+                        onSelected: (_) => setState(() {
+                          _depth = d;
+                          _relayout();
+                        }),
+                      ),
+                    ),
+                for (final k in vaultNodeKinds)
+                  if (present.contains(k))
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: FilterChip(
+                        key: ValueKey('vault-kind-$k'),
+                        avatar: CircleAvatar(backgroundColor: vaultKindColor(k) ?? NV.text, radius: 5),
+                        label: Text(vaultKindLabels[k] ?? k),
+                        selected: !_hidden.contains(k),
+                        onSelected: (on) => setState(() {
+                          on ? _hidden.remove(k) : _hidden.add(k);
+                          _relayout();
+                        }),
+                      ),
+                    ),
+                FilterChip(
+                  label: const Text('Yatim'),
+                  selected: _orphans,
+                  onSelected: (on) => setState(() {
+                    _orphans = on;
+                    _relayout();
+                  }),
+                ),
+              ],
+            ),
+          ),
         Expanded(
           child: g == null
               ? (_error != null ? Padding(padding: const EdgeInsets.all(16), child: NvNotice(_error!)) : const CenterLoader(label: 'menyusun graf…'))
@@ -461,16 +568,17 @@ class _VaultGraphScreenState extends ConsumerState<VaultGraphScreen> {
                         child: LayoutBuilder(builder: (context, c) {
                           final size = Size(c.maxWidth, c.maxHeight);
                           return InteractiveViewer(
+                            transformationController: _tc,
                             minScale: 0.5,
-                            maxScale: 6,
-                            boundaryMargin: const EdgeInsets.all(200),
+                            maxScale: 8,
+                            boundaryMargin: const EdgeInsets.all(400),
                             child: GestureDetector(
                               behavior: HitTestBehavior.opaque,
                               onTapUp: (d) => setState(() => _selected = _hit(g, size, d.localPosition)),
                               child: CustomPaint(
                                 key: const ValueKey('vault-graph'),
                                 size: size,
-                                painter: VaultGraphPainter(graph: g, pos: _pos, selected: _selected, palette: NV.palette),
+                                painter: VaultGraphPainter(graph: g, pos: _pos, selected: _selected, palette: NV.palette, scale: _scale),
                               ),
                             ),
                           );
@@ -487,7 +595,8 @@ class _VaultGraphScreenState extends ConsumerState<VaultGraphScreen> {
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                     Text(sel.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.w600, color: NV.text)),
-                    Text(sel.exists ? '${sel.degree} tautan' : 'belum ada (tautan kosong)', style: NV.monoLabel(size: 10)),
+                    Text(sel.exists ? '${vaultKindLabels[sel.kind] ?? 'Catatan'} · ${sel.degree} tautan' : 'belum ada (tautan kosong)',
+                        style: NV.monoLabel(size: 10)),
                   ]),
                 ),
                 if (sel.exists)
@@ -521,11 +630,14 @@ class _VaultGraphScreenState extends ConsumerState<VaultGraphScreen> {
 }
 
 class VaultGraphPainter extends CustomPainter {
-  VaultGraphPainter({required this.graph, required this.pos, required this.selected, required this.palette});
+  VaultGraphPainter({required this.graph, required this.pos, required this.selected, required this.palette, this.scale = 1});
   final VaultGraph graph;
   final Map<String, Offset> pos;
   final String? selected;
   final NvPalette palette;
+
+  /// Current zoom (InteractiveViewer): labels fade in as it grows.
+  final double scale;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -535,23 +647,25 @@ class VaultGraphPainter extends CustomPainter {
       if (a == selected) near.add(b);
       if (b == selected) near.add(a);
     }
+    final focus = selected != null;
     final line = Paint()
-      ..strokeWidth = 1
-      ..color = palette.border;
+      ..strokeWidth = 1 / scale
+      ..color = palette.border.withValues(alpha: focus ? 0.25 : 0.9);
     final hot = Paint()
-      ..strokeWidth = 1.4
+      ..strokeWidth = 1.6 / scale
       ..color = palette.accent;
     for (final (a, b) in graph.edges) {
       if (!pos.containsKey(a) || !pos.containsKey(b)) continue;
       canvas.drawLine(at(a), at(b), (a == selected || b == selected) ? hot : line);
     }
-    final labels = graph.nodes.length <= 60;
     for (final n in graph.nodes) {
       if (!pos.containsKey(n.id)) continue;
       final o = at(n.id);
-      final r = 3.5 + math.min(n.degree, 12) * 0.7;
+      final r = 3.5 + math.sqrt(math.max(n.degree, 0)) * 1.6;
       final isSel = n.id == selected;
-      final fill = Paint()..color = isSel || near.contains(n.id) ? palette.accent : (n.exists ? palette.text.withValues(alpha: 0.85) : palette.faint);
+      final lit = !focus || near.contains(n.id);
+      final base = vaultKindColor(n.kind) ?? (n.exists ? palette.text.withValues(alpha: 0.85) : palette.faint);
+      final fill = Paint()..color = isSel ? palette.accent : base.withValues(alpha: lit ? 1 : 0.2);
       canvas.drawCircle(o, r, fill);
       if (!n.exists) {
         canvas.drawCircle(o, r, Paint()
@@ -559,18 +673,22 @@ class VaultGraphPainter extends CustomPainter {
           ..strokeWidth = 1
           ..color = palette.muted);
       }
-      if (labels || isSel || near.contains(n.id)) {
+      final alpha = graph.nodes.length <= 40 ? 1.0 : vaultLabelAlpha(scale, n.degree, focus && near.contains(n.id));
+      if (alpha > 0.02) {
         final tp = TextPainter(
-          text: TextSpan(text: n.title, style: TextStyle(fontSize: 10.5, color: isSel ? palette.text : palette.muted, fontFamily: NV.sans)),
+          text: TextSpan(
+              text: n.title,
+              style: TextStyle(fontSize: 10.5 / scale.clamp(1.0, 8.0), color: (isSel ? palette.text : palette.muted).withValues(alpha: alpha * (lit ? 1 : 0.3)), fontFamily: NV.sans)),
           textDirection: TextDirection.ltr,
           maxLines: 1,
           ellipsis: '…',
-        )..layout(maxWidth: 120);
-        tp.paint(canvas, o + Offset(-tp.width / 2, r + 3));
+        )..layout(maxWidth: 160);
+        tp.paint(canvas, o + Offset(-tp.width / 2, r + 3 / scale.clamp(1.0, 8.0)));
       }
     }
   }
 
   @override
-  bool shouldRepaint(VaultGraphPainter old) => old.graph != graph || old.pos != pos || old.selected != selected || old.palette != palette;
+  bool shouldRepaint(VaultGraphPainter old) =>
+      old.graph != graph || old.pos != pos || old.selected != selected || old.palette != palette || old.scale != scale;
 }

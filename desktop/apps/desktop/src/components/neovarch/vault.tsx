@@ -5,6 +5,22 @@ import { hermesApi } from '@/api/client'
 import { OBSIDIAN_VAULT_CHANGED_EVENT } from '@/app/settings/obsidian-vault-settings'
 import { cn } from '@/lib/utils'
 
+import {
+  DEFAULT_FILTERS,
+  filterGraph,
+  type GraphFilters,
+  type GraphNodeIn,
+  graphProjects,
+  graphTags,
+  KIND_COLORS,
+  KIND_LABELS,
+  kindOf,
+  localGraph,
+  NODE_KINDS,
+  type NodeKind,
+  VaultForceGraph
+} from './vault-graph'
+
 /** Neovarch's Obsidian vault viewer: file tree, rendered note with clickable
  *  wikilinks + backlinks, "Buka di Obsidian", and a node graph. Read-only —
  *  the agent writes notes through its tools; people edit them in Obsidian. */
@@ -20,6 +36,7 @@ interface TreeNode {
 interface TreeResponse {
   configured: boolean
   detail?: string
+  open_uri?: string
   path?: string
   tree: null | TreeNode
   vault?: string
@@ -38,7 +55,7 @@ interface NoteResponse {
 interface GraphResponse {
   configured: boolean
   edges: { source: string; target: string }[]
-  nodes: { degree: number; exists: boolean; id: string; title: string }[]
+  nodes: GraphNodeIn[]
 }
 
 const api = <T,>(path: string) => hermesApi<T>({ path })
@@ -187,93 +204,121 @@ export function VaultMarkdown({ source, onLink }: { onLink: (target: string) => 
   return <div className="nv-vault-md">{blocks}</div>
 }
 
-// ---- graph: a small force layout computed once per graph ------------------
-function layout(g: GraphResponse, w: number, h: number) {
-  const n = g.nodes.length
-  const pos = g.nodes.map((_, i) => ({
-    x: w / 2 + Math.cos((i / Math.max(n, 1)) * Math.PI * 2) * w * 0.3,
-    y: h / 2 + Math.sin((i / Math.max(n, 1)) * Math.PI * 2) * h * 0.3,
-    vx: 0,
-    vy: 0
-  }))
-  const idx = new Map(g.nodes.map((node, i) => [node.id, i]))
-  const edges = g.edges.map(e => [idx.get(e.source)!, idx.get(e.target)!] as const).filter(([a, b]) => a != null && b != null)
-  const k = Math.sqrt((w * h) / Math.max(n, 1)) * 0.6
+// ---- graph: see vault-graph.tsx (force layout, filters, local graph) -------
 
-  for (let it = 0; it < 220; it++) {
-    for (let a = 0; a < n; a++) {
-      for (let b = a + 1; b < n; b++) {
-        const dx = pos[a]!.x - pos[b]!.x
-        const dy = pos[a]!.y - pos[b]!.y
-        const d2 = Math.max(dx * dx + dy * dy, 0.01)
-        const f = (k * k) / d2
-        pos[a]!.vx += dx * f * 0.02
-        pos[a]!.vy += dy * f * 0.02
-        pos[b]!.vx -= dx * f * 0.02
-        pos[b]!.vy -= dy * f * 0.02
-      }
-    }
-
-    for (const [a, b] of edges) {
-      const dx = pos[a]!.x - pos[b]!.x
-      const dy = pos[a]!.y - pos[b]!.y
-      const d = Math.sqrt(dx * dx + dy * dy) || 1
-      const f = (d - k) * 0.02
-      pos[a]!.vx -= (dx / d) * f * 10
-      pos[a]!.vy -= (dy / d) * f * 10
-      pos[b]!.vx += (dx / d) * f * 10
-      pos[b]!.vy += (dy / d) * f * 10
-    }
-
-    for (const p of pos) {
-      p.vx += (w / 2 - p.x) * 0.005
-      p.vy += (h / 2 - p.y) * 0.005
-      p.x = Math.min(w - 20, Math.max(20, p.x + Math.max(-12, Math.min(12, p.vx))))
-      p.y = Math.min(h - 20, Math.max(20, p.y + Math.max(-12, Math.min(12, p.vy))))
-      p.vx *= 0.6
-      p.vy *= 0.6
-    }
-  }
-
-  return { edges, pos }
-}
-
-export function VaultGraph({
+function GraphPanel({
   graph,
   onOpen,
   selected
 }: {
   graph: GraphResponse
   onOpen: (path: string) => void
-  selected?: null | string
+  selected: null | string
 }) {
-  const W = 760
-  const H = 480
-  const { edges, pos } = useMemo(() => layout(graph, W, H), [graph])
+  const [filters, setFilters] = useState<GraphFilters>(DEFAULT_FILTERS)
+  const [mode, setMode] = useState<'global' | 'local'>('global')
+  const [depth, setDepth] = useState(1)
+  const tags = useMemo(() => graphTags(graph), [graph])
+  const projects = useMemo(() => graphProjects(graph), [graph])
+  const shown = useMemo(() => {
+    const base = mode === 'local' && selected ? localGraph(graph, selected, depth) : graph
 
-  if (!graph.nodes.length) {
-    return <p className="nv-vault-empty">Belum ada catatan untuk digambar.</p>
-  }
+    return filterGraph(base, filters)
+  }, [depth, filters, graph, mode, selected])
+  const set = (patch: Partial<GraphFilters>) => setFilters(f => ({ ...f, ...patch }))
+
+  const toggleKind = (k: NodeKind) =>
+    set({ hiddenKinds: filters.hiddenKinds.includes(k) ? filters.hiddenKinds.filter(x => x !== k) : [...filters.hiddenKinds, k] })
+
+  const present = useMemo(() => new Set(graph.nodes.map(n => kindOf(n))), [graph])
 
   return (
-    <svg className="nv-vault-graph" data-nv-vault-graph={graph.nodes.length} viewBox={`0 0 ${W} ${H}`}>
-      {edges.map(([a, b], i) => (
-        <line className="nv-vault-edge" key={i} x1={pos[a]!.x} x2={pos[b]!.x} y1={pos[a]!.y} y2={pos[b]!.y} />
-      ))}
-      {graph.nodes.map((node, i) => (
-        <g
-          className={cn('nv-vault-node', !node.exists && 'nv-vault-node-ghost', selected === node.id && 'nv-vault-node-on')}
-          key={node.id}
-          onClick={() => node.exists && onOpen(node.id)}
-          transform={`translate(${pos[i]!.x},${pos[i]!.y})`}
+    <div className="nv-vault-graph-panel">
+      <div className="nv-vault-graph-tools" data-nv-vault-graph-tools>
+        <input
+          aria-label="Cari di graf"
+          className="nv-vault-graph-search"
+          onChange={e => set({ query: e.target.value })}
+          placeholder="Cari catatan…"
+          value={filters.query}
+        />
+        <select aria-label="Filter tag" onChange={e => set({ tag: e.target.value || null })} value={filters.tag ?? ''}>
+          <option value="">Semua tag</option>
+          {tags.map(t => (
+            <option key={t} value={t}>
+              #{t}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Filter proyek"
+          onChange={e => set({ project: e.target.value || null })}
+          value={filters.project ?? ''}
         >
-          <circle r={4 + Math.min(node.degree, 10) * 1.2} />
-          <text dy={-10} textAnchor="middle">
-            {node.title}
-          </text>
-        </g>
-      ))}
-    </svg>
+          <option value="">Semua proyek</option>
+          {projects.map(p => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+        <label className="nv-vault-graph-check">
+          <input checked={filters.orphans} onChange={e => set({ orphans: e.target.checked })} type="checkbox" /> Yatim
+        </label>
+        <label className="nv-vault-graph-check">
+          <input checked={filters.unresolved} onChange={e => set({ unresolved: e.target.checked })} type="checkbox" />{' '}
+          Belum ada
+        </label>
+        <div className="nv-vault-graph-mode">
+          <button
+            className={cn(mode === 'global' && 'nv-vault-tab-on')}
+            onClick={() => setMode('global')}
+            type="button"
+          >
+            Global
+          </button>
+          <button
+            className={cn(mode === 'local' && 'nv-vault-tab-on')}
+            data-nv-vault-local
+            disabled={!selected}
+            onClick={() => setMode('local')}
+            title={selected ? 'Graf lokal catatan yang dipilih' : 'Pilih catatan dulu'}
+            type="button"
+          >
+            Lokal
+          </button>
+          {mode === 'local' && (
+            <select aria-label="Kedalaman" onChange={e => setDepth(Number(e.target.value))} value={depth}>
+              <option value={1}>1 lompatan</option>
+              <option value={2}>2 lompatan</option>
+              <option value={3}>3 lompatan</option>
+            </select>
+          )}
+        </div>
+      </div>
+      <div className="nv-vault-graph-legend" data-nv-vault-legend>
+        {NODE_KINDS.filter(k => present.has(k)).map(k => (
+          <button
+            aria-pressed={!filters.hiddenKinds.includes(k)}
+            className={cn('nv-vault-legend-chip', filters.hiddenKinds.includes(k) && 'nv-vault-legend-off')}
+            key={k}
+            onClick={() => toggleKind(k)}
+            type="button"
+          >
+            <span style={{ background: KIND_COLORS[k] ?? 'var(--nv-text-2)' }} />
+            {KIND_LABELS[k]}
+          </button>
+        ))}
+        <span className="nv-vault-graph-count">
+          {shown.nodes.length} catatan · {shown.edges.length} tautan
+        </span>
+      </div>
+      {shown.nodes.length ? (
+        <VaultForceGraph graph={shown} onOpen={onOpen} selected={selected} />
+      ) : (
+        <p className="nv-vault-empty">Tidak ada catatan yang cocok dengan filter.</p>
+      )}
+    </div>
   )
 }
 
@@ -317,6 +362,7 @@ export function NeovarchVaultPage() {
   const [selected, setSelected] = useState<null | string>(null)
   const [view, setView] = useState<'graph' | 'note'>('note')
   const [error, setError] = useState<null | string>(null)
+  const [busy, setBusy] = useState<null | string>(null)
 
   const load = useCallback(async () => {
     try {
@@ -363,14 +409,57 @@ export function NeovarchVaultPage() {
     [note, open]
   )
 
+  const post = useCallback(
+    async (path: string, label: string) => {
+      setBusy(label)
+
+      try {
+        await hermesApi({ body: {}, method: 'POST', path })
+        setError(null)
+        window.dispatchEvent(new CustomEvent(OBSIDIAN_VAULT_CHANGED_EVENT))
+        await load()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      } finally {
+        setBusy(null)
+      }
+    },
+    [load]
+  )
+
+  const localOf = useMemo(
+    () => (graph && note ? localGraph(graph, note.path, 1) : null),
+    [graph, note]
+  )
+
   if (tree && !tree.configured) {
     return (
       <div className="nv-vault nv-vault-unset">
         <h1 className="nv-vault-title">Vault Obsidian</h1>
-        <p className="nv-vault-empty">Belum ada vault. Pilih folder vault di Pengaturan ▸ Memori & Skill ▸ Vault Obsidian.</p>
-        <button className="nv-vault-btn" onClick={() => navigate(VAULT_SETTINGS_ROUTE)} type="button">
-          Buka Pengaturan
-        </button>
+        <p className="nv-vault-empty">
+          Belum ada vault. Buat vault Neovarch (folder Obsidian asli: catatan Markdown, [[wikilink]], .obsidian) — proyek,
+          sesi, dan berkas yang diubah agen langsung jadi catatan yang saling tertaut. Atau pilih folder vault yang sudah ada
+          di Pengaturan ▸ Memori & Skill ▸ Vault Obsidian.
+        </p>
+        {error && (
+          <p className="nv-vault-empty" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="nv-vault-actions">
+          <button
+            className="nv-vault-btn nv-vault-btn-primary"
+            data-nv-vault-init
+            disabled={busy !== null}
+            onClick={() => void post('/api/obsidian/init', 'init')}
+            type="button"
+          >
+            {busy === 'init' ? 'Menyiapkan…' : 'Buat vault Neovarch'}
+          </button>
+          <button className="nv-vault-btn" onClick={() => navigate(VAULT_SETTINGS_ROUTE)} type="button">
+            Buka Pengaturan
+          </button>
+        </div>
       </div>
     )
   }
@@ -381,6 +470,29 @@ export function NeovarchVaultPage() {
         <div className="nv-vault-side-head">
           <span className="nv-vault-kicker">Vault</span>
           <strong>{tree?.vault ?? '…'}</strong>
+          <div className="nv-vault-side-actions">
+            {tree?.open_uri && (
+              <button
+                className="nv-vault-btn nv-vault-btn-sm"
+                data-nv-vault-open-app
+                onClick={() => openExternal(tree.open_uri!)}
+                title="Buka seluruh vault di aplikasi Obsidian"
+                type="button"
+              >
+                Buka di Obsidian
+              </button>
+            )}
+            <button
+              className="nv-vault-btn nv-vault-btn-sm"
+              data-nv-vault-sync
+              disabled={busy !== null}
+              onClick={() => void post('/api/obsidian/sync', 'sync')}
+              title="Tulis ulang catatan proyek & sesi dari riwayat obrolan"
+              type="button"
+            >
+              {busy === 'sync' ? 'Menyinkronkan…' : 'Sinkronkan'}
+            </button>
+          </div>
         </div>
         <div className="nv-vault-tabs">
           <button className={cn(view === 'note' && 'nv-vault-tab-on')} onClick={() => setView('note')} type="button">
@@ -408,7 +520,12 @@ export function NeovarchVaultPage() {
             </button>
           </div>
         )}
-        {view === 'graph' && graph && <VaultGraph graph={graph} onOpen={p => void open(p)} selected={selected} />}
+        {view === 'graph' && graph && !graph.nodes.length && (
+          <p className="nv-vault-empty">Belum ada catatan untuk digambar.</p>
+        )}
+        {view === 'graph' && graph && graph.nodes.length > 0 && (
+          <GraphPanel graph={graph} onOpen={p => void open(p)} selected={selected} />
+        )}
         {view === 'note' && !note && <p className="nv-vault-empty">Pilih catatan di kiri, atau buka tab Graf.</p>}
         {view === 'note' && note && (
           <article className="nv-vault-note" data-nv-vault-open={note.path}>
@@ -429,6 +546,12 @@ export function NeovarchVaultPage() {
               </button>
             </header>
             <VaultMarkdown onLink={openLink} source={note.content} />
+            {localOf && localOf.nodes.length > 1 && (
+              <section className="nv-vault-local" data-nv-vault-localgraph>
+                <h2>Graf lokal</h2>
+                <VaultForceGraph compact graph={localOf} onOpen={p => void open(p)} selected={note.path} />
+              </section>
+            )}
             <footer className="nv-vault-backlinks">
               <h2>Backlink ({note.backlinks.length})</h2>
               {note.backlinks.length === 0 && <p className="nv-vault-empty">Belum ada catatan yang menautkan ke sini.</p>}

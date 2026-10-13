@@ -2289,7 +2289,9 @@ def build_app(gw: Gateway) -> web.Application:
         vault, err = _vault_or_error()
         if err:
             return web.json_response({"configured": False, "tree": None, "detail": err})
-        return web.json_response({"configured": True, "vault": vault.name, "path": str(vault), "tree": obsidian.tree(vault)})
+        from neovarch import vault_sync
+        return web.json_response({"configured": True, "vault": vault.name, "path": str(vault), "tree": obsidian.tree(vault),
+                                  "open_uri": vault_sync.vault_uri(vault)})
 
     async def vault_note(request):
         from neovarch import obsidian
@@ -2325,6 +2327,35 @@ def build_app(gw: Gateway) -> web.Application:
         q = request.query.get("q") or ""
         return web.json_response({"results": obsidian.search(vault, q, 30) if q.strip() else []})
 
+    async def vault_init(request):
+        """Settings ▸ Vault Obsidian ▸ Siapkan vault: create/link the vault, zip backup, .obsidian,
+        agent memory + past chats as notes. Non-destructive (only adds files)."""
+        from neovarch import obsidian, vault_sync
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            res = await asyncio.to_thread(vault_sync.init, str((body or {}).get("path") or "") or None)
+        except (obsidian.VaultError, OSError) as exc:
+            return web.json_response({"detail": str(exc)}, status=400)
+        gw.broadcast_event("vault.changed", None, {"init": True})
+        return web.json_response(res)
+
+    async def vault_sync_now(_):
+        from neovarch import obsidian, vault_sync
+        vault, err = _vault_or_error()
+        if err:
+            return web.json_response({"detail": err}, status=409)
+        try:
+            res = await asyncio.to_thread(vault_sync.migrate, vault)
+        except (obsidian.VaultError, OSError) as exc:
+            return web.json_response({"detail": str(exc)}, status=400)
+        gw.broadcast_event("vault.changed", None, {"sync": True})
+        return web.json_response(res)
+
+    r.add_post("/api/obsidian/init", vault_init)
+    r.add_post("/api/obsidian/sync", vault_sync_now)
     r.add_get("/api/obsidian/tree", vault_tree)
     r.add_get("/api/obsidian/note", vault_note)
     r.add_get("/api/obsidian/graph", vault_graph)

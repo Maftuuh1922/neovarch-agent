@@ -20,6 +20,8 @@ from neovarch import config as cfgmod
 from neovarch.paths import check_path, is_foreign_path
 
 SKIP_DIRS = {".obsidian", ".trash", ".git", "node_modules"}
+# graph node kinds: notes Neovarch keeps (frontmatter ``neovarch:``) + plain notes
+NODE_KINDS = {"hub", "project", "session", "file", "memory", "note"}
 MAX_NOTE_BYTES = 2_000_000
 _WIKILINK = re.compile(r"\[\[([^\]|#^]+)(?:[#^][^\]|]*)?(?:\|[^\]]*)?\]\]")
 _TAG = re.compile(r"(?:(?<=\s)|^)#([A-Za-z0-9_/\-]*[A-Za-z_/\-][A-Za-z0-9_/\-]*)")
@@ -330,7 +332,14 @@ def relevant_notes(vault: Path, text: str, limit: int = 3, max_chars: int = 1500
             text_ = _read(safe_path(vault, path))
         except (OSError, VaultError):
             continue
-        out.append({"path": path, "content": text_[:max_chars]})
+        item = {"path": path, "content": text_[:max_chars]}
+        try:  # backlinks as context: which notes point here
+            back = [b["title"] for b in links(vault, path)["backlinks"]][:8]
+        except (OSError, VaultError):
+            back = []
+        if back:
+            item["content"] += "\nBacklinks: " + ", ".join(f"[[{b}]]" for b in back)
+        out.append(item)
     return out
 
 
@@ -400,15 +409,24 @@ def graph(vault: Path, limit: int = 2000) -> dict[str, Any]:
         rel = rel_of(vault, p)
         by_stem.setdefault(p.stem.lower(), rel)
         by_path[rel[:-3].lower()] = rel
-    nodes: dict[str, dict] = {rel_of(vault, p): {"id": rel_of(vault, p), "title": p.stem, "exists": True, "degree": 0}
-                              for p in notes}
+    nodes: dict[str, dict] = {}
+    texts: dict[str, str] = {}
+    for p in notes:
+        rel = rel_of(vault, p)
+        try:
+            texts[rel] = _read(p)
+        except OSError:
+            texts[rel] = ""
+        fm, _, _ = split_frontmatter(texts[rel])
+        kind = str(fm.get("neovarch") or "note")
+        nodes[rel] = {"id": rel, "title": p.stem, "exists": True, "degree": 0,
+                      "kind": kind if kind in NODE_KINDS else "note",
+                      "tags": note_tags(texts[rel]), "folder": rel.rsplit("/", 1)[0] if "/" in rel else "",
+                      "project": str(fm.get("project")) if fm.get("project") else (p.stem if kind == "project" else None)}
     edges: set[tuple[str, str]] = set()
     for p in notes:
         src = rel_of(vault, p)
-        try:
-            text = _read(p)
-        except OSError:
-            continue
+        text = texts.get(src, "")
         for raw in _WIKILINK.findall(text):
             dst = _resolve_target(raw, by_stem, by_path)
             if dst is None:
@@ -416,7 +434,8 @@ def graph(vault: Path, limit: int = 2000) -> dict[str, Any]:
                 if not name:
                     continue
                 dst = f"?{name}"
-                nodes.setdefault(dst, {"id": dst, "title": name, "exists": False, "degree": 0})
+                nodes.setdefault(dst, {"id": dst, "title": name, "exists": False, "degree": 0, "kind": "unresolved",
+                                       "tags": [], "folder": "", "project": None})
             if dst != src and (src, dst) not in edges:
                 edges.add((src, dst))
     for s, d in edges:

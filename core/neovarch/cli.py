@@ -394,11 +394,44 @@ def build_parser() -> argparse.ArgumentParser:
     u = sub.add_parser("uninstall", help="remove Neovarch (only ~/.neovarch)")
     u.add_argument("-y", "--yes", action="store_true")
     sub.add_parser("desktop", help="open the desktop app")
+    va = sub.add_parser("vault", help="the Obsidian vault: status, init (create/migrate), sync, open")
+    va.add_argument("action", nargs="?", default="status", choices=["status", "init", "sync", "open"])
+    va.add_argument("path", nargs="?", default="", help="init: vault folder (default: saved vault or ~/Neovarch Vault)")
+    va.add_argument("--json", action="store_true")
     rw = sub.add_parser("rewind", help="Tempest: restore files to a shadow checkpoint (git history untouched)")
     rw.add_argument("ref", nargs="?", default="last-green", help="last-green (default) or a checkpoint sha")
     rw.add_argument("--list", action="store_true", help="list checkpoints for this folder")
     rw.add_argument("--dir", default="", help="project folder (default: current directory)")
     return p
+
+
+def cmd_vault(args) -> int:
+    import json as _json
+
+    from neovarch import obsidian, vault_sync
+    try:
+        if args.action == "init":
+            res = vault_sync.init(args.path or None)
+        elif args.action == "sync":
+            vault = obsidian.require_vault()
+            res = vault_sync.migrate(vault)
+        elif args.action == "open":
+            vault = obsidian.require_vault()
+            res = {"vault": str(vault), "open_uri": vault_sync.vault_uri(vault)}
+            import webbrowser
+            res["opened"] = bool(webbrowser.open(res["open_uri"]))
+        else:
+            res = {**obsidian.status(), "autonotes": vault_sync.autonotes_enabled()}
+    except obsidian.VaultError as exc:
+        print(f"vault: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(_json.dumps(res, ensure_ascii=False, indent=1))
+        return 0
+    for k, v in res.items():
+        if k != "status":
+            print(f"{k}: {v}")
+    return 0
 
 
 def cmd_rewind(args) -> int:
@@ -452,6 +485,8 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(cmd_desktop(args))
     if args.cmd == "rewind":
         raise SystemExit(cmd_rewind(args))
+    if args.cmd == "vault":
+        raise SystemExit(cmd_vault(args))
     if args.cmd == "update":
         print(f"Update Neovarch by re-running its installer:\n  curl -fsSL {INSTALLER}.sh | sh\n  irm {INSTALLER}.ps1 | iex")
         return

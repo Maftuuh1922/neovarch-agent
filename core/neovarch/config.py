@@ -22,6 +22,7 @@ Shape (all keys optional)::
     memory:
       obsidian_vault: ""            # folder of an Obsidian vault used as long-term memory
       obsidian_enabled: true        # false = keep the path but stop using the vault
+      vault_autonotes: true         # keep projects, sessions and changed files as linked notes under Neovarch/
     appearance:
       accent: "#EE1C1C"             # accent colour chosen at first run (desktop + phone)
       base: dark                    # dark | light
@@ -66,7 +67,7 @@ DEFAULTS: dict[str, Any] = {
     "display": {"show_reasoning": True},
     "terminal": {"cwd": "", "timeout": 60},
     "file_read_max_chars": 20000,
-    "memory": {"obsidian_vault": "", "obsidian_enabled": True},
+    "memory": {"obsidian_vault": "", "obsidian_enabled": True, "vault_autonotes": True},
     "appearance": {"accent": "#EE1C1C", "base": "dark"},
     # Remote HP: a paired phone not seen for this many days is unpaired (0 = never).
     "remote": {"pairing_idle_days": 30},
