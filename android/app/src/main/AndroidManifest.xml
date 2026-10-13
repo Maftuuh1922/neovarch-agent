@@ -247,6 +247,9 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- dictation: the speech recogniser apps (status strip "Pasang/Buka Speech Services") -->
+        <package android:name="com.google.android.tts" />
+        <package android:name="com.google.android.googlequicksearchbox" />
         <!-- chat dictation fallback when no RecognitionService exists (many Xiaomi phones) -->
         <intent>
             <action android:name="android.speech.action.RECOGNIZE_SPEECH" />

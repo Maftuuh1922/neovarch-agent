@@ -19,9 +19,11 @@ import '../../ui/widgets/common.dart';
 import '../agent_identity.dart';
 import '../composer.dart';
 import '../home_widget.dart' show remoteLaunchAction;
+import '../l10n/strings.dart';
 import '../remote_controller.dart';
 import '../remote_gateway.dart';
 import 'chat_focus.dart';
+import 'dictation_strip.dart';
 import 'nv_glass_text.dart';
 import 'glass/backdrop_luminance.dart';
 import 'glass/glass_chat.dart';
@@ -45,7 +47,6 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
   /// Height of the floating dock (approvals + composer) over the messages.
   double _dockH = 0;
   double _lastKb = 0;
-  bool _dictating = false;
   /// Message ids already on screen; ids that arrive later play the glass
   /// "materialize" entrance once ([_fresh]).
   final _known = <String>{};
@@ -271,7 +272,7 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
       return;
     }
     remoteLaunchAction.value = null;
-    if (!_dictating) _dictate();
+    if (!VoiceService.instance.listening) _dictate();
   }
 
   @override
@@ -397,48 +398,44 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
 
   /// Mic: Android SpeechRecognizer (speech_to_text), Indonesian or English;
   /// without one (many Xiaomi phones) the system speech dialog, then the
-  /// offline Vosk model (English). Partial words fill the field, the final
-  /// result is sent to the agent; every failure shows a message.
-  /// Long-press switches ID ↔ EN.
+  /// offline Vosk model (English). Partial words show in the dictation strip
+  /// and the field; the final text lands in the field (appended to what was
+  /// typed) and is NOT sent — the user reviews it and taps send (1.4.8).
+  /// Every state and failure stays visible in the strip above the input.
+  /// Tap again to stop; long-press switches ID ↔ EN.
+  String _beforeDictation = '';
   Future<void> _dictate() async {
     final v = VoiceService.instance;
-    if (_dictating) {
+    if (v.listening) {
       await v.stopDictation();
-      if (mounted) setState(() => _dictating = false);
       return;
     }
-    setState(() => _dictating = true);
-    var sent = false;
-    var errShown = false;
+    _beforeDictation = _input.text;
     try {
       await v.startDictation(
         locale: ref.read(settingsProvider).sttLocale,
+        rationale: () async => mounted && await micRationale(context),
         onText: (t, done) {
           if (!mounted) return;
-          _input.text = t;
-          _input.selection = TextSelection.collapsed(offset: t.length);
-          if (done) {
-            setState(() => _dictating = false);
-            if (!sent && t.trim().isNotEmpty) {
-              sent = true;
-              _send();
-            }
-          }
-        },
-        onError: (e) {
-          errShown = true;
-          if (!mounted) return;
-          setState(() => _dictating = false);
-          toast(context, e);
+          final next = insertTranscript(_beforeDictation, t);
+          _input.text = next;
+          _input.selection = TextSelection.collapsed(offset: next.length);
         },
       );
-    } catch (e) {
-      // startDictation reports through v.error; this only guards the screen.
-      v.error ??= 'Dikte gagal: $e';
+    } catch (_) {
+      // startDictation never throws; it reports through v.status.
     }
-    if (!mounted) return;
-    if (v.error != null || !v.listening) setState(() => _dictating = v.listening);
-    if (v.error != null && !errShown) toast(context, v.error!);
+  }
+
+  Future<void> _dictationAction(DictationAction a) async {
+    final v = VoiceService.instance;
+    if (a == DictationAction.retry) {
+      v.dismissDictationError();
+      await _dictate();
+      return;
+    }
+    final ok = await openDictationFix(a);
+    if (!ok && mounted) toast(context, tr('Tidak bisa membuka halaman itu di HP ini.'));
   }
 
   void _switchSttLanguage() {
@@ -765,6 +762,8 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
         ),
         if (_trigger != null && r.composer != null)
           ComposerSuggestionList(items: _suggestions, kind: _trigger!.kind, loading: _sugLoading, onPick: _pick),
+        if (canDictate || VoiceService.hasTestEngine)
+          DictationStrip(voice: VoiceService.instance, onStop: VoiceService.instance.stopDictation, onAction: _dictationAction),
         if (r.attachNotice != null && r.attachNotice!.isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 2, 8, 4),
@@ -789,12 +788,19 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
             KeyedSubtree(
               key: const ValueKey('composer-mic'),
               child: Stack(clipBehavior: Clip.none, children: [
-                NvIconButton(
-                  tooltip: _dictating ? 'Berhenti dikte' : 'Dikte perintah (tekan lama: ganti bahasa)',
-                  icon: _dictating ? CupertinoIcons.mic_fill : CupertinoIcons.mic,
-                  accent: _dictating,
-                  onPressed: r.connected ? _dictate : null,
-                  onLongPress: _switchSttLanguage,
+                // Dictation works without the PC (text lands in the field).
+                ListenableBuilder(
+                  listenable: VoiceService.instance,
+                  builder: (context, _) {
+                    final on = VoiceService.instance.listening;
+                    return NvIconButton(
+                      tooltip: on ? 'Berhenti dikte' : 'Dikte perintah (tekan lama: ganti bahasa)',
+                      icon: on ? CupertinoIcons.mic_fill : CupertinoIcons.mic,
+                      accent: on,
+                      onPressed: _dictate,
+                      onLongPress: _switchSttLanguage,
+                    );
+                  },
                 ),
                 Positioned(
                   right: -2,

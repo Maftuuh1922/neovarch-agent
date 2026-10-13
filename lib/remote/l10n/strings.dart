@@ -156,4 +156,28 @@ const enStrings = <String, String>{
   'PC sedang restart… menyambung ulang': 'PC is restarting… reconnecting',
   'PC belum kembali setelah restart. Pastikan aplikasi Neovarch di PC berjalan, lalu tarik untuk menyambung ulang.':
       'The PC has not come back after the restart. Make sure the Neovarch app is running on your PC, then pull to reconnect.',
+  // ---- dictation strip (v1.4.8) ------------------------------------------------------
+  'Menyiapkan mikrofon…': 'Preparing the microphone…',
+  'Mendengarkan…': 'Listening…',
+  'Memproses…': 'Processing…',
+  'Berhenti': 'Stop',
+  'Buka pengaturan': 'Open settings',
+  'Pasang Speech Services': 'Install Speech Services',
+  'Buka Speech Services': 'Open Speech Services',
+  'Izinkan mikrofon': 'Allow the microphone',
+  'Neovarch memakai mikrofon hanya saat kamu mengetuk tombol mik, untuk mengubah suaramu jadi teks di kolom chat. Setelah ini Android akan bertanya — pilih "Izinkan".':
+      'Neovarch only uses the microphone when you tap the mic button, to turn your voice into text in the chat field. Android will ask next — choose "Allow".',
+  'Tidak bisa membuka halaman itu di HP ini.': 'Could not open that page on this phone.',
+  'Izin mikrofon ditolak. Ketuk mik lagi lalu pilih "Izinkan".': 'Microphone permission denied. Tap the mic again and choose "Allow".',
+  'Izin mikrofon ditolak permanen. Buka pengaturan → Izin → Mikrofon → Izinkan, lalu ketuk mik lagi.':
+      'Microphone permission is permanently denied. Open settings → Permissions → Microphone → Allow, then tap the mic again.',
+  'Speech Services Google tidak ada di HP ini, jadi dikte tidak bisa jalan. Pasang "Speech Services by Google" (Play Store / GetApps), lalu ketuk mik lagi.':
+      'Google Speech Services is missing on this phone, so dictation cannot run. Install "Speech Services by Google" (Play Store / GetApps), then tap the mic again.',
+  'Suara tidak tertangkap: tidak ada suara terdeteksi. Coba lagi lebih dekat ke mikrofon.': 'No speech detected. Try again closer to the microphone.',
+  'Jaringan bermasalah: pengenal suara Google butuh internet (atau unduh paket bahasa offline di pengaturan Google).':
+      'Network problem: Google speech recognition needs the internet (or download the offline language pack in Google settings).',
+  'Pengenal suara sedang dipakai aplikasi lain. Tunggu sebentar lalu coba lagi.': 'Speech recognition is in use by another app. Wait a moment and try again.',
+  'Mikrofon sedang dipakai (mis. aplikasi lain atau "Hey Neo"). Coba lagi sebentar lagi.': 'The microphone is in use (another app or "Hey Neo"). Try again in a moment.',
+  'Bahasa ini belum tersedia di pengenal suara HP. Tekan lama tombol mik untuk ganti ID/EN.': 'This language is not available in the phone\'s speech recognizer. Long-press the mic to switch ID/EN.',
+  'Pengenal suara tidak menjawab. Coba lagi.': 'Speech recognition did not respond. Try again.',
 };

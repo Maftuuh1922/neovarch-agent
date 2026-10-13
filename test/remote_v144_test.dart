@@ -495,7 +495,7 @@ void main() {
       expect(sttErrorText('error_permission'), contains('Izin mikrofon'));
     });
 
-    testWidgets('mic: partial words fill the field, the final result is sent to the agent', (tester) async {
+    testWidgets('mic: partial words fill the field, the final result stays in the field (not sent)', (tester) async {
       final r = controller();
       await pump(tester, r, home: RemoteChatScreen(onOpenApprovals: () {}));
       await tester.pump(const Duration(milliseconds: 300));
@@ -506,12 +506,17 @@ void main() {
       expect(engine.localeId, 'id-ID'); // settings id_ID -> recogniser's id-ID
       engine.emit('rapikan folder', false);
       await tester.pump();
-      expect(find.text('rapikan folder'), findsOneWidget);
+      // in the field and in the dictation strip
+      expect(find.text('rapikan folder'), findsNWidgets(2));
+      expect(find.byKey(const ValueKey('dictation-strip')), findsOneWidget);
       expect(r.sent, isEmpty);
       engine.emit('rapikan folder unduhan', true);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      expect(r.sent, ['rapikan folder unduhan']);
+      // 1.4.8: dictation never sends by itself
+      expect(r.sent, isEmpty);
+      expect(find.text('rapikan folder unduhan'), findsOneWidget);
+      expect(find.byKey(const ValueKey('dictation-strip')), findsNothing);
     });
 
     testWidgets('long-press switches to English; a denied mic permission explains how to allow it', (tester) async {
