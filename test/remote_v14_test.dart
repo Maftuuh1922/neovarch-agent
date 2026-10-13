@@ -306,6 +306,66 @@ void main() {
         expect(a[id]!.dy, inInclusiveRange(0.0, 1.0));
       }
     });
+
+    test('graph layout does not pin nodes to the canvas edges', () {
+      // a hub with 12 leaves + 3 orphans: the old per-step clamp piled nodes on the border
+      final g = VaultGraph.fromJson({
+        'nodes': [
+          {'id': 'hub', 'title': 'hub', 'degree': 12},
+          for (var i = 0; i < 12; i++) {'id': 'n$i', 'title': 'n$i', 'degree': 1},
+          for (var i = 0; i < 3; i++) {'id': 'o$i', 'title': 'o$i', 'degree': 0},
+        ],
+        'edges': [for (var i = 0; i < 12; i++) {'source': 'hub', 'target': 'n$i'}],
+      });
+      final pos = layoutGraph(g);
+      bool onEdge(Offset o) => o.dx < 0.06 || o.dx > 0.94 || o.dy < 0.06 || o.dy > 0.94;
+      expect(pos.values.where(onEdge).length, lessThan(pos.length ~/ 2));
+      final c = pos['hub']!;
+      expect((c - const Offset(0.5, 0.5)).distance, lessThan(0.3)); // hub sits in the middle
+    });
+
+    test('kinds, local graph and filters', () async {
+      final g = VaultGraph.fromJson({
+        'nodes': [
+          {'id': 'P.md', 'title': 'toko', 'kind': 'project', 'project': 'toko', 'tags': ['neovarch/proyek']},
+          {'id': 'S.md', 'title': 'sesi', 'kind': 'session'},
+          {'id': 'F.md', 'title': 'app.py', 'kind': 'file'},
+          {'id': 'X.md', 'title': 'yatim'},
+          {'id': '?Y', 'title': 'Y', 'exists': false, 'kind': 'unresolved'},
+          {'id': 'W.md', 'title': 'w', 'kind': 'weird'},
+        ],
+        'edges': [
+          {'source': 'S.md', 'target': 'P.md'},
+          {'source': 'S.md', 'target': 'F.md'},
+          {'source': 'W.md', 'target': '?Y'},
+        ],
+      });
+      expect([for (final n in g.nodes) n.kind], ['project', 'session', 'file', 'note', 'unresolved', 'note']);
+      expect(g.nodes.first.project, 'toko');
+      expect(g.nodes.first.tags, ['neovarch/proyek']);
+      expect({for (final n in g.local('F.md').nodes) n.id}, {'F.md', 'S.md'});
+      expect({for (final n in g.local('F.md', depth: 2).nodes) n.id}, {'F.md', 'S.md', 'P.md'});
+      expect(g.local('nope').nodes, isEmpty);
+      expect([for (final n in g.filtered(orphans: false).nodes) n.id], isNot(contains('X.md')));
+      final noSess = g.filtered(hiddenKinds: {'session'});
+      expect([for (final n in noSess.nodes) n.id], isNot(contains('S.md')));
+      expect(noSess.edges, [('W.md', '?Y')]); // edges touching hidden notes go too
+      expect(vaultLabelAlpha(0.3, 0, false), 0);
+      expect(vaultLabelAlpha(3, 0, false), 1);
+      expect(vaultLabelAlpha(0.1, 0, true), 1);
+      expect(vaultKindColor('project'), const Color(0xFFE5484D));
+      expect(vaultKindColor('note'), isNull);
+    });
+
+    testWidgets('note → Graf lokal opens the local graph with kind filters', (tester) async {
+      final r = controller()..debugVault = FakeVault();
+      await pump(tester, r, const VaultGraphScreen(center: 'Metode.md'));
+      await tester.pumpAndSettle();
+      expect(find.text('Graf lokal'), findsOneWidget);
+      expect(find.byKey(const ValueKey('vault-graph-filters')), findsOneWidget);
+      expect(find.text('1 lompatan'), findsOneWidget);
+      expect(find.textContaining('2 CATATAN'), findsOneWidget); // Metode + Skripsi
+    });
   });
 
   group('Theme', () {

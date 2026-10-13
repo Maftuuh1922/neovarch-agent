@@ -179,7 +179,7 @@ def system_sections(cfg: dict, cwd: Path, query: str = "", persona: str = "",
                 mem.append(f"## {p.stem}\n{text[:4000]}")
         if mem:
             parts.append(("memory", "# Memory notes (from earlier sessions)\n" + "\n\n".join(mem)))
-    vault = _vault_prompt(cfg, "" if stable else query)
+    vault = _vault_prompt(cfg, "" if stable else query, None if stable else cwd)
     if vault:
         parts.append(("vault", "\n\n".join(vault)))
     skills = list_skills()
@@ -212,7 +212,7 @@ def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "", stab
     return join_sections(system_sections(cfg, cwd, query, persona, stable, diet))
 
 
-def prompt_tail(cfg: dict, query: str) -> str:
+def prompt_tail(cfg: dict, query: str, cwd: Path | str | None = None) -> str:
     """Tempest: the dynamic context for one user message (clock + vault notes matched to it)."""
     out = [f"# Konteks saat ini\nDate: {now_text(cfg)}"]
     try:
@@ -230,6 +230,9 @@ def prompt_tail(cfg: dict, query: str) -> str:
     if notes:
         out.append("# Relevant vault notes (keyword match for this message)\n"
                    + "\n\n".join(f"## {n['path']}\n{n['content']}" for n in notes))
+    proj = _vault_project_context(cfg, cwd)
+    if proj:
+        out.append(proj)
     return "\n\n".join(out)
 
 
@@ -286,14 +289,16 @@ def skills_index(skills: list[dict]) -> str:
             "follow it.\n" + "\n".join(lines))
 
 
-def _vault_prompt(cfg: dict, query: str) -> list[str]:
+def _vault_prompt(cfg: dict, query: str, cwd=None) -> list[str]:
     from neovarch import obsidian
     vault = obsidian.vault_path(cfg)
     if vault is None or not vault.is_dir():
         return []
     out = [f"# Obsidian vault (long-term memory)\nThe user's Obsidian vault at {vault} is your long-term memory. "
            "Use obsidian_search / obsidian_read to recall, obsidian_write to save durable facts as markdown notes "
-           "with [[wikilinks]] and #tags, and obsidian_links to follow backlinks. Never write outside the vault."]
+           "with [[wikilinks]] and #tags, and obsidian_links to follow backlinks. Never write outside the vault. "
+           "Neovarch keeps every project, chat session and changed file as linked notes under Neovarch/ "
+           "automatically; link decisions to the project note."]
     try:
         notes = obsidian.relevant_notes(vault, query) if query else []
     except Exception:  # retrieval must never break a turn
@@ -301,7 +306,21 @@ def _vault_prompt(cfg: dict, query: str) -> list[str]:
     if notes:
         out.append("# Relevant vault notes (keyword match for this message)\n"
                    + "\n\n".join(f"## {n['path']}\n{n['content']}" for n in notes))
+    proj = _vault_project_context(cfg, cwd) if query else ""
+    if proj:
+        out.append(proj)
     return out
+
+
+def _vault_project_context(cfg: dict, cwd) -> str:
+    """This chat's project note in the vault (latest sessions, decisions, backlinks)."""
+    if not cwd:
+        return ""
+    try:
+        from neovarch import vault_sync
+        return vault_sync.context_for(cfg, cwd)
+    except Exception:  # the vault must never break a turn
+        return ""
 
 
 def _preview(args: dict) -> str:
@@ -404,7 +423,7 @@ class Agent:
         user_msg: dict[str, Any] = {"role": "user", "content": user_text, "ts": time.time()}
         self._progress = None
         if st:
-            user_msg["wire_tail"] = prompt_tail(cfg, user_text)
+            user_msg["wire_tail"] = prompt_tail(cfg, user_text, self.ctx.cwd)
             if st.get("progress"):
                 self._progress = tempest_progress.Progress(self.ctx.cwd, cfgmod.neovarch_home())
                 if not any(m.get("role") == "assistant" for m in messages):
@@ -846,6 +865,7 @@ class Agent:
         elif error != "interrupted":
             self.rec.pop("last_stop", None)
         self.store.save(self.rec)
+        self._vault_record(cfg, ledger.files_changed())
         sent = self._finish_attachments(messages, first_new, final_text, user_text, turn_started)
         elapsed = max(time.monotonic() - started, 1e-6)
         from neovarch import usage_stats as _us
@@ -875,6 +895,24 @@ class Agent:
             **({"attachments": sent} if sent else {}),
         })
         return final_text
+
+    def _vault_record(self, cfg: dict, files_changed: list[str]) -> None:
+        """Keep this chat, its project and the files it changed as linked notes in the Obsidian
+        vault (vault_sync). Off when no vault is linked or memory.vault_autonotes is false."""
+        if getattr(self.ctx, "company", None) is not None:
+            return  # Perusahaan agents run their own tickets; their chats are not user projects
+        try:
+            from neovarch import vault_sync
+            rel = vault_sync.record_turn(cfg, self.rec, files_changed, self.ctx.cwd)
+        except Exception as exc:  # the vault must never break a turn
+            _log.warning("vault notes skipped: %s", exc)
+            return
+        if not rel:
+            return
+        if self.rec.get("vault_note") != rel:
+            self.rec["vault_note"] = rel
+            self.store.save(self.rec)
+        self.emit("vault.changed", {"path": rel, "auto": True})
 
     def _desktop_usage(self, prompt: int, ctx_len: int) -> dict:
         """Session totals in the desktop's UsageStats shape (input/output/total/calls/context_*)."""

@@ -1759,32 +1759,152 @@
   font-size: 0.85rem;
 }
 .nv-vault-graph {
+  position: relative;
   width: 100%;
-  height: auto;
+  height: min(68vh, 640px);
+  min-height: 360px;
+  overflow: hidden;
   border: 1px solid var(--nv-line);
   border-radius: 14px;
   background: var(--nv-ink-2);
+  touch-action: none;
 }
-.nv-vault-edge {
-  stroke: var(--nv-line);
-  stroke-width: 1;
+.nv-vault-graph-compact {
+  height: 220px;
+  min-height: 220px;
 }
-.nv-vault-node {
-  cursor: pointer;
+.nv-vault-graph canvas {
+  display: block;
 }
-.nv-vault-node circle {
-  fill: var(--nv-red);
+.nv-vault-graph-hud {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  left: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  pointer-events: none;
 }
-.nv-vault-node text {
-  fill: var(--nv-text-2);
-  font-size: 10px;
+.nv-vault-graph-hover {
+  margin-right: auto;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--nv-ink) 80%, transparent);
+  color: var(--nv-text);
+  font-size: 0.75rem;
 }
-.nv-vault-node-ghost circle {
-  fill: var(--nv-text-3);
+.nv-vault-graph-fit {
+  pointer-events: auto;
+  width: 1.9rem;
+  height: 1.9rem;
+  border: 1px solid var(--nv-line);
+  border-radius: 999px;
+  background: var(--nv-ink);
+  color: var(--nv-text-2);
 }
-.nv-vault-node-on circle {
-  stroke: var(--nv-text);
-  stroke-width: 2;
+.nv-vault-graph-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.nv-vault-graph-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+.nv-vault-graph-tools input[type='text'],
+.nv-vault-graph-search,
+.nv-vault-graph-tools select {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--nv-line);
+  border-radius: 10px;
+  background: var(--nv-ink-2);
+  color: var(--nv-text);
+  font-size: 0.8rem;
+}
+.nv-vault-graph-search {
+  min-width: 12rem;
+  flex: 1;
+}
+.nv-vault-graph-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--nv-text-2);
+}
+.nv-vault-graph-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.nv-vault-graph-mode button {
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--nv-line);
+  border-radius: 999px;
+  color: var(--nv-text-2);
+}
+.nv-vault-graph-mode button:disabled {
+  opacity: 0.45;
+}
+.nv-vault-graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+}
+.nv-vault-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--nv-line);
+  border-radius: 999px;
+  color: var(--nv-text-2);
+}
+.nv-vault-legend-chip span {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 999px;
+}
+.nv-vault-legend-off {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+.nv-vault-graph-count {
+  margin-left: auto;
+  color: var(--nv-text-3);
+}
+.nv-vault-local {
+  margin-top: 1.2rem;
+}
+.nv-vault-local h2 {
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+.nv-vault-side-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+.nv-vault-btn-sm {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.72rem;
+}
+.nv-vault-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.nv-vault-btn-primary {
+  background: var(--nv-red);
+  border-color: var(--nv-red);
+  color: #fff;
 }
 
 /* ── Theme picker (first run + Settings ▸ Tampilan) ────────────────────── */

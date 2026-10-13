@@ -117,7 +117,31 @@ class VaultGraphNode {
   final String title;
   final bool exists;
   final int degree;
-  const VaultGraphNode({required this.id, required this.title, required this.exists, required this.degree});
+
+  /// hub | project | session | file | memory | note | unresolved (Neovarch's notes carry
+  /// `neovarch:` in their frontmatter; the PC sends it as `kind`).
+  final String kind;
+  final List<String> tags;
+  final String? project;
+  const VaultGraphNode(
+      {required this.id, required this.title, required this.exists, required this.degree, this.kind = 'note', this.tags = const [], this.project});
+}
+
+const vaultNodeKinds = ['project', 'session', 'file', 'memory', 'hub', 'note', 'unresolved'];
+const vaultKindLabels = {
+  'project': 'Proyek',
+  'session': 'Sesi',
+  'file': 'Berkas',
+  'memory': 'Memori',
+  'hub': 'Hub',
+  'note': 'Catatan',
+  'unresolved': 'Belum ada',
+};
+
+String _kindOf(Map n) {
+  if (n['exists'] == false) return 'unresolved';
+  final k = '${n['kind'] ?? 'note'}';
+  return vaultNodeKinds.contains(k) ? k : 'note';
 }
 
 class VaultGraph {
@@ -130,12 +154,63 @@ class VaultGraph {
         nodes: [
           for (final n in (j['nodes'] as List? ?? const []).whereType<Map>())
             VaultGraphNode(
-                id: '${n['id']}', title: '${n['title'] ?? n['id']}', exists: n['exists'] != false, degree: (n['degree'] as num?)?.toInt() ?? 0),
+              id: '${n['id']}',
+              title: '${n['title'] ?? n['id']}',
+              exists: n['exists'] != false,
+              degree: (n['degree'] as num?)?.toInt() ?? 0,
+              kind: _kindOf(n),
+              tags: [for (final t in (n['tags'] as List? ?? const [])) '$t'],
+              project: n['project'] == null ? null : '${n['project']}',
+            ),
         ],
         edges: [
           for (final e in (j['edges'] as List? ?? const []).whereType<Map>()) ('${e['source']}', '${e['target']}'),
         ],
       );
+
+  /// Undirected neighbours of every node.
+  Map<String, Set<String>> adjacency() {
+    final adj = <String, Set<String>>{for (final n in nodes) n.id: <String>{}};
+    for (final (a, b) in edges) {
+      if (a == b) continue;
+      adj[a]?.add(b);
+      adj[b]?.add(a);
+    }
+    return adj;
+  }
+
+  VaultGraph _keep(Set<String> ids) => VaultGraph(
+        configured: configured,
+        nodes: [for (final n in nodes) if (ids.contains(n.id)) n],
+        edges: [for (final e in edges) if (ids.contains(e.$1) && ids.contains(e.$2)) e],
+      );
+
+  /// Obsidian's local graph: [center] plus every note within [depth] links, both directions.
+  VaultGraph local(String center, {int depth = 1}) {
+    final adj = adjacency();
+    if (!adj.containsKey(center)) return VaultGraph(configured: configured);
+    final seen = <String>{center};
+    var frontier = [center];
+    for (var d = 0; d < depth; d++) {
+      final next = <String>[];
+      for (final id in frontier) {
+        for (final nb in adj[id] ?? const <String>{}) {
+          if (seen.add(nb)) next.add(nb);
+        }
+      }
+      frontier = next;
+    }
+    return _keep(seen);
+  }
+
+  /// Hide node kinds (legend chips) and, optionally, orphans (notes with no links at all).
+  VaultGraph filtered({Set<String> hiddenKinds = const {}, bool orphans = true}) {
+    final adj = adjacency();
+    return _keep({
+      for (final n in nodes)
+        if (!hiddenKinds.contains(n.kind) && (orphans || (adj[n.id]?.isNotEmpty ?? false))) n.id,
+    });
+  }
 }
 
 class VaultHit {
