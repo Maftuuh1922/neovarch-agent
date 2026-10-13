@@ -20,7 +20,6 @@ import 'package:neovarch_agent/remote/remote_gateway.dart' show RemoteStatus;
 import 'package:neovarch_agent/remote/remote_transcript.dart';
 import 'package:neovarch_agent/remote/saved_desktops.dart';
 import 'package:neovarch_agent/remote/ui/chat_focus.dart';
-import 'package:neovarch_agent/remote/ui/glass/glass_chat.dart';
 import 'package:neovarch_agent/remote/ui/remote_chat_screen.dart';
 import 'package:neovarch_agent/remote/ui/remote_composer.dart' show ComposerChipsRow;
 import 'package:neovarch_agent/state/app_controller.dart' show settingsProvider;
@@ -51,7 +50,7 @@ void main() {
     });
 
     test('follows the core: an extended limit shows, a stale one never does', () {
-      final t = RemoteTranscript(history: const []);
+      final t = RemoteTranscript();
       t.apply(const GatewayEventFrame('message.start', 's', {}));
       t.apply(const GatewayEventFrame('turn.progress', 's', {'step': 5, 'limit': 30, 'max': 150, 'extended': 0}));
       expect(t.stepLabel, 'langkah 5/30');
