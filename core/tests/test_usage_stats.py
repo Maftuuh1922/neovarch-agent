@@ -229,3 +229,31 @@ def test_session_counters_capped(tmp_path, monkeypatch):
         us.record("m", {"prompt_tokens": 1, "completion_tokens": 1}, session=f"s{i}", path=p)
     import json
     assert list(json.loads(p.read_text())["sessions"]) == ["s2", "s3", "s4"]
+
+
+def test_trend_days_carry_the_split_for_the_phone_chart(tmp_path):
+    """v1.4.8: the phone draws stacked daily bars (baru / cache / keluar) from ``trend``.
+    Old readers only use date + total, which must stay."""
+    p = tmp_path / "usage.json"
+    day1 = time.mktime((2026, 10, 11, 12, 0, 0, 0, 0, -1))
+    day2 = time.mktime((2026, 10, 13, 12, 0, 0, 0, 0, -1))
+    us.record("mimo", {"prompt_tokens": 100, "completion_tokens": 20,
+                       "prompt_tokens_details": {"cached_tokens": 60}}, now=day1, path=p)
+    us.record("mimo", {"prompt_tokens": 300, "completion_tokens": 30}, now=day2, path=p)
+    us.record("gpt", {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 40}, now=day2, path=p)
+    s = us.summary(now=day2, path=p)
+    assert s["trend"] == [
+        {"date": "2026-10-11", "total": 120, "input": 100, "output": 20, "cached": 60, "cache_write": 0, "calls": 1},
+        {"date": "2026-10-13", "total": 385, "input": 350, "output": 35, "cached": 40, "cache_write": 0, "calls": 2},
+    ]
+    for d in s["trend"]:
+        assert d["total"] == d["input"] + d["output"] and d["cached"] <= d["input"]
+
+
+def test_trend_respects_days_window(tmp_path):
+    p = tmp_path / "usage.json"
+    for i in range(1, 6):
+        us.record("m", {"prompt_tokens": i, "completion_tokens": 0},
+                  now=time.mktime((2026, 10, i, 12, 0, 0, 0, 0, -1)), path=p)
+    s = us.summary(now=time.mktime((2026, 10, 5, 12, 0, 0, 0, 0, -1)), path=p, days=3)
+    assert [d["date"] for d in s["trend"]] == ["2026-10-03", "2026-10-04", "2026-10-05"]
