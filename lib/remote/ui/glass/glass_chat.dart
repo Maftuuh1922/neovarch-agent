@@ -15,6 +15,7 @@ import 'glass_style.dart';
 import 'glass_tone.dart';
 import 'liquid_glass.dart';
 import '../nv_mascot_avatar.dart';
+import '../nv_widgets.dart' show NvSizeReporter;
 
 const _rBubble = BorderRadius.all(Radius.circular(20));
 
@@ -249,46 +250,173 @@ class GlassNotice extends StatelessWidget {
 
 /// Chat header on a glass bar: kicker, title, status line, actions; every
 /// colour from the glass tone (legible on any wallpaper).
-class GlassChatHeader extends StatelessWidget {
-  const GlassChatHeader({super.key, required this.kicker, required this.title, this.status, this.online = true, this.actions = const []});
+class GlassChatHeader extends StatefulWidget {
+  const GlassChatHeader({
+    super.key,
+    required this.kicker,
+    required this.title,
+    this.status,
+    this.compactStatus,
+    this.online = true,
+    this.compact = false,
+    this.onExpand,
+    this.onFullHeight,
+    this.actions = const [],
+  });
   final String kicker;
   final String title;
+
+  /// Full status line under the title, across the whole header width (never
+  /// squeezed beside the buttons). Wraps to a second line between segments
+  /// before it ever cuts one off.
   final String? status;
+
+  /// Short status for the compact bar (e.g. "bekerja · 9/30").
+  final String? compactStatus;
   final bool online;
+
+  /// Focus mode (1.4.8): the header shrinks into a one-line bar.
+  final bool compact;
+
+  /// Tap on the compact bar.
+  final VoidCallback? onExpand;
+
+  /// Height of the header when expanded (reported even while compact), so
+  /// the list can pad for it without jumping when the header animates.
+  final ValueChanged<double>? onFullHeight;
   final List<GlassHeaderAction> actions;
+
+  static const duration = Duration(milliseconds: 260);
+  static const _compactRow = 36.0;
+
+  @override
+  State<GlassChatHeader> createState() => _GlassChatHeaderState();
+}
+
+class _GlassChatHeaderState extends State<GlassChatHeader> {
+  double? _fullH;
+
+  void _onFull(double h) {
+    if (_fullH != null && (h - _fullH!).abs() < 0.5) return;
+    _fullH = h;
+    widget.onFullHeight?.call(h);
+    // the clip factor depends on it (NvSizeReporter reports after the frame)
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final top = MediaQuery.paddingOf(context).top;
+    final w = widget;
+    final n = w.actions.length;
     return LiquidGlass(
       key: const ValueKey('glass-chat-header'),
       borderRadius: const BorderRadius.vertical(bottom: Radius.circular(26)),
-      padding: EdgeInsets.fromLTRB(20, top + 12, 12, 12),
       child: Builder(builder: (context) {
         final t = GlassForeground.maybeOf(context)!.tone;
-        return Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-              Text(kicker.toUpperCase(), style: NV.monoLabel(color: t.secondary)),
-              const SizedBox(height: 4),
-              Text(title, key: const ValueKey('glass-header-title'), maxLines: 1, overflow: TextOverflow.ellipsis, style: NV.display(size: 30, color: t.text)),
-              if (status != null) ...[
-                const SizedBox(height: 6),
-                Row(children: [
-                  Container(width: 7, height: 7, decoration: BoxDecoration(color: online ? t.accent : t.faint, shape: BoxShape.circle)),
+        Widget dot() => Container(width: 7, height: 7, decoration: BoxDecoration(color: w.online ? t.accent : t.faint, shape: BoxShape.circle));
+        final full = Padding(
+          padding: EdgeInsets.fromLTRB(20, top + 12, 12, 12),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            // title block; the round buttons float over its right side
+            Padding(
+              padding: EdgeInsets.only(right: n * 46.0),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                Text(w.kicker.toUpperCase(), maxLines: 1, overflow: TextOverflow.ellipsis, style: NV.monoLabel(color: t.secondary)),
+                const SizedBox(height: 4),
+                Text(w.title, key: const ValueKey('glass-header-title'), maxLines: 1, overflow: TextOverflow.ellipsis, style: NV.display(size: 30, color: t.text)),
+              ]),
+            ),
+            if (w.status != null) ...[
+              const SizedBox(height: 6),
+              Row(key: const ValueKey('glass-header-status-row'), crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Padding(padding: const EdgeInsets.only(top: 4), child: dot()),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(w.status!,
+                      key: const ValueKey('glass-header-status'),
+                      maxLines: 2,
+                      softWrap: true,
+                      overflow: TextOverflow.ellipsis,
+                      style: NV.monoLabel(size: 10, color: t.secondary).copyWith(letterSpacing: 0.4, height: 1.45)),
+                ),
+              ]),
+            ],
+          ]),
+        );
+        final bar = GestureDetector(
+          key: const ValueKey('glass-header-compact'),
+          behavior: HitTestBehavior.opaque,
+          onTap: w.onExpand,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(20, top + 6, 10.0 + n * 40.0, 8),
+            child: SizedBox(
+              height: GlassChatHeader._compactRow,
+              child: Row(children: [
+                dot(),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(w.title,
+                      key: const ValueKey('glass-header-compact-title'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, letterSpacing: -0.2, color: t.text)),
+                ),
+                if (w.compactStatus != null && w.compactStatus!.isNotEmpty) ...[
                   const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(status!,
-                        key: const ValueKey('glass-header-status'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: NV.monoLabel(size: 10, color: t.secondary).copyWith(letterSpacing: 0.4)),
-                  ),
-                ]),
-              ],
-            ]),
+                  Text(w.compactStatus!,
+                      key: const ValueKey('glass-header-compact-status'),
+                      maxLines: 1,
+                      style: NV.monoLabel(size: 10, color: t.secondary).copyWith(letterSpacing: 0.4)),
+                ],
+              ]),
+            ),
           ),
-          for (final a in actions) Padding(padding: const EdgeInsets.only(left: 6, bottom: 2), child: a),
-        ]);
+        );
+        return TweenAnimationBuilder<double>(
+          tween: Tween(end: w.compact ? 1 : 0),
+          duration: reduceMotion(context) ? Duration.zero : GlassChatHeader.duration,
+          curve: Curves.easeOutCubic,
+          builder: (context, k, _) {
+            final compactH = top + 6 + GlassChatHeader._compactRow + 8;
+            final fullH = _fullH;
+            final factor = fullH == null || fullH <= compactH ? 1.0 : 1 - (1 - compactH / fullH) * k;
+            final btn = 40 - 6 * k;
+            return ClipRect(
+              child: Align(
+                alignment: Alignment.topCenter,
+                heightFactor: factor,
+                child: SizedBox(width: double.infinity, child: Stack(children: [
+                  IgnorePointer(
+                    ignoring: k > 0.5,
+                    child: Opacity(opacity: (1 - k * 1.6).clamp(0.0, 1.0), child: NvSizeReporter(onHeight: _onFull, child: full)),
+                  ),
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: IgnorePointer(
+                      ignoring: k < 0.5,
+                      child: Opacity(opacity: ((k - 0.4) / 0.6).clamp(0.0, 1.0), child: bar),
+                    ),
+                  ),
+                  // one set of buttons, gliding from the title row into the bar
+                  Positioned(
+                    top: top + 19 - 12 * k,
+                    right: 12 - 2 * k,
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      for (final a in w.actions)
+                        Padding(
+                          padding: EdgeInsets.only(left: 6 - 2 * k),
+                          child: SizedBox.square(dimension: btn, child: FittedBox(child: a)),
+                        ),
+                    ]),
+                  ),
+                ])),
+              ),
+            );
+          },
+        );
       }),
     );
   }

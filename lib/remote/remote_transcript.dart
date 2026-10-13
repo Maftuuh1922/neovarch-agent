@@ -6,6 +6,21 @@ import 'dart:convert';
 import '../data/gateway_client.dart';
 import '../models/models.dart';
 
+/// "langkah 9/30" while a turn runs. The core (Tempest v2, PR #39) grows the
+/// limit before a step passes it and says so in a status message; an older
+/// core could still report a step past its limit — then only the step shows
+/// ("langkah 9"), never "9/3".
+String? formatStepLabel(int? step, int? limit) {
+  if (step == null || step <= 1) return null;
+  if (limit != null && limit >= step) return 'langkah $step/$limit';
+  return 'langkah $step';
+}
+
+/// The short counter for the compact bar: "9/30" or "9".
+String? formatStepShort(int? step, int? limit) {
+  if (step == null || step <= 1) return null;
+  return limit != null && limit >= step ? '$step/$limit' : '$step';
+}
 
 /// What a stopped turn shows (same words as the desktop): title, one sentence,
 /// and the one-tap "Lanjutkan".
@@ -36,7 +51,9 @@ class RemoteTranscript {
   int? stepLimit;
 
   /// "langkah 27/150" while a long turn runs, else null.
-  String? get stepLabel => running && step != null && stepLimit != null && step! > 1 ? 'langkah $step/$stepLimit' : null;
+  /// Never "9/3": a step past its limit (older cores) shows as "langkah 9".
+  String? get stepLabel => running ? formatStepLabel(step, stepLimit) : null;
+  String? get stepShort => running ? formatStepShort(step, stepLimit) : null;
 
   /// Live context use from `usage.update` (core ≥ 1.4.7), refreshed after every
   /// model call of the running turn, not only at turn end.
