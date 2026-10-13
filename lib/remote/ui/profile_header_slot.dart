@@ -52,9 +52,7 @@ class _ProfileHeaderSlotState extends ConsumerState<ProfileHeaderSlot> {
       top = const NvNotice('Hubungkan HP ke Neovarch PC: profil GitHub ikut akun yang masuk di PC.',
           key: ValueKey('profile-not-connected'), icon: CupertinoIcons.desktopcomputer);
     } else if (r.socialError != null) {
-      top = NvNotice(r.socialError!,
-          key: const ValueKey('profile-error'),
-          action: TextButton(onPressed: r.refreshSocial, child: const Text('Ulangi')));
+      top = const SocialErrorBanner();
     } else if (!r.socialChecked || r.socialSignedIn) {
       // not asked yet, or signed in on the PC with the profile still on its way
       top = Padding(

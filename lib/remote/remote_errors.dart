@@ -41,6 +41,39 @@ bool isSessionExpiredResponse(int status, String body) {
   }
 }
 
+/// Shown when the PC really refused this phone's pairing token on a REST call.
+const kPairingRejectedMessage = 'Token pemasangan HP ini ditolak oleh PC — pasangkan ulang (pindai QR baru di PC).';
+
+/// The `code` of a JSON error body (`{"detail": …, "code": …}`), else null.
+String? restErrorCode(String body) {
+  try {
+    final j = jsonDecode(body);
+    if (j is Map && j['code'] is String && (j['code'] as String).isNotEmpty) return j['code'] as String;
+  } catch (_) {}
+  return null;
+}
+
+/// The `detail` of a JSON error body, else null.
+String? restErrorDetail(String body) {
+  try {
+    final j = jsonDecode(body);
+    if (j is Map && j['detail'] != null) return '${j['detail']}';
+  } catch (_) {}
+  return null;
+}
+
+/// Is this 401/403 the PC refusing the phone's pairing token?
+///
+/// Only the core's auth middleware answers without a `code`
+/// (`{"detail": "Unauthorized"}`). A 401/403 that carries a `code` comes from
+/// the route itself — e.g. cores ≤ 1.4.7 answered "GitHub token invalid" /
+/// "not signed in to GitHub" on `/api/social/*` with 401 — and says nothing
+/// about the pairing, so it must never become "pasangkan ulang".
+bool isPairingRejected(int status, String body) => (status == 401 || status == 403) && restErrorCode(body) == null;
+
+/// Codes for "the PC's GitHub sign-in is missing or GitHub refused its token".
+const githubAuthCodes = {'signed_out', 'unauthorized', 'github_token_invalid'};
+
 /// True for errors that mean "this address/route did not answer" (DNS failure,
 /// refused, reset, timeout, TLS), as opposed to an answer from the PC.
 bool isNetworkError(Object e) {
