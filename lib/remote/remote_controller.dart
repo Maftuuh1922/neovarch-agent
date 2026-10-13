@@ -556,6 +556,9 @@ class RemoteController extends ChangeNotifier {
         } else {
           unawaited(refreshModels());
         }
+        // The composer's model chip reads the catalog: re-read it so a switch
+        // from the top-bar pill or the desktop doesn't leave it stale.
+        unawaited(_resyncComposerModel());
       case 'agent.model.changed':
         notifyListeners(); // office.update follows with the new effective model
       case 'session.info':
@@ -646,6 +649,20 @@ class RemoteController extends ChangeNotifier {
       selectedSkills.clear();
       reasoningEffort = null;
     }
+    notifyListeners();
+  }
+
+  /// After the PC's model changed: re-read the catalog so the composer's model
+  /// chip (and the reasoning levels, which follow the model) match. Unlike
+  /// [refreshComposer] a failed read keeps the current catalog, so a flaky
+  /// link never folds the chips away.
+  Future<void> _resyncComposerModel() async {
+    final g = gateway;
+    if (g == null || composer == null) return;
+    final c = await g.composerCatalog(sessionId: runtimeId);
+    if (gateway != g || c == null) return;
+    composer = c;
+    if (reasoningEffort != null && !c.reasoningLevels.contains(reasoningEffort)) reasoningEffort = null;
     notifyListeners();
   }
 
@@ -769,6 +786,7 @@ class RemoteController extends ChangeNotifier {
       final d = await api.setDefaultModel(m.id, provider: m.provider);
       models = models?.withDefault(d.model.isEmpty ? ModelRef(m.id, m.provider) : d);
       notifyListeners();
+      unawaited(_resyncComposerModel());
       return null;
     } catch (e) {
       return _friendly('$e');

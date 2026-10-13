@@ -773,7 +773,12 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
           duration: dur,
           curve: Curves.easeOutCubic,
           alignment: Alignment.topCenter,
-          child: compact ? const SizedBox(width: double.infinity) : const Align(alignment: Alignment.centerLeft, child: ModelChip()),
+          // One model control in the composer: the chips row's model chip when
+          // the PC sent a composer catalog, else this fallback chip (older PC
+          // without /api/composer/catalog). Never both.
+          child: compact || composerShowsModel(r)
+              ? const SizedBox(width: double.infinity)
+              : const Align(alignment: Alignment.centerLeft, child: ModelChip()),
         ),
         Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
           // "+": uploads, and on a PC with the composer catalog also skills,
