@@ -62,6 +62,9 @@ ONE_LINERS = {
     "ppt_export": "ekspor proyek PPT Master ke .pptx",
     "image_ask": "tanya model vision tentang sebuah gambar",
     "shell_job": "pantau/tunggu/hentikan perintah shell background (shell background=true)",
+    "apply_patch": "patch banyak file sekaligus (format Codex '*** Begin Patch'), semua atau tidak sama sekali",
+    "repo_map": "peta simbol repo (kelas/fungsi + baris), file paling dirujuk dulu; pakai di repo asing",
+    "task": "maks 4 sub-agen baca-saja PARALEL untuk riset/telusur kode; hanya laporan ringkas yang kembali",
 }
 
 APP_COMPACT = """# Aplikasi Neovarch (tempatmu berjalan)

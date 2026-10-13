@@ -993,6 +993,8 @@ class Gateway:
                                  {"name": "fix", "description": "Self-diagnose and fix (sama dengan /perbaiki)"},
                                  {"name": "desain", "description": "Mode Desain: brief → design system → pratinjau → "
                                                                    "kode / design mode"},
+                                 {"name": "rencana", "description": "Mode rencana: teliti & susun rencana dulu, "
+                                                                     "belum mengubah file / plan mode (read-only)"},
                                  {"name": "undo", "description": "Pulihkan versi sebelumnya / undo the agent's last change"}],
                     "skills": list_skills()}
         if method == "self.changes":

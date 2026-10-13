@@ -547,6 +547,13 @@ class ChatApp:
         # The core answers /desain inside the turn (status/cek directly, a brief starts the workflow).
         await self.send("/desain" + (f" {cmd.rest}" if cmd.rest else ""))
 
+    async def cmd_rencana(self, cmd) -> None:
+        # The core runs a read-only planning turn for "/rencana <tugas>"; reply "lanjut" to execute.
+        if not cmd.rest:
+            self.console.print(Text("  Pakai: /rencana <tugas>. Balas 'lanjut' setelah rencananya cocok.", style="muted"))
+            return
+        await self.send("/rencana " + cmd.rest)
+
     async def cmd_skill(self, cmd) -> None:
         cat = await self.client.call("commands.catalog", {})
         skills = [s for s in (cat or {}).get("skills") or [] if isinstance(s, dict)]
