@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../models/chat_turns.dart';
 import '../../../models/models.dart';
 import '../../../remote/evidence.dart';
 import '../../../remote/ui/glass/liquid_glass.dart' show GlassForeground;
@@ -144,6 +145,158 @@ class AssistantMessage extends StatelessWidget {
         ),
     ]);
   }
+}
+
+/// One whole agent turn in ONE bubble (1.4.8): a live timeline (reasoning,
+/// narration, tool rows) with the older steps folded behind "+N langkah",
+/// then the final answer as the main text, one copy button and one time.
+class AssistantTurn extends StatefulWidget {
+  const AssistantTurn({
+    super.key,
+    required this.turn,
+    required this.scale,
+    required this.showReasoning,
+    required this.onLink,
+    required this.onOpenFile,
+    this.onRetry,
+    this.onSwitchProvider,
+    this.onContinue,
+    this.onOpenSettings,
+    this.isLast = false,
+  });
+  final AgentTurnItem turn;
+  final double scale;
+  final bool showReasoning;
+  final void Function(String url) onLink;
+  final OpenFile onOpenFile;
+  final VoidCallback? onRetry;
+  final VoidCallback? onSwitchProvider;
+  final VoidCallback? onContinue;
+  final VoidCallback? onOpenSettings;
+  final bool isLast;
+
+  @override
+  State<AssistantTurn> createState() => _AssistantTurnState();
+}
+
+class _AssistantTurnState extends State<AssistantTurn> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final turn = widget.turn;
+    final live = turn.live;
+    final scale = widget.scale;
+    final entries = [
+      for (final e in turn.timeline)
+        if (e.kind != TurnEntryKind.reasoning || widget.showReasoning) e,
+    ];
+    final fold = foldTimeline(entries, expanded: _expanded);
+    final answer = turn.answer;
+    final ({String main, String? evidence}) parts =
+        live ? (main: answer, evidence: null) : splitEvidence(answer);
+    final last = turn.steps.last;
+    final err = turn.errorStep;
+    final copy = turn.copyText;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      if (fold.hidden > 0)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const ValueKey('turn-steps-more'),
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 6)),
+            onPressed: () => setState(() => _expanded = true),
+            icon: const Icon(Icons.unfold_more, size: 16),
+            label: Text('+${fold.hidden} langkah', style: const TextStyle(fontSize: 12.5)),
+          ),
+        )
+      else if (_expanded && entries.length > 6)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const ValueKey('turn-steps-less'),
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 6)),
+            onPressed: () => setState(() => _expanded = false),
+            icon: const Icon(Icons.unfold_less, size: 16),
+            label: const Text('Ringkas langkah', style: TextStyle(fontSize: 12.5)),
+          ),
+        ),
+      for (final e in fold.visible) _entry(context, e),
+      if (answer.isNotEmpty) ...[
+        if (entries.isNotEmpty) const SizedBox(height: 6),
+        MarkdownView(parts.main, key: const ValueKey('turn-answer'), onLink: widget.onLink, scale: scale),
+        if (parts.evidence != null) EvidenceBlock(text: parts.evidence!, onLink: widget.onLink, scale: scale),
+        if (live) Padding(padding: const EdgeInsets.only(top: 2), child: Align(alignment: Alignment.centerLeft, child: BlinkingCaret(height: 15 * scale))),
+      ],
+      if (live && last.content.isEmpty && last.tools.every((t) => !t.running) && last.reasoning.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(children: [
+            const NvLoader(size: 16),
+            const SizedBox(width: 10),
+            const TypingDots(size: 5),
+            const SizedBox(width: 8),
+            ShimmerText('menyusun jawaban', style: context.tt.bodySmall),
+          ]),
+        ),
+      if (err != null)
+        FailureCard(
+            message: err.error!,
+            info: err.errorInfo,
+            onRetry: widget.onRetry,
+            onSwitchProvider: widget.onSwitchProvider,
+            onContinue: widget.onContinue,
+            onOpenSettings: widget.onOpenSettings),
+      if (!live && copy.trim().isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Row(children: [
+            _MiniAction(icon: Icons.copy_rounded, tip: 'Salin', onTap: () {
+              Clipboard.setData(ClipboardData(text: copy));
+              toast(context, 'Disalin');
+            }),
+            if (widget.isLast && widget.onRetry != null) _MiniAction(icon: Icons.refresh, tip: 'Ulangi', onTap: widget.onRetry!),
+            const Spacer(),
+            if (turn.ts > 0) Text(clockOf(turn.ts), key: const ValueKey('turn-time'), style: context.tt.bodySmall?.copyWith(fontSize: 11)),
+          ]),
+        ),
+    ]);
+  }
+
+  Widget _entry(BuildContext context, TurnEntry e) => switch (e.kind) {
+        TurnEntryKind.reasoning => ReasoningBlock(key: ValueKey(e.key), text: e.step.reasoning, streaming: e.live),
+        TurnEntryKind.tool => ToolRow(key: ValueKey(e.key), tool: e.tool!, onOpenFile: widget.onOpenFile, onLink: widget.onLink),
+        TurnEntryKind.narration => _Narration(key: ValueKey(e.key), text: e.step.content, onLink: widget.onLink, scale: widget.scale),
+      };
+}
+
+/// What the model said between steps ("Saya baca filenya dulu…"): a small,
+/// muted timeline line, not the answer.
+class _Narration extends StatelessWidget {
+  const _Narration({super.key, required this.text, required this.onLink, required this.scale});
+  final String text;
+  final void Function(String url) onLink;
+  final double scale;
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          SizedBox(
+            width: 18,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Icon(Icons.subdirectory_arrow_right_rounded, size: 14, color: context.hc.mutedForeground),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Opacity(
+              opacity: 0.78,
+              child: MarkdownView(text.trim(), onLink: onLink, scale: scale * 0.86),
+            ),
+          ),
+        ]),
+      );
 }
 
 class _MiniAction extends StatelessWidget {

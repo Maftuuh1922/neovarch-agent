@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/platform_caps.dart';
+import '../../models/chat_turns.dart';
 import '../../models/models.dart' show ChatMsg;
 import '../../state/app_controller.dart' show settingsProvider;
 import '../../state/voice_service.dart';
@@ -425,6 +426,7 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
     _track(r);
     _followNewest(r);
     final empty = msgs.isEmpty && !r.opening;
+    final items = groupTurns(msgs);
     // Keyboard: the shell hides the nav pill and this screen does NOT let the
     // Scaffold shrink for it (the composer adds the keyboard inset itself);
     // both at once double-counted it and left the composer half a screen
@@ -481,13 +483,22 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
                     child: BackdropGroup(child: ListView.builder(
                       controller: _scroll,
                       padding: EdgeInsets.fromLTRB(16, 16, 16, 12 + _dockH),
-                      itemCount: msgs.length,
+                      itemCount: items.length,
                       itemBuilder: (context, i) {
-                        final m = msgs[i];
+                        final item = items[i];
+                        // One bubble per agent turn (1.4.8), not one per step.
+                        if (item is AgentTurnItem) {
+                          return Padding(
+                            key: ValueKey('turn-${item.key}'),
+                            padding: const EdgeInsets.only(bottom: 18),
+                            child: _agentTurn(context, r, item, i == items.length - 1, agent == null ? null : NvAgentAvatar.of(agent, size: 18, dot: false),
+                                '${agent?.name ?? 'neovarch'} · $pc', s.chatScale, s.showReasoning),
+                          );
+                        }
+                        final m = (item as UserChatItem).msg;
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 18),
-                          child: m.role == 'user'
-                              ? (m.attachments.isEmpty
+                          child: (m.attachments.isEmpty
                                   ? GlassUserMessage(msg: m, scale: s.chatScale, appear: _fresh.remove(m.id))
                                   : Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
                                       MessageAttachments(attachments: m.attachments, gateway: r.gateway),
@@ -495,9 +506,7 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
                                         const SizedBox(height: 6),
                                         GlassUserMessage(msg: m, scale: s.chatScale, appear: _fresh.remove(m.id)),
                                       ],
-                                    ]))
-                              : _agentTurn(context, r, m, i == msgs.length - 1, agent == null ? null : NvAgentAvatar.of(agent, size: 18, dot: false),
-                                  '${agent?.name ?? 'neovarch'} · $pc', s.chatScale, s.showReasoning),
+                                    ])),
                         );
                       },
                     ))),
@@ -547,36 +556,47 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
     ));
   }
 
-  /// One agent reply. While it streams, only this bubble rebuilds on
+  /// One agent turn (every step from the user's message until the agent is
+  /// done) in one bubble. While it streams, only this bubble rebuilds on
   /// [RemoteController.streamTick] (≤ ~30 fps); the rest of the screen and
   /// the shell rebuild when the transcript changes shape.
-  Widget _agentTurn(BuildContext context, RemoteController r, ChatMsg m, bool isLast, Widget? avatar, String label, double scale, bool showReasoning) {
-    final appear = _fresh.remove(m.id);
-    Widget turn() => GlassAgentTurn(
-          label: label,
-          avatar: avatar,
-          live: m.streaming,
-          appear: appear,
-          child: withAgentFiles(
-            m,
-            r.gateway,
-            AssistantMessage(
-              msg: m,
-              scale: scale,
-              showReasoning: showReasoning,
-              isLast: isLast,
-              onLink: (u) => launchUrl(Uri.parse(u), mode: LaunchMode.externalApplication),
-              onOpenFile: (p) => openPcFile(context, r.gateway, p),
-              // v1.4.7: one-tap actions of a stopped turn (same as the desktop).
-              onContinue: isLast ? () => _send('Lanjutkan') : null,
-              onRetry: isLast ? _retryLast : null,
-              onSwitchProvider: isLast ? () => showModelSheet(context, r) : null,
-            ),
-          ),
-        );
-    if (!m.streaming) return turn();
+  Widget _agentTurn(BuildContext context, RemoteController r, AgentTurnItem t, bool isLast, Widget? avatar, String label, double scale, bool showReasoning) {
+    var appear = false;
+    for (final m in t.steps) {
+      if (_fresh.remove(m.id) && identical(m, t.steps.first)) appear = true;
+    }
+    Widget turn() {
+      final files = t.attachments;
+      final reply = AssistantTurn(
+        turn: t,
+        scale: scale,
+        showReasoning: showReasoning,
+        isLast: isLast,
+        onLink: (u) => launchUrl(Uri.parse(u), mode: LaunchMode.externalApplication),
+        onOpenFile: (p) => openPcFile(context, r.gateway, p),
+        // v1.4.7: one-tap actions of a stopped turn (same as the desktop).
+        onContinue: isLast ? () => _send('Lanjutkan') : null,
+        onRetry: isLast ? _retryLast : null,
+        onSwitchProvider: isLast ? () => showModelSheet(context, r) : null,
+      );
+      return GlassAgentTurn(
+        label: label,
+        avatar: avatar,
+        live: t.live,
+        appear: appear,
+        child: files.isEmpty
+            ? reply
+            : Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                reply,
+                const SizedBox(height: 8),
+                MessageAttachments(key: ValueKey('agent-files-${t.key}'), attachments: files, gateway: r.gateway, alignEnd: false),
+              ]),
+      );
+    }
+
+    if (!t.live) return turn();
     return ValueListenableBuilder<int>(
-      key: ValueKey('stream-${m.id}'),
+      key: ValueKey('stream-${t.key}'),
       valueListenable: r.streamTick,
       builder: (context, _, _) => turn(),
     );
