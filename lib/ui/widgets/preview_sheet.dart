@@ -12,6 +12,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../theme/app_theme.dart';
 import 'common.dart';
+import 'diagram_block.dart';
 import 'markdown_view.dart';
 
 sealed class PreviewTarget {
@@ -128,6 +129,19 @@ class FileContentView extends StatelessWidget {
     final ext = path.contains('.') ? path.split('.').last.toLowerCase() : '';
     if (ext == 'md' || ext == 'markdown') {
       return SingleChildScrollView(padding: const EdgeInsets.all(16), child: MarkdownView(content));
+    }
+    // Diagram / page artifacts from the agent: rendered, with Pratinjau | Kode.
+    final diagram = switch (ext) {
+      'svg' => DiagramKind.svg,
+      'mmd' || 'mermaid' => DiagramKind.mermaid,
+      'html' || 'htm' => DiagramKind.html,
+      _ => null,
+    };
+    if (diagram != null && content.trim().isNotEmpty) {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(12),
+        child: DiagramBlock(code: content, kind: diagram, label: path.split('/').last),
+      );
     }
     const code = {
       'dart', 'py', 'js', 'ts', 'json', 'yaml', 'yml', 'html', 'css', 'sh', 'kt', 'java', 'go', 'rs', 'c', 'cpp', 'sql', 'xml', 'toml', 'tsx', 'jsx'

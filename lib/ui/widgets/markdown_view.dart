@@ -12,6 +12,7 @@ import 'package:highlight/languages/all.dart' show allLanguages;
 
 import '../../theme/app_theme.dart';
 import '../../remote/ui/glass/liquid_glass.dart' show GlassCode, GlassForeground;
+import 'diagram_block.dart';
 import 'markdown_table_normalize.dart';
 
 typedef LinkTap = void Function(String url);
@@ -49,6 +50,14 @@ class MarkdownView extends StatelessWidget {
           ),
         );
       case _K.code:
+        // ```mermaid / ```svg / inline <svg> blocks render live with a
+        // Pratinjau | Kode toggle. While the fence is still open (streaming)
+        // the card shows Kode and flips to Pratinjau once it closes; no key,
+        // so the same card carries over from streaming to complete.
+        final kind = diagramKindFor(b.lang, b.text);
+        if (kind != null) {
+          return DiagramBlock(code: b.text, kind: kind, scale: scale, streaming: !b.closed);
+        }
         return CodeBlock(code: b.text, language: b.lang, scale: scale);
       case _K.rule:
         return Divider(color: context.hc.strokeSoft, height: 12);
@@ -171,16 +180,20 @@ class MarkdownView extends StatelessWidget {
 }
 
 class CodeBlock extends StatelessWidget {
-  const CodeBlock({super.key, required this.code, this.language, this.scale = 1.0});
+  const CodeBlock({super.key, required this.code, this.language, this.scale = 1.0, this.embedded = false});
   final String code;
   final String? language;
   final double scale;
+
+  /// Just the highlighted code, without its own frame and header (used inside
+  /// a [DiagramBlock], which draws those).
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
     // Inside liquid glass (phone remote): a darker glass with light text.
     final g = GlassForeground.maybeOf(context);
-    if (g != null && !g.isCode) return GlassCode(child: Builder(builder: _build));
+    if (!embedded && g != null && !g.isCode) return GlassCode(child: Builder(builder: _build));
     return _build(context);
   }
 
@@ -195,6 +208,12 @@ class CodeBlock extends StatelessWidget {
     } catch (_) {
       spans = [TextSpan(text: code)];
     }
+    final body = SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.all(12),
+      child: Text.rich(TextSpan(style: base, children: spans), softWrap: false),
+    );
+    if (embedded) return body;
     return Container(
       decoration: BoxDecoration(
         color: context.hc.codeBg,
@@ -220,11 +239,7 @@ class CodeBlock extends StatelessWidget {
             ),
           ]),
         ),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.all(12),
-          child: Text.rich(TextSpan(style: base, children: spans), softWrap: false),
-        ),
+        body,
       ]),
     );
   }
@@ -325,9 +340,10 @@ class _Block {
   int level;
   String? lang;
   bool ordered;
+  bool closed;
   final List<_Item> items = [];
   final List<List<String>> rows = [];
-  _Block(this.kind, {this.text = '', this.level = 1, this.lang, this.ordered = false});
+  _Block(this.kind, {this.text = '', this.level = 1, this.lang, this.ordered = false, this.closed = true});
 }
 
 List<_Block> _parse(String src) {
@@ -353,8 +369,24 @@ List<_Block> _parse(String src) {
         buf.add(lines[i]);
         i++;
       }
+      final closed = i < lines.length;
       i++; // closing fence (or EOF while streaming)
-      out.add(_Block(_K.code, text: buf.join('\n'), lang: lang));
+      out.add(_Block(_K.code, text: buf.join('\n'), lang: lang, closed: closed));
+      continue;
+    }
+    // Raw inline <svg>…</svg> in the reply renders like a ```svg block.
+    if (t.startsWith('<svg')) {
+      final buf = <String>[];
+      var closed = false;
+      while (i < lines.length) {
+        buf.add(lines[i]);
+        i++;
+        if (buf.last.contains('</svg>')) {
+          closed = true;
+          break;
+        }
+      }
+      out.add(_Block(_K.code, text: buf.join('\n').trim(), lang: 'svg', closed: closed));
       continue;
     }
     final h = RegExp(r'^(#{1,6})\s+(.*)$').firstMatch(t);
@@ -425,7 +457,7 @@ List<_Block> _parse(String src) {
     while (i < lines.length) {
       final l = lines[i];
       final lt = l.trimLeft();
-      if (lt.isEmpty || lt.startsWith('```') || lt.startsWith('#') || lt.startsWith('>') || listRe.hasMatch(l) || (lt.startsWith('|') && buf.isEmpty)) {
+      if (lt.isEmpty || lt.startsWith('```') || lt.startsWith('<svg') || lt.startsWith('#') || lt.startsWith('>') || listRe.hasMatch(l) || (lt.startsWith('|') && buf.isEmpty)) {
         break;
       }
       buf.add(l.endsWith('  ') ? '${l.trimRight()}  ' : l.trim());
