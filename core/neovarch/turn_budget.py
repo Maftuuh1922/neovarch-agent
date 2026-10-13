@@ -152,8 +152,9 @@ class TurnBudget:
         return None
 
     def add_usage(self, usage: dict | None) -> None:
-        u = usage or {}
-        self.tokens += int(u.get("prompt_tokens") or 0) + int(u.get("completion_tokens") or 0)
+        from neovarch.usage_stats import normalize
+        n = normalize(usage) or {}
+        self.tokens += int(n.get("input") or 0) + int(n.get("output") or 0)
 
     def record_tool(self, name: str, args: dict, result: str, ok: bool) -> str | None:
         """Track one tool call; returns ``loop`` / ``no_progress`` when the turn must stop."""

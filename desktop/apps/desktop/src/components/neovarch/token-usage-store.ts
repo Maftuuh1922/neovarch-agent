@@ -24,6 +24,8 @@ export interface TokenUsageSummary {
   lifetime: TokenBucket
   models: TokenModelRow[]
   session?: TokenBucket
+  /** First day the PC counted (core ≥ 1.4.8); "Sepanjang waktu" means since then. */
+  since?: string
   today: TokenBucket
   today_models?: TokenModelRow[]
   trend?: { date: string; total: number }[]
@@ -75,6 +77,7 @@ export function parseTokenUsage(raw: unknown): TokenUsageSummary | null {
     lifetime: bucket(r.lifetime),
     models: rows(r.models),
     ...(r.session ? { session: bucket(r.session) } : {}),
+    ...(typeof r.since === 'string' && r.since ? { since: r.since } : {}),
     today: bucket(r.today),
     today_models: rows(r.today_models),
     trend: Array.isArray(r.trend) ? (r.trend as { date: string; total: number }[]) : []

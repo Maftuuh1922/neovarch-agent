@@ -37,7 +37,11 @@ export function TokenMonitor({ sessionId, usage }: { sessionId?: null | string; 
         <>
           {summary.session && <BucketRow bucket={summary.session} label="Sesi ini" />}
           <BucketRow bucket={summary.today} label="Hari ini" />
-          <BucketRow bucket={summary.lifetime} label="Sepanjang waktu" />
+          <BucketRow
+            bucket={summary.lifetime}
+            label="Sepanjang waktu"
+            note={summary.since ? `sejak ${summary.since}` : undefined}
+          />
 
           {summary.models.length > 0 && (
             <div className="flex flex-col gap-1 pt-1">
@@ -58,15 +62,19 @@ export function TokenMonitor({ sessionId, usage }: { sessionId?: null | string; 
   )
 }
 
-function BucketRow({ bucket, label }: { bucket: TokenBucket; label: string }) {
+function BucketRow({ bucket, label, note }: { bucket: TokenBucket; label: string; note?: string }) {
   return (
     <div className="flex flex-col gap-0.5" data-testid={`token-row-${label}`}>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-muted-foreground">{label}</span>
+        <span className="text-muted-foreground">
+          {label}
+          {note && <span className="ml-1 text-[0.625rem]">· {note}</span>}
+        </span>
         <span className="tabular-nums font-medium text-foreground">{compactTokens(bucket.total)}</span>
       </div>
       <span className="tabular-nums text-[0.625rem] text-muted-foreground">
-        masuk {compactTokens(bucket.input)} · cache {compactTokens(bucket.cached)} · keluar {compactTokens(bucket.output)}
+        masuk {compactTokens(bucket.input)}
+        {bucket.cached > 0 && ` (cache ${compactTokens(bucket.cached)})`} · keluar {compactTokens(bucket.output)}
       </span>
     </div>
   )

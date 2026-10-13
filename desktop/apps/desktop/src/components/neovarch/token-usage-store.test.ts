@@ -15,6 +15,8 @@ describe('parseTokenUsage', () => {
     expect(s?.today.total).toBe(385)
     expect(s?.lifetime.calls).toBe(3)
     expect(s?.session?.total).toBe(12)
+    expect(s?.since).toBeUndefined()
+    expect(parseTokenUsage({ lifetime: {}, since: '2026-10-12', today: {} })?.since).toBe('2026-10-12')
     expect(s?.models[0]).toMatchObject({ model: 'mimo', provider: '9router', total: 450 })
   })
 
