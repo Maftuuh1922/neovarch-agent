@@ -13,10 +13,42 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../theme/neovarch_mobile_theme.dart';
 import '../remote_controller.dart';
+import 'connect_screen.dart';
 import 'nv_widgets.dart';
 
 /// Test seam: opening the verification page.
 void Function(Uri url) pcGithubOpenUrl = (url) => launchUrl(url, mode: LaunchMode.externalApplication);
+
+/// Test seam: "Pasang ulang" opens the QR pairing screen (scanning a new QR
+/// from the PC replaces this PC's token on the phone).
+void Function(BuildContext context) openRepairPairing =
+    (context) => Navigator.push(context, MaterialPageRoute<void>(builder: (_) => const ConnectScreen()));
+
+/// The Profil / Teman error banner. "Pasang ulang" only when the PC really
+/// refused this phone's pairing token ([RemoteController.socialNeedsRepair]);
+/// otherwise just "Ulangi".
+class SocialErrorBanner extends ConsumerWidget {
+  const SocialErrorBanner({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final r = ref.watch(remoteProvider);
+    final msg = r.socialError;
+    if (msg == null) return const SizedBox.shrink();
+    final retry = TextButton(key: const ValueKey('profile-retry'), onPressed: r.refreshSocial, child: const Text('Ulangi'));
+    return NvNotice(msg,
+        key: ValueKey(r.socialNeedsRepair ? 'profile-repair' : 'profile-error'),
+        action: r.socialNeedsRepair
+            ? Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
+                TextButton(
+                    key: const ValueKey('profile-repair-pair'),
+                    onPressed: () => openRepairPairing(context),
+                    child: const Text('Pasang ulang')),
+                retry,
+              ])
+            : retry);
+  }
+}
 
 class PcGithubSignInCard extends ConsumerWidget {
   const PcGithubSignInCard({super.key});
@@ -30,17 +62,22 @@ class PcGithubSignInCard extends ConsumerWidget {
     final uri = '${flow['verification_uri'] ?? 'https://github.com/login/device'}';
     final flowError = flow['state'] == 'error' ? '${flow['error'] ?? 'Gagal masuk, ulangi.'}' : null;
     final error = r.socialLoginError ?? flowError;
+    final rejected = r.socialGithubTokenInvalid;
     return NvPanel(
       key: const ValueKey('pc-github-signin'),
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
-        Text('PC BELUM MASUK KE GITHUB', style: NV.monoLabel(size: 9.5, color: NV.redInk)),
+        Text(rejected ? 'TOKEN GITHUB DI PC DITOLAK' : 'PC BELUM MASUK KE GITHUB', style: NV.monoLabel(size: 9.5, color: NV.redInk)),
         const SizedBox(height: 6),
-        Text('Masuk di PC dulu', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: NV.text)),
+        Text(rejected ? 'Masuk GitHub lagi' : 'Masuk di PC dulu', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: NV.text)),
         const SizedBox(height: 4),
         Text(
-          'Profil, grafik kontribusi, dan teman di HP ini ikut akun GitHub yang masuk di Neovarch PC. '
-          'Tidak perlu username atau login di HP.',
+          rejected
+              ? 'GitHub menolak token yang tersimpan di Neovarch PC (kedaluwarsa atau dicabut). '
+                  'Sambungan HP ke PC baik-baik saja — tidak perlu pasang ulang, cukup masuk GitHub lagi.'
+              : 'Profil, grafik kontribusi, dan teman di HP ini ikut akun GitHub yang masuk di Neovarch PC. '
+                  'Tidak perlu username atau login di HP.',
+          key: const ValueKey('pc-github-explain'),
           style: TextStyle(fontSize: 13, color: NV.muted, height: 1.4),
         ),
         const SizedBox(height: 12),
@@ -81,7 +118,7 @@ class PcGithubSignInCard extends ConsumerWidget {
             key: const ValueKey('pc-github-login'),
             onPressed: r.socialLoginStarting || !r.canStartPcGithubLogin ? null : r.startPcGithubLogin,
             icon: const Icon(CupertinoIcons.desktopcomputer, size: 18),
-            label: Text(r.socialLoginStarting ? 'Meminta PC…' : 'Masuk GitHub di PC'),
+            label: Text(r.socialLoginStarting ? 'Meminta PC…' : (rejected ? 'Masuk GitHub lagi di PC' : 'Masuk GitHub di PC')),
           ),
         if (error != null) ...[
           const SizedBox(height: 10),

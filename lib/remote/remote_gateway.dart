@@ -992,14 +992,9 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
     final text = utf8.decode(bytes, allowMalformed: true);
     if (status == 404) throw const RemoteRestError(404, 'fitur ini belum ada di Neovarch PC — perbarui aplikasi PC');
     if (isSessionExpiredResponse(status, text)) throw const SessionExpired();
-    if (status == 401 || status == 403) throw RemoteRestError(status, 'token ditolak oleh PC — pasangkan ulang');
+    if (isPairingRejected(status, text)) throw RemoteRestError(status, kPairingRejectedMessage, pairingRejected: true);
     if (status < 200 || status >= 300) {
-      String msg = 'HTTP $status';
-      try {
-        final j = jsonDecode(text);
-        if (j is Map && j['detail'] != null) msg = '${j['detail']}';
-      } catch (_) {}
-      throw RemoteRestError(status, msg);
+      throw RemoteRestError(status, restErrorDetail(text) ?? 'HTTP $status', code: restErrorCode(text));
     }
     return text.isEmpty ? null : jsonDecode(text);
   }
@@ -1210,7 +1205,7 @@ extension RemoteGatewayExtras on RemoteGateway {
       text = await res.stream.bytesToString();
     }
     if (statusCode == 404) throw const RemoteRestError(404, 'PC belum mendukung lampiran — perbarui Neovarch di PC');
-    if (statusCode == 401 || statusCode == 403) throw RemoteRestError(statusCode, 'token ditolak oleh PC — pasangkan ulang');
+    if (isPairingRejected(statusCode, text)) throw RemoteRestError(statusCode, kPairingRejectedMessage, pairingRejected: true);
     if (statusCode == 413) throw const RemoteRestError(413, 'File terlalu besar (maks 25 MB).');
     if (statusCode < 200 || statusCode >= 300) {
       String msg = 'Unggah gagal (HTTP $statusCode)';
@@ -1250,8 +1245,10 @@ extension RemoteGatewayExtras on RemoteGateway {
   /// (the token stays on the PC). Returns `{state, user_code,
   /// verification_uri, expires_at}`; an already pending flow comes back as is,
   /// a signed-in PC answers `{state: done, login}`.
-  Future<Map<String, dynamic>> socialLoginStart() async =>
-      Map<String, dynamic>.from(await _json('POST', '/api/social/login', body: const {}) as Map);
+  /// [force] restarts the flow even though the PC holds a token (GitHub
+  /// rejected it: expired or revoked).
+  Future<Map<String, dynamic>> socialLoginStart({bool force = false}) async =>
+      Map<String, dynamic>.from(await _json('POST', '/api/social/login', body: {if (force) 'force': true}) as Map);
 
   Future<FriendDetail> socialFriend(String login) async =>
       FriendDetail.fromJson(Map<String, dynamic>.from(await _json('GET', '/api/social/friends/${Uri.encodeComponent(login)}') as Map));
@@ -1261,7 +1258,13 @@ extension RemoteGatewayExtras on RemoteGateway {
 class RemoteRestError implements Exception {
   final int status;
   final String message;
-  const RemoteRestError(this.status, this.message);
+
+  /// The route's error `code` (`signed_out`, `github_token_invalid`, …).
+  final String? code;
+
+  /// True only when the PC's auth refused this phone's pairing token.
+  final bool pairingRejected;
+  const RemoteRestError(this.status, this.message, {this.code, this.pairingRejected = false});
   @override
   String toString() => message;
 }

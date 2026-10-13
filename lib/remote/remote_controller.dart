@@ -97,6 +97,14 @@ class RemoteController extends ChangeNotifier {
   bool socialLoading = false;
   String? socialError;
 
+  /// The PC holds a GitHub token but GitHub refused it (expired / revoked):
+  /// the phone offers "Masuk GitHub lagi di PC" — the pairing is fine.
+  bool socialGithubTokenInvalid = false;
+
+  /// The PC's auth refused this phone's pairing token on the social routes
+  /// (no `code` in the 401): only then the banner offers "Pasang ulang".
+  bool socialNeedsRepair = false;
+
   /// True once the PC answered `/api/social/status` for this connection.
   bool socialChecked = false;
 
@@ -117,6 +125,8 @@ class RemoteController extends ChangeNotifier {
     socialSignedIn = false;
     socialChecked = false;
     socialError = null;
+    socialGithubTokenInvalid = false;
+    socialNeedsRepair = false;
     socialLogin = const {};
     socialLoginError = null;
   }
@@ -1039,6 +1049,8 @@ class RemoteController extends ChangeNotifier {
         return;
       }
       socialSignedIn = st['signed_in'] == true;
+      socialGithubTokenInvalid = !socialSignedIn && st['github_token_invalid'] == true;
+      socialNeedsRepair = false;
       socialChecked = true;
       final flow = st['login_flow'];
       socialLogin = socialSignedIn ? const {} : (flow is Map ? Map<String, dynamic>.from(flow) : const {});
@@ -1052,11 +1064,37 @@ class RemoteController extends ChangeNotifier {
         socialFriends = const FriendsSnapshot();
       }
       socialError = null;
+    } on RemoteRestError catch (e) {
+      if (gateway != g) {
+        socialLoading = false;
+        return;
+      }
+      _socialRestError(e);
     } catch (e) {
       socialError = _friendly('$e');
     }
     socialLoading = false;
     notifyListeners();
+  }
+
+  void _socialRestError(RemoteRestError e) {
+    if (e.pairingRejected) {
+      socialNeedsRepair = true;
+      socialError = e.message;
+    } else if (githubAuthCodes.contains(e.code)) {
+      // GitHub-side: the PC is signed out or GitHub refused its token. The
+      // sign-in card takes over; no pairing banner (chat is fine).
+      socialSignedIn = false;
+      socialChecked = true;
+      socialGithubTokenInvalid = e.code != 'signed_out';
+      socialProfile = null;
+      socialFriends = const FriendsSnapshot();
+      socialNeedsRepair = false;
+      socialError = null;
+    } else {
+      socialNeedsRepair = false;
+      socialError = _friendly(e.message);
+    }
   }
 
   /// "Masuk GitHub di PC": the PC starts its own device flow; the phone only
@@ -1067,7 +1105,8 @@ class RemoteController extends ChangeNotifier {
 
   Future<String?> startPcGithubLogin() async {
     final g = gateway;
-    final start = debugSocialLoginStart ?? (g != null && connected ? g.socialLoginStart : null);
+    final force = socialGithubTokenInvalid;
+    final start = debugSocialLoginStart ?? (g != null && connected ? () => g.socialLoginStart(force: force) : null);
     if (start == null) return socialLoginError = 'Belum terhubung ke PC.';
     socialLoginStarting = true;
     socialLoginError = null;

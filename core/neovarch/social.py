@@ -103,6 +103,21 @@ class SocialError(Exception):
         self.code = code
 
 
+# GitHub-side sign-in problems are NOT HTTP 401/403: those statuses mean "the
+# PC refused this client's pairing token", and the phone answers them with
+# "pasangkan ulang". A missing or rejected GitHub token is 409 + a code.
+SIGNED_OUT_MSG = "Belum masuk dengan GitHub di PC."
+TOKEN_INVALID_MSG = "GitHub menolak token yang tersimpan di PC (kedaluwarsa atau dicabut). Masuk GitHub lagi di PC."
+
+
+def signed_out_error() -> SocialError:
+    return SocialError(SIGNED_OUT_MSG, 409, "signed_out")
+
+
+def token_invalid_error() -> SocialError:
+    return SocialError(TOKEN_INVALID_MSG, 409, "github_token_invalid")
+
+
 class RateLimited(SocialError):
     def __init__(self, until: float):
         super().__init__(f"Batas API GitHub tercapai; coba lagi sekitar {time.strftime('%H:%M', time.localtime(until))}.",
@@ -178,7 +193,8 @@ class TokenStore:
 class GitHub:
     """Small REST/GraphQL client: ETag cache (5 min), back-off on 403/429."""
 
-    def __init__(self, token_fn):
+    def __init__(self, token_fn, on_unauthorized=None):
+        self.on_unauthorized = on_unauthorized
         self.api = (os.environ.get("NEOVARCH_GITHUB_API") or "https://api.github.com").rstrip("/")
         self.oauth = (os.environ.get("NEOVARCH_GITHUB_OAUTH") or "https://github.com").rstrip("/")
         self.token_fn = token_fn
@@ -204,6 +220,13 @@ class GitHub:
         if tok:
             h["Authorization"] = f"Bearer {tok}"
         return h
+
+    def _unauthorized(self, auth_header: str) -> SocialError:
+        tok = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+        if tok and self.on_unauthorized is not None:
+            self.on_unauthorized(tok)
+        self.cache.clear()
+        return token_invalid_error() if tok else signed_out_error()
 
     def url(self, path: str) -> str:
         return path if path.startswith(("http://", "https://")) else self.api + path
@@ -268,7 +291,7 @@ class GitHub:
                         return hit["data"]
                     raise RateLimited(until)
                 if resp.status == 401:
-                    raise SocialError("Token GitHub tidak valid lagi; masuk ulang.", 401, "unauthorized")
+                    raise self._unauthorized(headers.get("Authorization", ""))
                 if resp.status == 404:
                     raise SocialError("Tidak ditemukan di GitHub.", 404, "not_found")
                 if resp.status >= 400:
@@ -300,13 +323,14 @@ class GitHub:
             raise RateLimited(self.backoff_until)
         self.requests += 1
         try:
-            async with self.session().request(method, self.url(path), json=body, headers=self._headers()) as resp:
+            sent = self._headers()
+            async with self.session().request(method, self.url(path), json=body, headers=sent) as resp:
                 self._note_rate(resp)
                 text = await resp.text()
                 if self._is_rate_limit(resp.status, resp, text):
                     raise RateLimited(self._backoff(resp))
                 if resp.status == 401:
-                    raise SocialError("Token GitHub tidak valid lagi; masuk ulang.", 401, "unauthorized")
+                    raise self._unauthorized(sent.get("Authorization", ""))
                 if resp.status >= 400:
                     raise SocialError(f"GitHub HTTP {resp.status}: {text[:200]}",
                                       404 if resp.status == 404 else 502, "github_error")
@@ -453,7 +477,9 @@ class Social:
         self.gw = gw
         self.tokens = TokenStore()
         self._token = None
-        self.gh = GitHub(self.token)
+        # The token GitHub last answered 401 to (never sent anywhere, never logged).
+        self._rejected: str | None = None
+        self.gh = GitHub(self.token, on_unauthorized=self._github_rejected)
         self.login_state: dict[str, Any] = {"state": "idle"}
         self._login_task: asyncio.Task | None = None
         self._loop_task: asyncio.Task | None = None
@@ -472,6 +498,30 @@ class Social:
         if self._token is None:
             self._token = self.tokens.get()
         return self._token
+
+    def token_rejected(self) -> bool:
+        tok = self.token()
+        return bool(tok) and tok == self._rejected
+
+    def signed_in(self) -> bool:
+        return bool(self.token()) and not self.token_rejected()
+
+    def _require_token(self) -> None:
+        if not self.token():
+            raise signed_out_error()
+        if self.token_rejected():
+            raise token_invalid_error()
+
+    def _github_rejected(self, tok: str) -> None:
+        """GitHub said 401 to [tok]: remember it, and re-read the store next
+        time so a token replaced on this PC (keychain/file) is picked up
+        without restarting the core."""
+        if tok != self._rejected:
+            self._rejected = tok
+            if self.login_state.get("state") == "done":
+                self.login_state = {"state": "idle"}
+            self.changed("login", state="token_invalid")
+        self._token = None
 
     def settings(self) -> dict:
         raw = cfgmod.get_path(cfgmod.load_config(), "social", {}) or {}
@@ -581,7 +631,7 @@ class Social:
     def _status_flip(self) -> None:
         # Signed out there is no profile to update; signed in, maybe_publish emits
         # social.changed {what: status} on the idle -> coding transition.
-        if self._coding is not True and self.token():
+        if self._coding is not True and self.signed_in():
             self.kick()
 
     async def local_stats(self) -> dict:
@@ -605,8 +655,7 @@ class Social:
 
     # ---- GitHub-side data ---------------------------------------------------
     async def me(self) -> dict:
-        if not self.token():
-            raise SocialError("Belum masuk dengan GitHub.", 401, "signed_out")
+        self._require_token()
         u = await self.gh.get("/user")
         return {"login": u.get("login"), "name": u.get("name") or u.get("login"), "bio": u.get("bio") or "",
                 "avatar_url": u.get("avatar_url"), "html_url": u.get("html_url"),
@@ -683,8 +732,8 @@ class Social:
 
     # ---- publishing -----------------------------------------------------------
     async def maybe_publish(self, force: bool = False) -> dict:
-        if not self.token():
-            return {"published": False, "reason": "signed_out"}
+        if not self.signed_in():
+            return {"published": False, "reason": "signed_out" if not self.token() else "github_token_invalid"}
         settings = self.settings()
         async with self._publish_lock:
             stats = await self.local_stats()
@@ -790,6 +839,7 @@ class Social:
     async def friends(self) -> dict:
         if not self.token():
             return {"signed_in": False, "friends": [], "pending": []}
+        self._require_token()
         following_list = await self.gh.get_all("/user/following")
         followers = {u["login"] for u in await self.gh.get_all("/user/followers") if isinstance(u, dict)}
         by_login = {u["login"]: u for u in following_list if isinstance(u, dict)}
@@ -847,8 +897,7 @@ class Social:
     async def follow(self, login: str, on: bool) -> dict:
         if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", login or ""):
             raise SocialError("Username GitHub tidak valid.", 422, "bad_login")
-        if not self.token():
-            raise SocialError("Belum masuk dengan GitHub.", 401, "signed_out")
+        self._require_token()
         await self.gh.send("PUT" if on else "DELETE", f"/user/following/{login}")
         self.gh.invalidate("/user/following")
         self.gh.invalidate("/user/followers")
@@ -864,7 +913,7 @@ class Social:
         ``{state: done}``; a flow already pending → the same code, so a tap on
         the phone never invalidates the code the desktop is showing."""
         if not force:
-            if self.token():
+            if self.signed_in():
                 return {"state": "done", "login": self.state().get("login")}
             cur = self.login_state
             if (cur.get("state") == "pending" and float(cur.get("expires_at") or 0) > time.time() + 30
@@ -918,6 +967,7 @@ class Social:
             if token:
                 self.tokens.set(token)
                 self._token = token
+                self._rejected = None
                 self.gh.cache.clear()
                 try:
                     me = await self.me()
@@ -934,6 +984,7 @@ class Social:
     def logout(self) -> dict:
         self.tokens.clear()
         self._token = ""
+        self._rejected = None
         self.gh.cache.clear()
         self.login_state = {"state": "idle"}
         self.save_state(login=None)
@@ -942,7 +993,8 @@ class Social:
 
     def overview(self) -> dict:
         st = self.state()
-        return {"signed_in": bool(self.token()), "login": st.get("login") if self.token() else None,
+        return {"signed_in": self.signed_in(), "login": st.get("login") if self.token() else None,
+                "github_token_invalid": self.token_rejected(),
                 "client_id_configured": bool(self.client_id()), "client_id_source": self.client_id_source(), "login_flow": self.public_login(),
                 "token_storage": self.tokens.backend, "settings": self.settings(),
                 "rate": self.gh.rate, "backoff_until": self.gh.backoff_until or None,

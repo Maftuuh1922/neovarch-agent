@@ -26,6 +26,7 @@ class FakeGitHub:
         self.token = "gho_secret_token_value"
         self.polls = 0
         self.rate_limited = False
+        self.revoked = ""  # a token GitHub answers 401 "Bad credentials" to
         self.base = ""
         now = time.time()
         self.friend_profiles = {
@@ -64,6 +65,8 @@ class FakeGitHub:
             return web.json_response({"message": "API rate limit exceeded"}, status=403,
                                      headers={"X-RateLimit-Remaining": "0",
                                               "X-RateLimit-Reset": str(int(time.time()) + 120)})
+        if self.revoked and request.headers.get("Authorization") == f"Bearer {self.revoked}":
+            return web.json_response({"message": "Bad credentials"}, status=401)
         if not request.path.startswith(("/login/", "/raw/")):
             assert request.headers.get("Authorization") == f"Bearer {self.token}"
         return await handler(request)
@@ -483,5 +486,70 @@ async def test_login_start_when_signed_in_is_done_and_rpc_state(gh, home):
         assert _device_codes(gh) == n
         assert await gw.social.rpc("social.login.start", {}) == {"state": "done", "login": "aku"}
         assert (await gw.social.rpc("social.login.state", {}))["state"] == "done"
+    finally:
+        await c.close()
+
+
+async def test_github_rejecting_the_pc_token_is_not_a_pairing_error(gh, home):
+    """Phone bug after 1.4.7: GitHub refused the PC's stored token, the core
+    answered /api/social/profile with HTTP 401 and the phone (which reads every
+    401 as "PC refused my pairing token") said "token ditolak oleh PC —
+    pasangkan ulang" while chat on the same token was fine."""
+    gw, c = await _client()
+    try:
+        await _login(gw, c, gh)
+        events = []
+        orig = gw.broadcast_event
+        gw.broadcast_event = lambda kind, sid, payload: (events.append((kind, payload)), orig(kind, sid, payload))
+        gh.revoked = gh.token  # token expired / revoked on GitHub
+        gw.social.gh.cache.clear()
+        r = await c.get("/api/social/profile", headers=H)
+        assert r.status == 409  # never 401/403: the pairing token was accepted
+        body = await r.json()
+        assert body["code"] == "github_token_invalid" and "GitHub" in body["detail"]
+        st = await (await c.get("/api/social/status", headers=H)).json()
+        assert st["signed_in"] is False and st["github_token_invalid"] is True
+        assert gh.token not in json.dumps(st)
+        assert ("social.changed", {"what": "login", "state": "token_invalid"}) in events
+        r = await c.get("/api/social/friends", headers=H)
+        assert r.status == 409 and (await r.json())["code"] == "github_token_invalid"
+        r = await c.post("/api/social/follow", json={"login": "budi"}, headers=H)
+        assert r.status == 409
+        assert (await gw.social.maybe_publish(force=True))["reason"] == "github_token_invalid"
+        # Not signed in any more: a plain "Masuk GitHub" starts a new device flow.
+        n = _device_codes(gh)
+        start = await (await c.post("/api/social/login", headers=H)).json()
+        assert start["state"] == "pending" and _device_codes(gh) == n + 1
+    finally:
+        await c.close()
+
+
+async def test_token_replaced_on_the_pc_is_picked_up_without_restart(gh, home):
+    gw, c = await _client()
+    try:
+        await _login(gw, c, gh)
+        old = gh.token
+        gh.revoked = old
+        gw.social.gh.cache.clear()
+        assert (await c.get("/api/social/profile", headers=H)).status == 409
+        # The user saves a new token on the PC (keychain / secrets file).
+        gh.token = "gho_new_token_value"
+        gw.social.tokens.set(gh.token)
+        st = await (await c.get("/api/social/status", headers=H)).json()
+        assert st["signed_in"] is True and st["github_token_invalid"] is False
+        r = await c.get("/api/social/profile", headers=H)
+        assert r.status == 200 and (await r.json())["login"] == "aku"
+    finally:
+        await c.close()
+
+
+async def test_signed_out_is_409_and_bad_pairing_token_is_still_401(gh, home):
+    gw, c = await _client()
+    try:
+        r = await c.post("/api/social/follow", json={"login": "budi"}, headers=H)
+        assert r.status == 409 and (await r.json())["code"] == "signed_out"
+        # The real "pasangkan ulang" case: the core's auth refuses the token, no code.
+        r = await c.get("/api/social/profile", headers={"Authorization": "Bearer salah"})
+        assert r.status == 401 and "code" not in await r.json()
     finally:
         await c.close()

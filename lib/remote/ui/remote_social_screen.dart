@@ -85,7 +85,7 @@ class _SocialSectionState extends ConsumerState<SocialSection> {
     final p = r.socialProfile;
     final f = r.socialFriends;
     return Column(key: const ValueKey('social-section'), crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
-      if (r.socialError != null) Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 12), child: NvNotice(r.socialError!)),
+      if (r.socialError != null) const Padding(padding: EdgeInsets.fromLTRB(16, 0, 16, 12), child: SocialErrorBanner()),
       if (r.socialLoading && p == null && f == null)
         const SizedBox(height: 240, child: CenterLoader(label: 'memuat profil dari PC…'))
       else if (!r.socialSignedIn && r.socialError == null)
