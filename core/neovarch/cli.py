@@ -398,6 +398,12 @@ def build_parser() -> argparse.ArgumentParser:
     va.add_argument("action", nargs="?", default="status", choices=["status", "init", "sync", "open"])
     va.add_argument("path", nargs="?", default="", help="init: vault folder (default: saved vault or ~/Neovarch Vault)")
     va.add_argument("--json", action="store_true")
+    ex = sub.add_parser("extras", help="optional extras (Obsidian): status, ensure (install missing), install")
+    ex.add_argument("action", nargs="?", default="status", choices=["status", "ensure", "install"])
+    ex.add_argument("name", nargs="?", default="", help="install: which extra (default: obsidian)")
+    ex.add_argument("--reason", default="manual", help="ensure: install | update | manual (logged)")
+    ex.add_argument("--force", action="store_true", help="install even when auto-install is off / retry now")
+    ex.add_argument("--json", action="store_true")
     rw = sub.add_parser("rewind", help="Tempest: restore files to a shadow checkpoint (git history untouched)")
     rw.add_argument("ref", nargs="?", default="last-green", help="last-green (default) or a checkpoint sha")
     rw.add_argument("--list", action="store_true", help="list checkpoints for this folder")
@@ -418,8 +424,11 @@ def cmd_vault(args) -> int:
         elif args.action == "open":
             vault = obsidian.require_vault()
             res = {"vault": str(vault), "open_uri": vault_sync.vault_uri(vault)}
-            import webbrowser
-            res["opened"] = bool(webbrowser.open(res["open_uri"]))
+            from neovarch import extras
+            if not extras.detect("obsidian")["installed"] and extras.auto_enabled(name="obsidian"):
+                print("Obsidian belum terpasang; memasang dari rilis resmi…", file=sys.stderr)
+                extras.install("obsidian")
+            res["opened"] = extras.open_uri(res["open_uri"])
         else:
             res = {**obsidian.status(), "autonotes": vault_sync.autonotes_enabled()}
     except obsidian.VaultError as exc:
@@ -432,6 +441,43 @@ def cmd_vault(args) -> int:
         if k != "status":
             print(f"{k}: {v}")
     return 0
+
+
+def cmd_extras(args) -> int:
+    """Hook for installers and the future `neovarch update`: `neovarch extras ensure --reason update`."""
+    import json as _json
+
+    from neovarch import extras
+
+    def show(e: dict) -> None:
+        if args.json or e.get("phase") not in ("download",):
+            return
+        pct = e.get("percent")
+        print(f"\r  {e.get('phase')}: {pct if pct is not None else '?'}%", end="", file=sys.stderr, flush=True)
+
+    if args.action == "ensure":
+        res = extras.ensure_all(reason=args.reason, force=args.force, progress=show)
+    elif args.action == "install":
+        name = args.name or "obsidian"
+        if name not in extras.REGISTRY:
+            print(f"extras: unknown extra {name} (known: {', '.join(extras.REGISTRY)})", file=sys.stderr)
+            return 2
+        try:
+            res = [extras.install(name, progress=show, force=args.force)]
+        except Exception as exc:  # noqa: BLE001
+            print(f"extras: {name}: {exc}", file=sys.stderr)
+            return 1
+    else:
+        res = extras.status_all()
+    if args.json:
+        print(_json.dumps(res, ensure_ascii=False, indent=1))
+    else:
+        print("", file=sys.stderr) if args.action != "status" else None
+        for r in res:
+            state = r.get("status") or ("terpasang" if r.get("installed") else "belum terpasang")
+            print(f"{r.get('label') or r.get('name')}: {state}" + (f" ({r['path']})" if r.get("path") else "")
+                  + (f" — {r['detail']}" if r.get("detail") else ""))
+    return 1 if any(r.get("status") == "failed" for r in res) else 0
 
 
 def cmd_rewind(args) -> int:
@@ -487,6 +533,8 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(cmd_rewind(args))
     if args.cmd == "vault":
         raise SystemExit(cmd_vault(args))
+    if args.cmd == "extras":
+        raise SystemExit(cmd_extras(args))
     if args.cmd == "update":
         print(f"Update Neovarch by re-running its installer:\n  curl -fsSL {INSTALLER}.sh | sh\n  irm {INSTALLER}.ps1 | iex")
         return

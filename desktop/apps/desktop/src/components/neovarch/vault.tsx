@@ -5,6 +5,8 @@ import { hermesApi } from '@/api/client'
 import { OBSIDIAN_VAULT_CHANGED_EVENT } from '@/app/settings/obsidian-vault-settings'
 import { cn } from '@/lib/utils'
 
+import { extrasPhaseText, useOpenInObsidian } from './extras'
+
 import {
   DEFAULT_FILTERS,
   filterGraph,
@@ -363,6 +365,7 @@ export function NeovarchVaultPage() {
   const [view, setView] = useState<'graph' | 'note'>('note')
   const [error, setError] = useState<null | string>(null)
   const [busy, setBusy] = useState<null | string>(null)
+  const obsidian = useOpenInObsidian()
 
   const load = useCallback(async () => {
     try {
@@ -475,7 +478,7 @@ export function NeovarchVaultPage() {
               <button
                 className="nv-vault-btn nv-vault-btn-sm"
                 data-nv-vault-open-app
-                onClick={() => openExternal(tree.open_uri!)}
+                onClick={() => void obsidian.open(tree.open_uri!)}
                 title="Buka seluruh vault di aplikasi Obsidian"
                 type="button"
               >
@@ -512,6 +515,27 @@ export function NeovarchVaultPage() {
         </ul>
       </aside>
       <section className="nv-vault-main">
+        {obsidian.offer && (
+          <div className="nv-vault-offer" data-nv-obsidian-offer role="dialog">
+            <p>
+              Obsidian belum terpasang di PC ini. Pasang sekarang dari rilis resminya (obsidian.md)? Graf bawaan Neovarch
+              tetap bisa dipakai tanpa Obsidian.
+            </p>
+            <div className="nv-vault-actions">
+              <button className="nv-vault-btn nv-vault-btn-primary" data-nv-obsidian-accept onClick={() => void obsidian.accept()} type="button">
+                Pasang & buka
+              </button>
+              <button className="nv-vault-btn" onClick={obsidian.dismiss} type="button">
+                Nanti saja
+              </button>
+            </div>
+          </div>
+        )}
+        {obsidian.job && obsidian.job.name !== undefined && obsidian.job.state !== 'ensured' && (
+          <p className="nv-vault-empty" data-nv-obsidian-progress role="status">
+            {extrasPhaseText(obsidian.job)}
+          </p>
+        )}
         {error && (
           <div className="nv-vault-empty" role="alert">
             <p>Vault belum bisa dimuat: {error}</p>
@@ -541,7 +565,7 @@ export function NeovarchVaultPage() {
                   </p>
                 )}
               </div>
-              <button className="nv-vault-btn" onClick={() => openExternal(note.open_uri)} type="button">
+              <button className="nv-vault-btn" onClick={() => void obsidian.open(note.open_uri)} type="button">
                 Buka di Obsidian
               </button>
             </header>

@@ -33,6 +33,7 @@ param(
     [switch]$Portable,
     [switch]$CoreOnly,
     [switch]$No9Router,
+    [switch]$NoExtras,
     [switch]$Manifest,
     [string]$Stage = '',
     [switch]$NonInteractive,
@@ -310,6 +311,20 @@ function Install-Node {
     return (Join-Path $ToolsDir 'node\npm.cmd')
 }
 
+# Optional extras (Obsidian for the vault): the official installer from obsidian.md's GitHub
+# releases, run silently (/S, per-user), skipped when already installed. Never bundled.
+function Install-Extras {
+    if ($NoExtras -or $env:NEOVARCH_EXTRAS_AUTO -in @('0', 'false', 'no', 'off')) { Write-Host '    extras skipped'; return }
+    if (-not (Test-Path $CliShim)) { return }
+    Write-Host '    checking optional extras (Obsidian)...'
+    try {
+        & $CliShim extras ensure --reason install
+        if ($LASTEXITCODE -ne 0) { Write-Warn2 'optional extras were not installed (the app works without them; retry: neovarch extras ensure)' }
+    } catch {
+        Write-Warn2 'optional extras were not installed (the app works without them; retry: neovarch extras ensure)'
+    }
+}
+
 function Install-9Router {
     if ($No9Router -or $env:NEOVARCH_NO_9ROUTER) { Write-Host '    9Router skipped'; return }
     $have = Get-Command 9router -ErrorAction SilentlyContinue
@@ -456,6 +471,7 @@ function Invoke-Install {
 
     Install-Core
     Install-9Router
+    Install-Extras
 
     if (-not $CoreOnly) {
         if ($arch -eq 'ARM64') { Write-Warn2 'No native ARM64 desktop build yet; installing the x64 build (runs under emulation).' }

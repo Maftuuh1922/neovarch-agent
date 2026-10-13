@@ -552,6 +552,56 @@ class Gateway:
         os.environ["NEOVARCH_RESTART_PORT"] = str(self.port)
         os.execv(argv[0], argv)
 
+    # ---- optional extras --------------------------------------------------------
+    extras_job: dict | None = None
+
+    def start_extras_job(self, name: str, reason: str = "manual") -> None:
+        """Install one extra in a worker thread; progress goes out as `extras.progress` events."""
+        from neovarch import extras
+        loop = asyncio.get_running_loop()
+        job = {"name": name, "state": "running", "phase": "start", "percent": None, "reason": reason,
+               "started_at": time.time()}
+        self.extras_job = job
+
+        def progress(ev: dict) -> None:
+            job.update({k: v for k, v in ev.items() if k in ("phase", "percent", "done", "total", "version")})
+            loop.call_soon_threadsafe(self.broadcast_event, "extras.progress", None, dict(job))
+
+        def work() -> None:
+            try:
+                res = extras.install(name, progress=progress, force=True)
+                job.update(state="done", result=res, status=res.get("status"))
+            except Exception as exc:  # noqa: BLE001
+                job.update(state="failed", detail=str(exc)[:300])
+            loop.call_soon_threadsafe(self.broadcast_event, "extras.progress", None, dict(job))
+
+        loop.run_in_executor(None, work)
+
+    def ensure_extras_after_install_or_update(self) -> None:
+        """First gateway start of a new Neovarch version (fresh install or update): install the
+        missing optional extras in the background. Skips when already checked for this version."""
+        from neovarch import extras
+        st = extras.state()
+        if st.get("_checked_version") == __version__:
+            return
+        reason = "update" if st.get("_checked_version") else "install"
+        loop = asyncio.get_running_loop()
+
+        def work() -> None:
+            res = extras.ensure_all(reason=reason)
+            data = extras.state()
+            data["_checked_version"] = __version__
+            try:
+                extras._save_state(data)
+            except OSError:
+                pass
+            loop.call_soon_threadsafe(self.broadcast_event, "extras.progress", None,
+                                      {"state": "ensured", "reason": reason, "results": res})
+
+        if os.environ.get("NEOVARCH_EXTRAS_AUTO", "").strip().lower() in ("0", "false", "no", "off"):
+            return
+        loop.run_in_executor(None, work)
+
     def consume_restart_notice(self) -> None:
         """First boot after a restart: tell the chat that asked for it how it went."""
         from neovarch import selfedit
@@ -2354,6 +2404,45 @@ def build_app(gw: Gateway) -> web.Application:
         gw.broadcast_event("vault.changed", None, {"sync": True})
         return web.json_response(res)
 
+    # ---- optional extras (Obsidian): status, install with progress ------------
+    async def extras_status(_):
+        from neovarch import extras
+        st = await asyncio.to_thread(extras.status_all)
+        return web.json_response({"extras": st, "job": gw.extras_job})
+
+    async def extras_install(request):
+        from neovarch import extras
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        name = str((body or {}).get("name") or "obsidian")
+        if name not in extras.REGISTRY:
+            return web.json_response({"detail": f"unknown extra {name}"}, status=400)
+        job = gw.extras_job
+        if job and job.get("state") == "running":
+            return web.json_response({"job": job}, status=202)
+        gw.start_extras_job(name)
+        return web.json_response({"job": gw.extras_job}, status=202)
+
+    async def extras_open(request):
+        """Open an obsidian:// link on this PC (the desktop's "Buka di Obsidian")."""
+        from neovarch import extras
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        uri = str((body or {}).get("uri") or "")
+        if not uri.startswith("obsidian://"):
+            return web.json_response({"detail": "only obsidian:// links"}, status=400)
+        found = await asyncio.to_thread(extras.detect, "obsidian")
+        if not found["installed"]:
+            return web.json_response({"opened": False, "installed": False, "extra": found}, status=409)
+        return web.json_response({"opened": await asyncio.to_thread(extras.open_uri, uri), "installed": True})
+
+    r.add_get("/api/extras", extras_status)
+    r.add_post("/api/extras/install", extras_install)
+    r.add_post("/api/extras/open", extras_open)
     r.add_post("/api/obsidian/init", vault_init)
     r.add_post("/api/obsidian/sync", vault_sync_now)
     r.add_get("/api/obsidian/tree", vault_tree)
@@ -2751,6 +2840,10 @@ def serve(host: str, port: int, *, isolated: bool = False) -> int:
         from neovarch import logs as logmod
         logmod.setup().info("gateway listening on %s:%s (version %s)", host, gw.port, __version__)
         gw.consume_restart_notice()
+        try:  # optional extras (Obsidian) after a fresh install or an update; never blocks startup
+            gw.ensure_extras_after_install_or_update()
+        except Exception:  # noqa: BLE001
+            pass
         # The desktop waits for this exact sentinel (legacy wire name, kept for compatibility).
         print(f"HERMES_BACKEND_READY port={gw.port}", flush=True)
         print(f"Neovarch gateway listening on {host}:{gw.port} (home {neovarch_home()})", flush=True)

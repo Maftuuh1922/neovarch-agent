@@ -20,6 +20,7 @@
 # Options (pass after `sh -s --` when piping):
 #   --core-only        install only the core and the `neovarch` command
 #   --no-9router       do not install/start 9Router (pick a provider later)
+#   --no-extras        do not install optional extras (Obsidian) — the built-in vault graph works without them
 #   --uninstall        remove Neovarch (~/.neovarch, the app, its shims)
 #   --help             show help
 # Desktop-bootstrap protocol (used by the desktop app on first launch):
@@ -520,6 +521,18 @@ uninstall() {
   else say ""; say "Neovarch Agent uninstalled. A Hermes Agent install, if any, was not touched."; fi
 }
 
+# -------------------------------------------------------------- extras ---
+# Optional extras (Obsidian for the vault): official AppImage from obsidian.md's GitHub
+# releases into ~/.local, skipped when already installed. Never bundled with Neovarch.
+install_extras() {
+  case "${NEOVARCH_EXTRAS_AUTO:-1}" in 0|false|no|off) say "  extras skipped (--no-extras)"; return 0 ;; esac
+  [ -x "$CLI_SHIM" ] || return 0
+  say "  checking optional extras (Obsidian)…"
+  if "$CLI_SHIM" extras ensure --reason install; then :; else
+    warn "optional extras were not installed (the app works without them; retry: neovarch extras ensure)"
+  fi
+}
+
 # ---------------------------------------------------------------- main ---
 main() {
   action=install; core_only=0; STAGE=''; BRANCH_ARG=''; COMMIT_ARG=''
@@ -528,6 +541,7 @@ main() {
       --uninstall) action=uninstall ;;
       --core-only|--no-desktop) core_only=1 ;;
       --no-9router) NEOVARCH_NO_9ROUTER=1 ;;
+      --no-extras) NEOVARCH_EXTRAS_AUTO=0 ;;
       --manifest) action=manifest ;;
       --stage) action=stage; STAGE="${2:-}"; shift ;;
       --non-interactive) ;;
@@ -564,6 +578,7 @@ main() {
   banner
   install_core
   stage_9router
+  install_extras
   if [ "$core_only" = 0 ]; then
     case "$arch" in
       x86_64|amd64) install_desktop ;;

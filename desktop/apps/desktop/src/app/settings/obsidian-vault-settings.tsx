@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { hermesApi } from '@/api/client'
+import { ObsidianExtraPanel } from '@/components/neovarch/extras'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Brain, FolderOpen } from '@/lib/icons'
@@ -158,6 +159,7 @@ export function ObsidianVaultSettings() {
             </span>
           )}
         </div>
+        <ObsidianExtraPanel />
       </div>
     </SettingsContent>
   )
