@@ -16,6 +16,8 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("NEOVARCH_HOME", str(h))
     # Never touch a real 9Router (or the user's ~/.9router) from the tests.
     monkeypatch.setenv("NEOVARCH_9ROUTER_SUPERVISE", "0")
+    # Never download/install a real optional extra (Obsidian) from the tests.
+    monkeypatch.setenv("NEOVARCH_EXTRAS_AUTO", "0")
     monkeypatch.setenv("NEOVARCH_9ROUTER_AUTOSTART", "0")
     monkeypatch.setenv("NEOVARCH_9ROUTER_URL", "http://127.0.0.1:9/v1")
     monkeypatch.setenv("NEOVARCH_9ROUTER_DATA_DIR", str(tmp_path / "no-9router"))

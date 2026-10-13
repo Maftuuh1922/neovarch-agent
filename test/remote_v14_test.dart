@@ -307,6 +307,28 @@ void main() {
       }
     });
 
+    test('Buka di Obsidian: app first, else the Play Store page', () async {
+      final tried = <String>[];
+      Future<bool> none(Uri u) async {
+        tried.add('$u');
+        return false;
+      }
+
+      Future<bool> storeOnly(Uri u) async {
+        tried.add('$u');
+        return u.scheme == 'market';
+      }
+
+      Future<bool> app(Uri u) async => u.scheme == 'obsidian';
+      expect(await openObsidianOrStore('obsidian://open?vault=V&file=a', launch: app), 'obsidian');
+      expect(await openObsidianOrStore('obsidian://open?vault=V&file=a', launch: storeOnly), 'store');
+      expect(tried.last, obsidianPlayStore);
+      tried.clear();
+      expect(await openObsidianOrStore('obsidian://x', launch: none), isNull);
+      expect(tried, ['obsidian://x', obsidianPlayStore, obsidianPlayStoreWeb]);
+      expect(await openObsidianOrStore(null, launch: none), isNull);
+    });
+
     test('graph layout does not pin nodes to the canvas edges', () {
       // a hub with 12 leaves + 3 orphans: the old per-step clamp piled nodes on the border
       final g = VaultGraph.fromJson({

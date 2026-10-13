@@ -27,10 +27,33 @@ String wikilinksToMarkdown(String md) => md.replaceAllMapped(RegExp(r'!?\[\[([^\
       return '[$label]($_wikiScheme${Uri.encodeComponent(wikiTarget(raw))})';
     });
 
+/// Obsidian on Android (Play Store); never bundled with Neovarch.
+const obsidianPlayStore = 'market://details?id=md.obsidian';
+const obsidianPlayStoreWeb = 'https://play.google.com/store/apps/details?id=md.obsidian';
+
+typedef UrlLauncher = Future<bool> Function(Uri uri);
+
+Future<bool> _launchExternal(Uri uri) => launchUrl(uri, mode: LaunchMode.externalApplication).catchError((_) => false);
+
+/// Open an obsidian:// link; when Obsidian is not installed on the phone, open its Play
+/// Store page instead (the extras auto-install path on Android). Returns what was opened:
+/// 'obsidian', 'store' or null.
+Future<String?> openObsidianOrStore(String? uri, {UrlLauncher launch = _launchExternal}) async {
+  if (uri == null || uri.isEmpty) return null;
+  if (await launch(Uri.parse(uri))) return 'obsidian';
+  if (await launch(Uri.parse(obsidianPlayStore))) return 'store';
+  if (await launch(Uri.parse(obsidianPlayStoreWeb))) return 'store';
+  return null;
+}
+
 Future<void> openInObsidian(BuildContext context, String? uri) async {
-  if (uri == null || uri.isEmpty) return;
-  final ok = await launchUrl(Uri.parse(uri), mode: LaunchMode.externalApplication).catchError((_) => false);
-  if (!ok && context.mounted) toast(context, 'Aplikasi Obsidian tidak ditemukan di HP ini.');
+  final opened = await openObsidianOrStore(uri);
+  if (!context.mounted) return;
+  if (opened == 'store') {
+    toast(context, 'Obsidian belum terpasang — membuka Play Store. Setelah terpasang, ketuk lagi.');
+  } else if (opened == null && uri != null && uri.isNotEmpty) {
+    toast(context, 'Aplikasi Obsidian tidak ditemukan di HP ini.');
+  }
 }
 
 class RemoteVaultScreen extends ConsumerStatefulWidget {
