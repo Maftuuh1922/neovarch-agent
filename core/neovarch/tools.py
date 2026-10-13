@@ -1157,3 +1157,12 @@ def _register_vision_tools() -> None:
 
 
 _register_vision_tools()
+
+
+def _register_design_tools() -> None:
+    """`design` (Mode Desain) lives in neovarch.design; registered here with the rest."""
+    from neovarch import design
+    TOOLS.setdefault("design", (design.tool_design, design.SCHEMA))
+
+
+_register_design_tools()

@@ -659,7 +659,8 @@ def stable_tools(tools: list[dict]) -> list[dict]:
 
 SECTION_TITLES = {"soul": "Persona dasar (SOUL)", "app": "Tentang aplikasi", "persona": "Identitas",
                   "extra": "Instruksi tambahan", "memory": "Catatan memori", "vault": "Obsidian vault",
-                  "skills": "Skill terpasang", "platform": "PC ini", "cwd": "Direktori kerja"}
+                  "skills": "Skill terpasang", "platform": "PC ini", "cwd": "Direktori kerja",
+                  "design": "Design system proyek"}
 
 
 def config_change_note(old: list, new: list) -> str:

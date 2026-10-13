@@ -21,8 +21,11 @@ EXPECTED = {
     "api-and-interface-design",
     # anthropics/skills (Apache-2.0), diagram-design, archify, rea (MIT)
     "frontend-design", "diagram", "diagram-interaktif", "investigasi",
+    # Mode Desain: nexu-io/open-design + pbakaus/impeccable (Apache-2.0), ui-ux-pro-max + taste-skill (MIT)
+    "desain", "ui-ux-pro-max", "taste", "impeccable",
     # original
-    "disiplin-koding", "riset-akademik", "tulis-akademik", "review-sejawat", "revisi-akademik", "finalisasi-akademik",
+    "disiplin-koding", "design-to-code",
+    "riset-akademik", "tulis-akademik", "review-sejawat", "revisi-akademik", "finalisasi-akademik",
 }
 
 

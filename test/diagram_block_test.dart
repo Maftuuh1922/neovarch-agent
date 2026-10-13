@@ -45,6 +45,16 @@ void main() {
     expect(diagramKindFor('dart', 'void main() {}'), isNull);
   });
 
+  test('diagramKindFor previews whole html documents only', () {
+    const page = '<!doctype html>\n<html><head><style>:root{--bg:#fff}</style></head><body>Hai</body></html>\n';
+    expect(diagramKindFor('html', page), DiagramKind.html);
+    expect(diagramKindFor('html', '<!-- artifact -->\n<html lang="id"><body></body></html>'), DiagramKind.html);
+    expect(diagramKindFor('html', '<div class="card">Hai</div>'), isNull);
+    expect(diagramKindFor('', page), isNull);
+    expect(looksLikeHtmlDocument('<!DOCTYPE html><html></html>'), isTrue);
+    expect(looksLikeHtmlDocument('<html><body>'), isFalse);
+  });
+
   testWidgets('mermaid block defaults to Pratinjau and toggles to Kode', (t) async {
     DiagramBlock.debugPreviewBuilder = (ctx, code, kind, full, onResult) {
       WidgetsBinding.instance.addPostFrameCallback((_) => onResult(const DiagramRenderResult.ok(160)));

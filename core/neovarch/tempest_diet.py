@@ -50,6 +50,7 @@ ONE_LINERS = {
     "self_undo": "batalkan perubahan diri terakhir",
     "core_reload": "muat ulang core setelah perubahan",
     "diagram_save": "simpan diagram svg/html/mermaid sebagai halaman",
+    "design": "Mode Desain: design system proyek, artifact HTML, kritik, cek token, export",
     "obsidian_search": "cari catatan di vault Obsidian",
     "obsidian_read": "baca satu catatan vault Obsidian",
     "obsidian_write": "tulis/tambah catatan vault Obsidian",

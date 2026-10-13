@@ -84,5 +84,8 @@ affiliated with or endorsed by Nous Research.
 Default skill pack (core/neovarch/skillpack): skills from obra/superpowers (MIT, Copyright (c) 2025 Jesse Vincent),
 addyosmani/agent-skills (MIT, Copyright (c) 2025 Addy Osmani), anthropics/skills frontend-design (Apache-2.0),
 cathrynlavery/diagram-design (MIT, Copyright (c) 2025 Cathryn Lavery), tt-a1i/archify (MIT, Copyright (c) 2026 tt-a1i
-(Archify), Copyright (c) 2025 Cocoon AI) and morluto/rea (MIT, Copyright (c) 2026 morluto). See
+(Archify), Copyright (c) 2025 Cocoon AI) and morluto/rea (MIT, Copyright (c) 2026 morluto). Mode Desain bundles a curated subset of nexu-io/open-design (Apache-2.0:
+design systems, templates, craft rules, adapted direction library), nextlevelbuilder/ui-ux-pro-max-skill (MIT,
+Copyright (c) 2024 Next Level Builder), Leonxlnx/taste-skill (MIT, Copyright (c) 2026 Leonxlnx) and
+pbakaus/impeccable (Apache-2.0). See
 core/neovarch/skillpack/THIRD_PARTY_SKILLS.md and the LICENSE file in each skill folder.

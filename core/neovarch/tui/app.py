@@ -543,6 +543,10 @@ class ChatApp:
         self.info["reasoning_effort"] = res.get("value") or level
         self.console.print(Text(f"  Penalaran: {self.reasoning_label()}", style="ok"))
 
+    async def cmd_desain(self, cmd) -> None:
+        # The core answers /desain inside the turn (status/cek directly, a brief starts the workflow).
+        await self.send("/desain" + (f" {cmd.rest}" if cmd.rest else ""))
+
     async def cmd_skill(self, cmd) -> None:
         cat = await self.client.call("commands.catalog", {})
         skills = [s for s in (cat or {}).get("skills") or [] if isinstance(s, dict)]
