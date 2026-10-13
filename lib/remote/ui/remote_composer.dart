@@ -197,6 +197,15 @@ String shortModel(String m) {
   return s.length > 26 ? '${s.substring(0, 25)}…' : s;
 }
 
+/// Whether [ComposerChipsRow] shows the model chip (the PC sent a composer
+/// catalog with a model). The chat screen shows its fallback [ModelChip]
+/// (model_picker.dart) only when this is false, so the composer never lists
+/// the model twice (cube chip + sparkle chip).
+bool composerShowsModel(RemoteController r) {
+  final c = r.composer;
+  return c != null && (c.hasModels || c.model.isNotEmpty);
+}
+
 /// Current selections above the field: model, reasoning effort, skills.
 /// Empty (nothing rendered) when the PC has no composer catalog.
 class ComposerChipsRow extends StatelessWidget {
@@ -208,7 +217,7 @@ class ComposerChipsRow extends StatelessWidget {
     final c = r.composer;
     if (c == null) return const SizedBox.shrink();
     final chips = <Widget>[
-      if (c.hasModels || c.model.isNotEmpty)
+      if (composerShowsModel(r))
         ComposerChip(
           key: const ValueKey('chip-model'),
           icon: CupertinoIcons.cube,
