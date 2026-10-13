@@ -21,6 +21,7 @@ import aiohttp
 from neovarch.paths import ForeignPathError, check_path, neovarch_home
 
 MAX_OUTPUT = 20_000
+READ_LINE_CHARS = 2000
 SHELL_DEFAULT_TIMEOUT = 60
 SHELL_MAX_TIMEOUT = 600
 
@@ -139,10 +140,13 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
         if choice in ("session", "always"):
             ctx.session_allow.add("@outside:" + str(workdir))
     started = time.monotonic()
+    env = {**os.environ, **_account_env(), "NEOVARCH_CORE": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    if args.get("background"):
+        from neovarch import tools_code
+        return await tools_code.start_job(command, workdir, env)
     spawn = asyncio.ensure_future(asyncio.create_subprocess_shell(
         command, cwd=str(workdir), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        env={**os.environ, **_account_env(), "NEOVARCH_CORE": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
-        start_new_session=os.name != "nt",
+        stdin=asyncio.subprocess.DEVNULL, env=env, start_new_session=os.name != "nt",
     ))
     try:
         proc = await asyncio.shield(spawn)
@@ -157,16 +161,29 @@ async def tool_shell(args: dict, ctx: ToolContext) -> str:
         if proc is not None:
             await asyncio.shield(kill_process_tree(proc))
         raise
+    from neovarch.tools_code import OutputBuffer
+    buf = OutputBuffer()
+
+    async def collect() -> None:
+        while True:
+            chunk = await proc.stdout.read(65536)
+            if not chunk:
+                break
+            buf.add(chunk)
+        await proc.wait()
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        await asyncio.wait_for(collect(), timeout=timeout)
     except asyncio.TimeoutError:
         await kill_process_tree(proc)
-        return f"error: timed out after {timeout:.0f}s"
+        partial = decode_output(buf.bytes())
+        return _clip(f"error: timed out after {timeout:.0f}s; the command was stopped. For servers, watchers or long "
+                     f"builds/tests use background=true and check them with shell_job.\n"
+                     + (f"Output before the timeout:\n{partial}" if partial.strip() else "(no output before the timeout)"))
     except asyncio.CancelledError:
         # Stop: the command and everything it started go away now, not when it finishes.
         await asyncio.shield(kill_process_tree(proc))
         raise
-    text = decode_output(out)
+    text = decode_output(buf.bytes())
     return _clip(f"exit code {proc.returncode} ({time.monotonic() - started:.1f}s)\n{text}")
 
 
@@ -225,12 +242,20 @@ async def tool_read_file(args: dict, ctx: ToolContext) -> str:
     if p.is_dir():
         entries = sorted(e.name + ("/" if e.is_dir() else "") for e in p.iterdir())
         return _clip("\n".join(entries) or "(empty directory)")
-    text = p.read_text(encoding="utf-8", errors="replace")
+    raw = p.read_bytes()
+    if b"\0" in raw[:8192]:
+        return f"{p}: binary file ({len(raw)} bytes); not shown as text"
+    text = decode_output(raw)
     lines = text.splitlines()
     start = max(int(args.get("offset") or 1), 1)
     limit = int(args.get("limit") or 2000)
     chunk = lines[start - 1:start - 1 + limit]
-    numbered = "\n".join(f"{i:>6}\t{line}" for i, line in enumerate(chunk, start))
+    if start > 1 and not chunk:
+        return f"(offset {start} is past the end: {p} has {len(lines)} lines)"
+
+    def cut(line: str) -> str:  # minified / generated lines would eat the whole budget
+        return line if len(line) <= READ_LINE_CHARS else line[:READ_LINE_CHARS] + f" … [+{len(line) - READ_LINE_CHARS} chars]"
+    numbered = "\n".join(f"{i:>6}\t{cut(line)}" for i, line in enumerate(chunk, start))
     more = f"\n… {len(lines) - (start - 1 + len(chunk))} more lines" if start - 1 + len(chunk) < len(lines) else ""
     return _clip(numbered + more, int(_setting("file_read_max_chars", MAX_OUTPUT, 1000, 1_000_000)))
 
@@ -244,19 +269,46 @@ async def tool_write_file(args: dict, ctx: ToolContext) -> str:
 
 
 async def tool_edit_file(args: dict, ctx: ToolContext) -> str:
+    """Exact replacement first, then a unique whitespace/indent-tolerant match; ``edits`` applies
+    several replacements to one file at once (all or nothing). See neovarch.tools_code."""
+    from neovarch import tools_code
     p = _resolve(ctx, str(args.get("path") or ""))
-    old = str(args.get("old_text") or "")
-    new = str(args.get("new_text") or "")
-    if not old:
-        return "error: old_text is required"
-    text = p.read_text(encoding="utf-8")
-    count = text.count(old)
-    if count == 0:
-        return "error: old_text was not found in the file"
-    if count > 1 and not args.get("replace_all"):
-        return f"error: old_text occurs {count} times; add more context or set replace_all"
-    p.write_text(text.replace(old, new) if args.get("replace_all") else text.replace(old, new, 1), encoding="utf-8")
-    return f"edited {p} ({count if args.get('replace_all') else 1} replacement(s))"
+    edits = args.get("edits")
+    if isinstance(edits, dict):
+        edits = [edits]
+    if not isinstance(edits, list) or not edits:
+        edits = [{"old_text": args.get("old_text") if args.get("old_text") is not None else args.get("old_string"),
+                  "new_text": args.get("new_text") if args.get("new_text") is not None else args.get("new_string"),
+                  "replace_all": args.get("replace_all")}]
+    if not p.exists():
+        return f"error: not found: {p} (create it with write_file)"
+    try:
+        text = p.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        return f"error: {p} is not UTF-8 text; edit it with shell or rewrite it with write_file"
+    try:
+        new_text, count, notes, (pos, new_len) = tools_code.edit_text(text, edits)
+    except tools_code.EditError as exc:
+        return f"error: {exc}"
+    p.write_bytes(new_text.encode("utf-8"))
+    how = ("; " + "; ".join(notes)) if notes else ""
+    view = tools_code.snippet(new_text, pos, new_len)
+    return f"edited {p} ({count} replacement(s){how})" + (f"\n{view}" if view else "")
+
+
+async def tool_grep(args: dict, ctx: ToolContext) -> str:
+    from neovarch import tools_code
+    return _clip(await tools_code.grep(args, ctx.cwd, lambda raw: _resolve(ctx, raw)))
+
+
+async def tool_glob(args: dict, ctx: ToolContext) -> str:
+    from neovarch import tools_code
+    return _clip(await tools_code.glob_files(args, ctx.cwd, lambda raw: _resolve(ctx, raw)))
+
+
+async def tool_shell_job(args: dict, ctx: ToolContext) -> str:
+    from neovarch import tools_code
+    return _clip(await tools_code.job_tool(args))
 
 
 def _html_to_text(raw: str) -> str:
@@ -280,7 +332,7 @@ def _cfg_get():
 
 # Tools that only read (files, web, notes): Tempest runs several of them from one model message at
 # the same time and never moves their output to a file (they clip themselves in context).
-READ_ONLY_TOOLS = frozenset({"read_file", "web_fetch", "web_search", "session_search", "obsidian_search",
+READ_ONLY_TOOLS = frozenset({"read_file", "grep", "glob", "web_fetch", "web_search", "session_search", "obsidian_search",
                              "obsidian_read", "obsidian_links", "report_search", "office_status"})
 
 
@@ -896,10 +948,29 @@ TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
                        "about the Kantor instead of searching files.",
         "parameters": {"type": "object", "properties": {}}}),
     "shell": (tool_shell, {
-        "description": "Run a shell command on the user's computer and return its output. Dangerous commands ask the user first.",
+        "description": "Run a shell command and return its output. Dangerous commands ask the user first. "
+                       "background=true for servers/long jobs (then shell_job).",
         "parameters": {"type": "object", "properties": {
             "command": {"type": "string"}, "workdir": {"type": "string"},
-            "timeout": {"type": "number", "description": "seconds, default 120"}}, "required": ["command"]}}),
+            "timeout": {"type": "number", "description": "seconds, default 60"},
+            "background": {"type": "boolean"}}, "required": ["command"]}}),
+    "grep": (tool_grep, {
+        "description": "Regex search in files (ripgrep, .gitignore respected), capped. Use instead of shell grep.",
+        "parameters": {"type": "object", "properties": {
+            "pattern": {"type": "string"}, "path": {"type": "string"}, "glob": {"type": "string"},
+            "output": {"type": "string", "enum": ["content", "files", "count"]},
+            "ignore_case": {"type": "boolean"}, "context": {"type": "integer"}, "limit": {"type": "integer"}},
+            "required": ["pattern"]}}),
+    "glob": (tool_glob, {
+        "description": "Find files by name pattern (e.g. **/*.py), newest first.",
+        "parameters": {"type": "object", "properties": {
+            "pattern": {"type": "string"}, "path": {"type": "string"}}, "required": ["pattern"]}}),
+    "shell_job": (tool_shell_job, {
+        "description": "Background jobs from shell(background=true). action: list | output (new output) | "
+                       "wait (until done or timeout s) | kill.",
+        "parameters": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["list", "output", "wait", "kill"]}, "id": {"type": "string"},
+            "timeout": {"type": "number"}}, "required": ["action"]}}),
     "read_file": (tool_read_file, {
         "description": "Read a text file (with line numbers) or list a directory.",
         "parameters": {"type": "object", "properties": {
@@ -909,10 +980,12 @@ TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
         "parameters": {"type": "object", "properties": {
             "path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}}),
     "edit_file": (tool_edit_file, {
-        "description": "Replace exact text in a file (old_text must be unique unless replace_all).",
+        "description": "Replace text in a file; old_text must match one place (whitespace/indent tolerated) unless "
+                       "replace_all. Many changes: edits=[{old_text,new_text}] (all or nothing).",
         "parameters": {"type": "object", "properties": {
             "path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"},
-            "replace_all": {"type": "boolean"}}, "required": ["path", "old_text", "new_text"]}}),
+            "replace_all": {"type": "boolean"}, "edits": {"type": "array", "items": {"type": "object"}}},
+            "required": ["path"]}}),
     "web_search": (tool_web_search, {
         "description": "Search the web (no key) and read the top `fetch` pages (default 2, clipped to the query). "
                        "Use it for facts you do not know.",
@@ -1029,7 +1102,8 @@ def _allowed_builtin(ctx: "ToolContext | None") -> set[str]:
     names -= set(_orch.TOOLS) - _orch.EMPLOYEE_ALLOWED  # nor change the install
     allowed = company.allowed_tools() if hasattr(company, "allowed_tools") else None
     if allowed:
-        allowed = set(allowed) | ({"web_search"} if "web_fetch" in allowed else set())
+        allowed = set(allowed) | ({"web_search"} if "web_fetch" in allowed else set()) \
+            | ({"grep", "glob"} if "read_file" in allowed else set()) | ({"shell_job"} if "shell" in allowed else set())
         names &= allowed | {"office_status", "send_file"}
     return names
 

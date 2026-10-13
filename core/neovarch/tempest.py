@@ -338,7 +338,7 @@ def offload(result: str, name: str, call_id: str, obs_dir: Path, limit_tokens: i
     else:  # few, very long lines
         body = result[:3000] + f"\n… [{len(result) - 6000} karakter disimpan di file] …\n" + result[-3000:]
     return (f"[output besar: {len(lines)} baris, {len(result)} karakter, ~{est_tokens(result)} token. "
-            f"Lengkapnya di {path} — pakai read_file (offset/limit) atau shell grep pada file itu.]\n{body}")
+            f"Lengkapnya di {path} — pakai read_file (offset/limit) atau grep (path=file itu).]\n{body}")
 
 
 def _cut(line: str, n: int = 300) -> str:
