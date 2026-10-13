@@ -25,7 +25,8 @@ Days use the PC's local date. Only the last ``KEEP_DAYS`` days and the last
 ``KEEP_SESSIONS`` sessions are kept (lifetime and per-model keep everything).
 Counts only: no prompts, no text, nothing private.
 
-REST: ``GET /api/usage[?session=<id>]`` → :func:`summary`.
+REST: ``GET /api/usage[?session=<id>]`` → :func:`summary` (``trend`` = the last 30
+kept days, each ``{date, total, input, output, cached, cache_write, calls}``).
 """
 
 from __future__ import annotations
@@ -253,7 +254,9 @@ def summary(*, session: dict | None = None, session_id: str = "", now: float | N
                      for k, v in data["models"].items()), key=lambda m: -m["total"])
     today_models = sorted(({"model": k, **_total(v)} for k, v in (t.get("models") or {}).items()),
                           key=lambda m: -m["total"])
-    trend = [{"date": k, "total": _total(v)["total"]} for k, v in sorted(data["days"].items())[-days:]]
+    # Each day carries its masuk/keluar/cache split (v1.4.8 phone chart); "date" and
+    # "total" stay first so older readers (desktop token monitor, phone ≤ 1.4.7) keep working.
+    trend = [{"date": k, **_total(v)} for k, v in sorted(data["days"].items())[-days:]]
     out: dict[str, Any] = {"date": day, "since": data.get("since") or "", "today": _total(t),
                            "lifetime": _total(data["lifetime"]), "models": models,
                            "today_models": today_models, "trend": trend}

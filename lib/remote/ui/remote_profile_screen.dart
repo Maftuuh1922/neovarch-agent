@@ -76,7 +76,7 @@ class RemoteProfileScreen extends StatelessWidget {
             id: 'tokens',
             icon: CupertinoIcons.chart_bar_alt_fill,
             title: 'Pemakaian token',
-            subtitle: 'Hari ini, sesi ini, sepanjang waktu, per model',
+            subtitle: 'Grafik harian, per model, hari ini · sesi · semua',
             children: [TokenUsagePanel()],
           ),
           const ProfileGroup(
