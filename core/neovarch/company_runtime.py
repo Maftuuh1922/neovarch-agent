@@ -21,7 +21,7 @@ from neovarch.company import STATUS_LABEL, CompanyError, CompanyStore
 if TYPE_CHECKING:  # pragma: no cover
     from neovarch.server import Gateway, LiveSession
 
-REASON_LABEL = {"assignment": "penugasan", "comment": "komentar baru", "schedule": "jadwal", "manual": "dibangunkan",
+REASON_LABEL = {"strategy": "susun strategi", "assignment": "penugasan", "comment": "komentar baru", "schedule": "jadwal", "manual": "dibangunkan",
                 "routine": "rutinitas", "approval": "keputusan persetujuan", "escalation": "eskalasi bawahan"}
 
 
@@ -40,6 +40,7 @@ class CompanyBinding:
     run_id: int | None = None
     ticket_id: int | None = None
     commented: bool = False
+    usage_seen: bool = False    # per-call usage.update arrived this turn (message.complete must not double count)
     touched: set[int] = field(default_factory=set)
 
     def tool_schemas(self) -> list[dict]:
@@ -101,6 +102,25 @@ AGENT_TOOLS: dict[str, dict] = {
                        "change). You are woken again when they decide.",
         "parameters": {"type": "object", "properties": {
             "title": {"type": "string"}, "plan": {"type": "string"}}, "required": ["title", "plan"]}},
+    "company_propose_strategy": {
+        "description": "Kantor (CEO / top manager): turn the goal of your current strategy ticket into concrete work. "
+                       "Give the plan and the tickets, each assigned to someone in your team (or yourself). The board "
+                       "(the user) approves first when the company asks for it; then the tickets are created and the "
+                       "assignees are woken.",
+        "parameters": {"type": "object", "properties": {
+            "title": {"type": "string", "description": "short name of the strategy"},
+            "plan": {"type": "string", "description": "the plan in a few Indonesian paragraphs: priorities, why"},
+            "tickets": {"type": "array", "items": {"type": "object", "properties": {
+                "title": {"type": "string"}, "description": {"type": "string"},
+                "assignee": {"type": "string", "description": "name of a member of your team"},
+                "priority": {"type": "integer"}}, "required": ["title"]}}},
+            "required": ["plan", "tickets"]}},
+    "company_hire": {
+        "description": "Kantor (managers): ask the board to hire a new report for your team. It is created as pending "
+                       "until the user approves the hire.",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string"}, "title": {"type": "string"},
+            "job_description": {"type": "string"}}, "required": ["name", "title"]}},
     "company_work_product": {
         "description": "Kantor: attach a work product to your current ticket (a file path, a link, or a text result).",
         "parameters": {"type": "object", "properties": {
@@ -114,6 +134,7 @@ class CompanyRuntime:
         self.gw = gw
         self.store = store or CompanyStore()
         self.store.on_change = self._on_change
+        self.store.on_activity = self._on_activity
         self.bindings: dict[str, CompanyBinding] = {}      # session id -> binding
         self.active: dict[int, asyncio.Task] = {}           # agent id -> running heartbeat
         self.active_runs: dict[int, int] = {}               # agent id -> run id
@@ -169,6 +190,13 @@ class CompanyRuntime:
             return
         self._pending = loop.call_later(0.2, self._flush)
 
+    def _on_activity(self, row: dict) -> None:
+        """Live feed: every new activity row goes out at once (desktop + phone prepend it)."""
+        try:
+            self.gw.broadcast_event("company.activity", None, row)
+        except Exception:
+            pass
+
     def _flush(self) -> None:
         self._pending = None
         payload = dict(getattr(self, "_last_change", {}) or {})
@@ -179,23 +207,43 @@ class CompanyRuntime:
             pass
 
     def observe(self, kind: str, sid: str | None, payload: dict | None) -> None:
-        """Called for every gateway event: capture usage of office-agent sessions as cost events."""
-        if not sid or kind != "message.complete":
+        """Called for every gateway event: capture usage of office-agent sessions as cost events.
+
+        Live: each model call's ``usage.update`` is recorded the moment it lands, so a budget hard
+        stop interrupts the running heartbeat instead of waiting for the turn to end. The turn total
+        on ``message.complete`` is only used when no per-call usage arrived (older providers)."""
+        if not sid or kind not in ("usage.update", "message.complete"):
             return
         b = self.bindings.get(sid)
         if b is None:
             return
         p = payload or {}
+        if kind == "usage.update":
+            b.usage_seen = True
+            self._record(b, sid, int(p.get("prompt_tokens") or 0), int(p.get("completion_tokens") or 0),
+                         str(p.get("model") or ""))
+            return
         if p.get("error") and p.get("status") != "interrupted":
             self.last_error[sid] = str(p["error"])
+        seen, b.usage_seen = b.usage_seen, False
+        if seen:
+            return
         usage = p.get("usage") or {}
-        pt, ct = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
-        if pt or ct:
+        self._record(b, sid, int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0), "")
+
+    def _record(self, b: CompanyBinding, sid: str, pt: int, ct: int, model: str) -> None:
+        if not (pt or ct):
+            return
+        if not model:
             live = self.gw.live.get(sid)
             model = str(live.rec.get("model") or "") if live else ""
-            self.store.record_cost(agent_id=b.agent_id, prompt_tokens=pt, completion_tokens=ct, model=model,
-                                   ticket_id=b.ticket_id, run_id=b.run_id)
-            self.store.check_budgets(b.agent_id)
+        self.store.record_cost(agent_id=b.agent_id, prompt_tokens=pt, completion_tokens=ct, model=model,
+                               ticket_id=b.ticket_id, run_id=b.run_id)
+        acts = self.store.check_budgets(b.agent_id)
+        if f"exceeded:agent:{b.agent_id}" in acts or any(x == "exceeded:company" for x in acts):
+            a = self.store.agent(b.agent_id)
+            if a and a["status"] == "paused" and b.agent_id in self.active:
+                self.halt_run(b.agent_id, "anggaran habis")
 
     # ------------------------------------------------------------- sessions --
     def bind_session(self, live: "LiveSession") -> None:
@@ -334,6 +382,15 @@ class CompanyRuntime:
                                                    for x in d["children"]))
         if d["work_products"]:
             parts.append("Hasil kerja sejauh ini: " + "; ".join(w["title"] for w in d["work_products"]))
+        if t.get("kind") == "strategy" and t["assignee_id"] == a["id"]:
+            team = [s.agent(x) for x in sorted(s.subtree(a["id"]))]
+            roster = "; ".join(f"{m['name']} ({m['title'] or m['role']}): {(m['job_description'] or '-')[:160]}"
+                               for m in team if m and m["status"] not in ("terminated", "pending_approval"))
+            parts.append("Timmu: " + (roster or "(belum ada; ajukan rekrut dengan company_hire)"))
+            parts.append("Tugasmu sebagai CEO: pecah tujuan ini jadi 2–6 tiket konkret yang bisa langsung dikerjakan, "
+                         "masing-masing untuk anggota tim yang paling cocok, lalu panggil company_propose_strategy "
+                         "sekali dengan rencana singkat dan daftar tiketnya. Jangan mengerjakan tiketnya sendiri.")
+            return "\n\n".join(parts)
         if t["assignee_id"] != a["id"]:
             owner = s.agent(t["assignee_id"])
             parts.append(f"Ini tiket bawahanmu {owner['name'] if owner else '-'} yang terhambat. Beri arahan dengan "
@@ -357,6 +414,10 @@ class CompanyRuntime:
         c = s.company()
         if not c or not c["autorun"]:
             return
+        try:
+            s.ensure_goal_planning()
+        except CompanyError:
+            pass
         for r in s.due_routines():
             try:
                 t = s.fire_routine(r["id"])
@@ -481,6 +542,22 @@ class CompanyRuntime:
             s.check_budgets(aid)
             s.changed("run", run_id, status)
         return {"status": status, "error": error, "run_id": run_id, "ticket": ticket["key"]}
+
+    def halt_run(self, aid: int, why: str) -> None:
+        """Stop the agent's running heartbeat now (budget hard stop) without changing its pause reason."""
+        a = self.store.agent(aid)
+        if not a:
+            return
+        live = self.gw.live.get(a["session_id"] or "")
+        if live is not None:
+            live.agent.interrupt()
+        task = self.active.get(aid)
+        if task and not task.done():
+            try:
+                asyncio.get_running_loop().call_later(5, lambda: task.done() or task.cancel())
+            except RuntimeError:
+                pass
+        self.store.log("run.halted", "agent", aid, f"menghentikan kerja {a['name']}: {why}", actor="system")
 
     def stop_agent(self, aid: int) -> dict:
         a = self.store.require_agent(aid)
@@ -612,12 +689,63 @@ class CompanyRuntime:
                                    title=str(args.get("title") or "Rencana"), requested_by="agent", actor_id=aid,
                                    payload={"plan": str(args.get("plan") or "")[:4000]})
             return f"permintaan persetujuan #{ap['id']} dikirim; tunggu keputusan pengguna (kamu akan dibangunkan)"
+        if name == "company_propose_strategy":
+            return self._propose_strategy(b, me, args)
+        if name == "company_hire":
+            if not s.reports(aid) and (me["role"] or "").lower() != "ceo":
+                raise CompanyError("conflict", "hanya manajer atau CEO yang boleh mengajukan rekrut")
+            new = s.save_agent({"name": args.get("name"), "title": args.get("title") or "",
+                                "job_description": args.get("job_description") or "", "reports_to": aid},
+                               actor="agent", actor_id=aid)
+            return f"pengajuan rekrut {new['name']} dikirim ke dewan; tunggu persetujuan pengguna"
         if name == "company_work_product":
             t = self._own_ticket(b, None)
             w = s.add_work_product(t["id"], str(args.get("title") or ""), str(args.get("ref") or ""),
                                    str(args.get("kind") or "text"), actor="agent", actor_id=aid)
             return f"hasil kerja #{w['id']} dilampirkan ke {t['key']}"
         return f"error: unknown tool {name}"
+
+    def _propose_strategy(self, b: CompanyBinding, me: dict, args: dict) -> str:
+        s = self.store
+        aid = me["id"]
+        ceo = s.ceo()
+        if not ceo or ceo["id"] != aid:
+            raise CompanyError("conflict", "hanya CEO yang menyusun strategi perusahaan")
+        t = s.ticket(b.ticket_id) if b.ticket_id else None
+        if not t or t.get("kind") != "strategy":
+            t = s.q1("SELECT * FROM tickets WHERE assignee_id=? AND kind='strategy' AND status NOT IN ('done','cancelled') "
+                     "ORDER BY id LIMIT 1", (aid,))
+        team = s.subtree(aid) | {aid}
+        items = []
+        for raw in (args.get("tickets") or [])[:12]:
+            if not isinstance(raw, dict) or not str(raw.get("title") or "").strip():
+                continue
+            who = None
+            if raw.get("assignee"):
+                who = self._find_agent(str(raw["assignee"]))
+                if who["id"] not in team:
+                    raise CompanyError("conflict", f"{who['name']} bukan anggota timmu")
+            items.append({"title": str(raw["title"]).strip()[:200], "description": str(raw.get("description") or "")[:2000],
+                          "assignee_id": who["id"] if who else None, "assignee": who["name"] if who else None,
+                          "priority": max(0, min(3, int(raw.get("priority") if raw.get("priority") is not None else 1)))})
+        if not items:
+            raise CompanyError("invalid", "strategi butuh minimal satu tiket")
+        plan = str(args.get("plan") or "").strip()[:6000]
+        title = str(args.get("title") or (t["title"].removeprefix("Susun strategi: ") if t else "Strategi")).strip()[:200]
+        if t:
+            s.comment(t["id"], f"Strategi “{title}”:\n{plan}\n\nTiket: " + "; ".join(
+                f"{i['title']} → {i['assignee'] or 'belum ada'}" for i in items), actor="agent", actor_id=aid)
+            b.commented = True
+        c = s.require_company()
+        ap = s.create_approval("strategy", ticket_id=t["id"] if t else None, agent_id=aid,
+                               title=f"Strategi CEO: {title}", requested_by="agent", actor_id=aid,
+                               payload={"plan": plan, "tickets": items})
+        if t and t["status"] not in ("review", "done", "cancelled"):
+            s.move_ticket(t["id"], "review", actor="agent", actor_id=aid, force=True)
+        if not c["require_strategy_approval"]:
+            s.decide(ap["id"], "approved", "disetujui otomatis (pengaturan perusahaan)")
+            return f"strategi “{title}” dijalankan: {len(items)} tiket dibuat dan timmu dibangunkan"
+        return f"strategi “{title}” dengan {len(items)} tiket dikirim ke dewan untuk disetujui"
 
     # ------------------------------------------------- main agent (kantor) --
     def _unit_ref(self, ref) -> dict | None:
@@ -765,7 +893,7 @@ class CompanyRuntime:
                     s.wake(a["id"], "assignment", t["id"])
                 return f"tugas {t['key']} “{t['title']}” diberikan ke {a['name']}" + (
                     "" if s.company()["autorun"] or args.get("start_now")
-                    else " (mulai saat “Jalan otomatis” aktif atau pegawai dibangunkan)")
+                    else " (mulai saat heartbeat Kantor aktif atau pegawai dibangunkan)")
             return f"error: aksi tidak dikenal: {action}"
         except CompanyError as exc:
             return f"error: {exc}"
@@ -845,7 +973,19 @@ class CompanyRuntime:
         if m == "seed_demo":
             return self.seed_demo(p)
         if m == "goal.save":
-            return s.save_goal(p)
+            g = s.save_goal(p)
+            if s.company()["autorun"]:
+                s.ensure_goal_planning()
+            return g
+        if m == "heartbeat":
+            on = bool(p.get("on"))
+            c = s.update_company({"autorun": on})
+            s.log("company.heartbeat_" + ("on" if on else "off"), "company", 1,
+                  "menyalakan heartbeat Kantor" if on else "menjeda heartbeat Kantor")
+            if not on and p.get("stop_running"):
+                for aid in list(self.active):
+                    self.halt_run(aid, "heartbeat dijeda")
+            return c
         if m == "goal.delete":
             s.delete_goal(int(p.get("id") or 0))
             return {"ok": True}
@@ -963,9 +1103,11 @@ class CompanyRuntime:
             return {"approvals": s.list_approvals(p.get("status", "pending") or None)}
         if m == "approval.decide":
             decision = str(p.get("decision") or "")
-            decision = {"approve": "approved", "reject": "rejected", "cancel": "cancelled"}.get(decision, decision)
+            decision = {"approve": "approved", "reject": "rejected", "cancel": "cancelled",
+                        "revise": "revision_requested", "revision": "revision_requested"}.get(decision, decision)
             ap = s.decide(p.get("id"), decision, str(p.get("note") or ""))
-            if ap["agent_id"] and ap["kind"] in ("plan", "review") and not (ap["kind"] == "review" and decision == "approved"):
+            if ap["agent_id"] and ap["kind"] in ("plan", "review") and decision != "revision_requested" \
+                    and not (ap["kind"] == "review" and decision == "approved"):
                 s.wake(ap["agent_id"], "approval", ap["ticket_id"])
                 if ap["ticket_id"] and ap["kind"] == "plan":
                     s.comment(ap["ticket_id"], f"Rencana “{ap['title']}” {'disetujui' if decision == 'approved' else 'ditolak'}"
@@ -975,7 +1117,8 @@ class CompanyRuntime:
             return s.costs(p.get("month"))
         if m == "activity":
             return {"items": s.activity(int(p.get("limit") or 100), _int(p.get("before")), p.get("entity"),
-                                        _int(p.get("entity_id")))}
+                                        _int(p.get("entity_id")), after=_int(p.get("after")),
+                                        agent_id=_int(p.get("agent_id")))}
         if m == "routine.save":
             return s.save_routine(p)
         if m == "routine.delete":
@@ -995,6 +1138,8 @@ class CompanyRuntime:
                     str(p.get("mission") or "Membangun aplikasi yang membantu orang bekerja lebih ringan"))
         if s.q1("SELECT id FROM agents LIMIT 1"):
             raise CompanyError("conflict", "Perusahaan sudah punya pegawai")
+        if p.get("autorun") is not None:
+            s.update_company({"autorun": bool(p["autorun"])})
         g = s.save_goal({"title": "Rilis versi berikutnya dengan stabil"})
         pr = s.save_project({"name": "Aplikasi desktop", "goal_id": g["id"]})
         dimas = s.save_agent({"name": "Dimas", "title": "CEO", "role": "ceo", "skip_approval": True,
@@ -1005,6 +1150,8 @@ class CompanyRuntime:
                       "skip_approval": True, "job_description": "Menulis dan memperbaiki kode sesuai tiket."})
         s.save_agent({"name": "Sari", "title": "Marketing", "role": "marketing", "reports_to": dimas["id"],
                       "skip_approval": True, "job_description": "Menulis catatan rilis dan materi promosi."})
-        s.create_ticket({"title": "Susun rencana rilis", "assignee_id": dimas["id"], "project_id": pr["id"],
-                         "description": "Pecah rilis jadi tugas teknik dan pemasaran, lalu delegasikan."})
+        s.create_ticket({"title": "Susun strategi rilis", "assignee_id": dimas["id"], "project_id": pr["id"],
+                         "goal_id": g["id"], "kind": "strategy", "priority": 2,
+                         "description": "Pecah rilis jadi tugas teknik dan pemasaran untuk Hana, Raka, dan Sari, "
+                                        "lalu ajukan dengan company_propose_strategy."})
         return s.snapshot()

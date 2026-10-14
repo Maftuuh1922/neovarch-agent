@@ -280,7 +280,7 @@ async def drive(port: int, token: str) -> list[dict]:
                      "ok": status == 200 and acct.get("ok") is False and bool(acct.get("error")),
                      "status": status})
 
-        # Kantor → Perusahaan: every company.* route the desktop tabs call (autorun stays off: no LLM turns).
+        # Kantor → Perusahaan: every company.* route the desktop tabs call (heartbeat paused: no LLM turns).
         rows += await company_checks(http, base)
 
     from neovarch.agent import persona_prompt
@@ -305,7 +305,9 @@ async def company_checks(http, base: str) -> list[dict]:
                  "ok": status == 200 and snap == {"exists": False}, "status": status})
     await co("ticket.save", {"title": "x"}, 400, label=" without company -> 400")
     await co("setup", {"name": "Smoke Studio", "mission": "Uji rute"},
-             check=lambda r: r.get("autorun") is False, label=" (autorun off by default)")
+             check=lambda r: r.get("autorun") is True, label=" (heartbeat on by default)")
+    # pause the heartbeat right away so the smoke makes no LLM turns (also covers the pause switch)
+    await co("heartbeat", {"on": False}, check=lambda r: r.get("autorun") is False, label=" (pause)")
     snap = await co("seed_demo", check=lambda r: r.get("exists") is True and len(r.get("agents") or []) == 4)
     agents = {a["name"]: a for a in snap.get("agents") or []}
     dimas, hana = agents.get("Dimas", {}).get("id"), agents.get("Hana", {}).get("id")

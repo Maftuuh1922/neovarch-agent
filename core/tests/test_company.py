@@ -236,7 +236,7 @@ def test_change_listener_never_breaks_writes(store):
 
 def test_goal_project_edit_and_validation(store):
     store.setup("Studio", "Misi")
-    assert store.company()["autorun"] is False  # nothing runs on its own until the user says so
+    assert store.company()["autorun"] is True  # heartbeat on by default once a company exists
     g = store.save_goal({"title": "Rilis 1.4.5"})
     sub = store.save_goal({"title": "Stabil di Windows", "parent_id": g["id"]})
     store.save_goal({"id": sub["id"], "title": "Stabil di Windows & Linux", "description": "tanpa crash"})
@@ -312,3 +312,67 @@ def test_routine_edit_disable_and_bad_schedule(store):
         store.save_routine({"id": r["id"], "schedule": "kapan-kapan"})
     store.delete_routine(r["id"])
     assert store.q1("SELECT id FROM routines WHERE id=?", (r["id"],)) is None
+
+
+def test_old_idle_company_gets_heartbeat_once_and_user_choice_sticks(home):
+    import sqlite3
+    s = CompanyStore(clock=Clock())
+    s.setup("Lama")
+    s.x("UPDATE company SET autorun=0")
+    s.close()
+    # simulate a company.db from before the heartbeat-on default (no autorun_user_set column)
+    db = sqlite3.connect(str(home / "company.db"))
+    db.execute("ALTER TABLE company DROP COLUMN autorun_user_set")
+    db.commit()
+    db.close()
+    s = CompanyStore(clock=Clock())
+    assert s.company()["autorun"] is True
+    assert s.activity(5)[0]["action"] == "company.heartbeat_on"
+    s.update_company({"autorun": False})           # the user pauses it: that sticks
+    assert s.company()["autorun_user_set"] is True
+    s.close()
+    s = CompanyStore(clock=Clock())
+    assert s.company()["autorun"] is False
+    s.close()
+
+
+def test_ceo_and_goal_planning_ticket(store):
+    dimas, hana, raka = org(store)
+    assert store.ceo()["id"] == dimas["id"]           # top of the chart with a team
+    store.save_agent({"id": hana["id"], "role": "ceo"})
+    assert store.ceo()["id"] == hana["id"]            # explicit role wins
+    store.save_agent({"id": hana["id"], "role": "cto"})
+    g = store.save_goal({"title": "Capai 1000 pengguna"})
+    made = store.ensure_goal_planning()
+    assert len(made) == 1 and made[0]["kind"] == "strategy" and made[0]["assignee_id"] == dimas["id"]
+    assert made[0]["goal_id"] == g["id"] and made[0]["status"] == "todo"
+    assert store.ensure_goal_planning() == []          # once per goal
+    g2 = store.save_goal({"title": "Selesai"})
+    store.save_goal({"id": g2["id"], "status": "done"})
+    assert store.ensure_goal_planning() == []          # only active goals
+
+
+def test_ticket_timeline_merges_comments_and_audit(store):
+    dimas, hana, raka = org(store)
+    t = store.create_ticket({"title": "Bangun", "assignee_id": raka["id"]})
+    store.comment(t["id"], "mulai ya")
+    store.checkout(t["id"], raka["id"])
+    store.comment(t["id"], "beres", actor="agent", actor_id=raka["id"])
+    tl = store.ticket_detail(t["id"])["timeline"]
+    assert [x["type"] for x in tl][:2] == ["event", "comment"]
+    assert [x["body"] for x in tl if x["type"] == "comment"] == ["mulai ya", "beres"]
+    assert tl[-1]["actor_name"] == "Raka"
+    assert not any(x.get("action") == "ticket.commented" for x in tl)   # no duplicate of the comment
+
+
+def test_budget_hard_stop_files_one_board_request(store):
+    dimas, hana, raka = org(store)
+    store.save_agent({"id": raka["id"], "budget_monthly_tokens": 50})
+    store.record_cost(agent_id=raka["id"], prompt_tokens=60, completion_tokens=0)
+    store.check_budgets(raka["id"])
+    store.check_budgets(raka["id"])
+    aps = [a for a in store.list_approvals() if a["kind"] == "budget"]
+    assert len(aps) == 1 and aps[0]["agent_id"] == raka["id"]
+    store.decide(aps[0]["id"], "approved")
+    a = store.agent(raka["id"])
+    assert a["budget_monthly_tokens"] == 100 and a["status"] == "idle"
