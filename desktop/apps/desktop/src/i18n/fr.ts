@@ -10,9 +10,11 @@ import { frOnboarding } from './fr_onboarding'
 import { frProjects } from './fr_projects'
 import { frSharedMetrics } from './fr_shared_metrics'
 import { introFr } from './intro-fr'
+import { nvPamerkanFr } from './nv-pamerkan'
 import { nvPullFr } from './nv-pull'
 
 export const frOverrides = {
+  nvPamerkan: nvPamerkanFr,
   nvPull: nvPullFr,
   sharedMetrics: frSharedMetrics,
   intro: introFr,

@@ -1,5 +1,6 @@
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introZhHant } from './intro-zh-hant'
+import { nvPamerkanZhHant } from './nv-pamerkan'
 import { nvPullZhHant } from './nv-pull'
 import { zhHantArtifacts } from './zh-hant_artifacts'
 import { zhHantAssistant } from './zh-hant_assistant'
@@ -14,6 +15,7 @@ import { zhHantDiagnostics } from './zh-hant_diagnostics'
 import { zhHantSettings } from './zh-hant_settings'
 
 export const zhHantOverrides = {
+  nvPamerkan: nvPamerkanZhHant,
   nvPull: nvPullZhHant,
   skillDeepLink: {
     installTitle: (name: string) => `安裝「${name}」？`,

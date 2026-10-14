@@ -2,6 +2,7 @@ import { defineFieldCopy } from '@/app/settings/field-copy'
 
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introZh } from './intro-zh'
+import { nvPamerkanZh } from './nv-pamerkan'
 import { nvPullZh } from './nv-pull'
 import { zhAuxTasks } from './zh_aux_tasks'
 import { zhLocalModels } from './zh_local_models'
@@ -12,6 +13,7 @@ import { zhProjects } from './zh_projects'
 import { zhSharedMetrics } from './zh_shared_metrics'
 
 export const zhOverrides = {
+  nvPamerkan: nvPamerkanZh,
   nvPull: nvPullZh,
   externalOpenFailed: {
     title: '无法打开此链接',

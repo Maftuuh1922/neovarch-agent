@@ -10,9 +10,11 @@ import { arConnectors } from './ar_connectors'
 import { arDiagnostics } from './ar_diagnostics'
 import { arSettings } from './ar_settings'
 import { defineLocale, type TranslationOverrides } from './define-locale'
+import { nvPamerkanAr } from './nv-pamerkan'
 import { nvPullAr } from './nv-pull'
 
 export const arOverrides = {
+  nvPamerkan: nvPamerkanAr,
   nvPull: nvPullAr,
   sharedMetrics: arCommon.sharedMetrics,
   externalOpenFailed: arChrome.externalOpenFailed,
