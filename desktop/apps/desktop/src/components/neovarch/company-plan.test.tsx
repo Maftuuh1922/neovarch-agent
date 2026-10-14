@@ -159,7 +159,7 @@ const wrap = (ui: React.ReactNode) => render(<MemoryRouter>{ui}</MemoryRouter>)
 describe('Perusahaan: goals, projects, routines, agent editor, blockers', () => {
   it('has Tujuan and Rutinitas tabs', () => {
     expect(COMPANY_TABS.map(t => t.label)).toEqual(
-      expect.arrayContaining(['Organisasi', 'Tiket', 'Tujuan', 'Rutinitas', 'Persetujuan', 'Biaya', 'Aktivitas'])
+      expect.arrayContaining(['Organisasi', 'Tiket', 'Tujuan', 'Rutinitas', 'Persetujuan', 'Biaya', 'Aktivitas live'])
     )
   })
 
@@ -243,7 +243,7 @@ describe('Perusahaan: goals, projects, routines, agent editor, blockers', () => 
 
   it('lists routines, notes autorun is off, triggers, toggles and creates one', async () => {
     wrap(<CompanyPanel tab="routines" />)
-    expect(screen.getByText(/“Jalan otomatis” sedang mati/)).toBeTruthy()
+    expect(screen.getByText(/Heartbeat Kantor sedang dijeda/)).toBeTruthy()
     const item = document.querySelector('[data-routine="9"]') as HTMLElement
     fireEvent.click(within(item).getByRole('button', { name: 'Jalankan sekarang' }))
     await waitFor(() => expect(gw.request).toHaveBeenCalledWith('company.routine.trigger', { id: 9 }))

@@ -66,6 +66,11 @@ class RemoteController extends ChangeNotifier {
   /// Bumped on `company.changed` so the Perusahaan screen re-reads.
   int companyRevision = 0;
 
+  /// Kantor activity rows the PC pushed live (`company.activity`), newest first.
+  /// The Feed segment merges them into what it read, so a row shows up the
+  /// moment an employee does something, without re-reading the whole company.
+  List<CompanyActivity> companyFeed = const [];
+
   /// Widget-test harness only: Perusahaan data without a gateway.
   CompanyApi? debugCompanyApi;
   CompanyApi? get companyApi => debugCompanyApi ?? gateway;
@@ -532,6 +537,12 @@ class RemoteController extends ChangeNotifier {
         companyRevision++;
         companySupported = true;
         notifyListeners();
+      case 'company.activity':
+        final row = CompanyActivity.fromJson(f.payload);
+        if (row.id > 0) {
+          companyFeed = mergeFeed(companyFeed, [row], cap: 100);
+          notifyListeners();
+        }
       case 'social.changed':
         // The PC signed in / out, published, or a follow changed: follow it
         // (the phone's profile is always the PC's GitHub account).

@@ -25,6 +25,7 @@ class FakeCompany implements CompanyApi {
   FakeCompany({this.exists = true});
   bool exists;
   final calls = <(String, Map<String, dynamic>)>[];
+  bool extraApprovals = false;
 
   /// method → error thrown (once per entry in the list, then answers).
   final failures = <String, List<Object>>{};
@@ -99,11 +100,33 @@ class FakeCompany implements CompanyApi {
           'comments': [
             {'author_type': 'agent', 'author_name': 'Dimas', 'body': 'Sari, tolong kerjakan ini.'},
           ],
+          'timeline': [
+            {'type': 'event', 'actor_type': 'agent', 'actor_name': 'Dimas', 'summary': 'memindahkan NV-3: Backlog → Akan dikerjakan', 'id': 'a1'},
+            {'type': 'comment', 'actor_type': 'agent', 'actor_name': 'Dimas', 'body': 'Sari, tolong kerjakan ini.', 'id': 'c1'},
+          ],
         };
+      case 'activity':
+        final all = [
+          {'id': 1, 'actor_name': 'Kamu', 'actor_type': 'user', 'action': 'ticket.created', 'summary': 'membuat NV-3', 'entity': 'ticket', 'entity_id': 3, 'ts': 0},
+        ];
+        return {'items': params['agent_id'] == null ? all : const []};
       case 'approval.list':
         return {
           'approvals': [
             {'id': 9, 'kind': 'review', 'title': 'Tinjau hasil NV-2', 'status': 'pending', 'agent_name': 'Raka', 'payload': {'summary': 'Crash sudah hilang'}},
+            if (extraApprovals) ...[
+              {
+                'id': 10, 'kind': 'strategy', 'title': 'Strategi CEO: Rilis bertahap', 'status': 'pending', 'agent_name': 'Dimas',
+                'payload': {
+                  'plan': 'Teknik dulu, lalu materi rilis.',
+                  'tickets': [
+                    {'title': 'Rancang arsitektur', 'assignee': 'Hana'},
+                    {'title': 'Cari desainer', 'assignee': null},
+                  ],
+                },
+              },
+              {'id': 11, 'kind': 'budget', 'title': 'Naikkan anggaran Raka dan lanjutkan', 'status': 'pending', 'agent_name': 'Raka', 'payload': {'extra_tokens': 50000, 'extra_cents': 0}},
+            ],
           ],
         };
       case 'costs':
@@ -212,12 +235,51 @@ void main() {
     expect(called(fake, 'agent.stop', {'id': 3}), isTrue);
   });
 
-  testWidgets('autorun switch goes to company.update', (tester) async {
+  testWidgets('heartbeat switch goes to company.heartbeat (pause / resume)', (tester) async {
     final fake = FakeCompany();
     await pump(tester, controller(fake));
+    expect(find.text('Heartbeat dijeda'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('company-autorun')));
     await tester.pumpAndSettle();
-    expect(called(fake, 'update', {'autorun': true}), isTrue);
+    expect(called(fake, 'heartbeat', {'on': true}), isTrue);
+  });
+
+  testWidgets('feed: reads the activity log, live rows land on top, filter by employee', (tester) async {
+    final fake = FakeCompany();
+    final r = controller(fake);
+    await pump(tester, r, segment: companySegFeed);
+    expect(find.textContaining('membuat NV-3', findRichText: true), findsOneWidget);
+    r.companyFeed = mergeFeed(r.companyFeed, [
+      const CompanyActivity(id: 50, actor: 'Raka', actorType: 'agent', actorId: 3, action: 'run.started', summary: 'mulai bekerja di NV-2', ts: 0),
+    ]);
+    r.notifyListeners(); // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+    await tester.pumpAndSettle();
+    final live = tester.getTopLeft(find.byKey(const ValueKey('company-feed-50')));
+    final old = tester.getTopLeft(find.byKey(const ValueKey('company-feed-1')));
+    expect(live.dy < old.dy, isTrue);
+    await tester.tap(find.byKey(const ValueKey('company-feed-agent')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dimas').last);
+    await tester.pumpAndSettle();
+    expect(called(fake, 'activity', {'agent_id': 1}), isTrue);
+    expect(find.textContaining('mulai bekerja di NV-2', findRichText: true), findsNothing); // Raka's row is not Dimas's
+  });
+
+  testWidgets('approvals: CEO strategy lists its tickets, budget shows the raise, revise from the phone', (tester) async {
+    final fake = FakeCompany()..extraApprovals = true;
+    await pump(tester, controller(fake), segment: companySegApprovals);
+    expect(find.text('Strategi CEO: Rilis bertahap'), findsOneWidget);
+    expect(find.text('• Rancang arsitektur → Hana'), findsOneWidget);
+    expect(find.text('• Cari desainer → belum ada penanggung jawab'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('company-revise-10')));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.textContaining('50.0 rb token'), 200, scrollable: find.byType(Scrollable).first);
+    expect(find.textContaining('50.0 rb token'), findsOneWidget);
+    expect(find.byKey(const ValueKey('company-revise-11')), findsNothing); // budget: no revise
+    await tester.ensureVisible(find.byKey(const ValueKey('company-revise-10')));
+    await tester.tap(find.byKey(const ValueKey('company-revise-10')));
+    await tester.pumpAndSettle();
+    expect(called(fake, 'approval.decide', {'id': 10, 'decision': 'revise'}), isTrue);
   });
 
   testWidgets('tickets grouped by status; sheet shows the why and moves / comments', (tester) async {
@@ -231,6 +293,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Kenapa: Rilis 1.5 stabil → Bikin aplikasi'), findsOneWidget);
     expect(find.textContaining('Sari, tolong kerjakan ini.'), findsOneWidget);
+    expect(find.text('· Dimas memindahkan NV-3: Backlog → Akan dikerjakan'), findsOneWidget); // audit line in the thread
     await tester.tap(find.byKey(const ValueKey('company-move-blocked')));
     await tester.pumpAndSettle();
     expect(called(fake, 'ticket.move', {'id': 3, 'status': 'blocked'}), isTrue);
@@ -555,6 +618,35 @@ void main() {
     });
   });
 
+  test('Paperclip pass models: feed merge/filter, timeline, strategy + budget approvals', () {
+    const a1 = CompanyActivity(id: 1, actor: 'Kamu', summary: 'x');
+    const a2 = CompanyActivity(id: 2, actor: 'Raka', actorType: 'agent', actorId: 3, summary: 'y');
+    expect(mergeFeed([a1], [a2, a1]).map((a) => a.id).toList(), [2, 1]);
+    expect(mergeFeed([a1], [a2], cap: 1).map((a) => a.id).toList(), [2]);
+    expect(a2.involves(3), isTrue);
+    expect(a2.involves(1), isFalse);
+    expect(a1.involves(null), isTrue);
+    expect(const CompanyActivity(id: 3, actor: 'S', summary: 'z', entity: 'agent', entityId: 1).involves(1), isTrue);
+    final row = CompanyActivity.fromJson({'id': 7, 'actor_name': 'Hana', 'actor_type': 'agent', 'actor_id': 2, 'summary': 's', 'ts': 5});
+    expect((row.id, row.actorId, row.ts), (7, 2, 5.0));
+    final d = TicketDetail.fromJson({
+      'id': 1, 'key': 'NV-1', 'title': 't', 'status': 'todo',
+      'timeline': [
+        {'type': 'run', 'actor_name': 'Dimas', 'summary': 'heartbeat #1', 'actor_type': 'agent'},
+        {'type': 'comment', 'actor_name': 'Kamu', 'body': 'ok', 'actor_type': 'user'},
+      ],
+    });
+    expect(d.timeline.map((e) => '${e.type}:${e.text}:${e.fromUser}').toList(), ['run:heartbeat #1:false', 'comment:ok:true']);
+    final st = CompanyApproval.fromJson({
+      'id': 1, 'kind': 'strategy', 'title': 'S',
+      'payload': {'tickets': [{'title': 'A', 'assignee': 'Hana'}, {'title': ''}, 'junk']},
+    });
+    expect(st.tickets, ['A → Hana']);
+    expect((st.canRevise, st.kindLabel), (true, 'strategi CEO'));
+    final b = CompanyApproval.fromJson({'id': 2, 'kind': 'budget', 'title': 'B', 'payload': {'extra_tokens': 100, 'extra_cents': 250}});
+    expect((b.extraTokens, b.extraCents, b.canRevise), (100, 250.0, false));
+  });
+
   test('1.4.5 models: goal tree, routines, money input', () async {
     final s = CompanySnapshot.fromJson(Map<String, dynamic>.from(await FakeCompany().companyCall('snapshot') as Map));
     expect(s.goalTree.map((e) => '${e.$1.title}:${e.$2}').toList(), ['Rilis 1.5 stabil:0', 'Nol crash di Android:1']);
@@ -577,3 +669,4 @@ void main() {
     expect(companyErrorText(const RpcError(-32601, 'x')), contains('Perbarui Neovarch di PC'));
   });
 }
+
