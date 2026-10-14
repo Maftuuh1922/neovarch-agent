@@ -3,6 +3,7 @@
 // default model) and scrubbed so nothing private ends up in a public post:
 // no tokens, keys, file paths, host names or gateway URLs, only short labels
 // and numbers.
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import '../models_api.dart' show ModelRef;
@@ -52,6 +53,39 @@ class BragStats {
   int get tileCount => [agentsActive, tasksDone, sessions, messages, tokensToday, tokensTotal].where((v) => v != null).length;
 }
 
+/// Pamerkan radar from the PC core (`GET /api/pamerkan`, core ≥ 1.4.8): one
+/// score 0-100 per axis (log scale against a fixed reference, computed on the
+/// PC) plus the raw count. Only real counts: nothing is estimated on the phone.
+class BragRadar {
+  const BragRadar({required this.days, required this.axes});
+
+  /// Axis order on the card (clockwise from the top), same as the desktop.
+  static const axisIds = ['coding', 'riset', 'ppt', 'browser', 'otomasi', 'token'];
+
+  final int days;
+
+  /// (id, score 0-100, raw value) in [axisIds] order.
+  final List<({String id, int score, int value})> axes;
+
+  /// Nothing counted in the window: the card shows no radar (no fake shape).
+  bool get isEmpty => axes.every((a) => a.value <= 0);
+
+  /// Defensive parse; anything unexpected → null (older PC / junk).
+  static BragRadar? parse(Map<String, dynamic>? raw) {
+    final list = raw?['axes'];
+    if (list is! List) return null;
+    final byId = <String, Map>{for (final a in list) if (a is Map && a['id'] is String) a['id'] as String: a};
+    int n(Object? v) => v is num && v.isFinite && v > 0 ? v.toInt() : 0;
+    final days = n(raw?['days']);
+    return BragRadar(
+      days: days == 0 ? 30 : days,
+      axes: [
+        for (final id in axisIds) (id: id, score: math.min(100, n(byId[id]?['score'])), value: n(byId[id]?['value'])),
+      ],
+    );
+  }
+}
+
 class BragCardData {
   const BragCardData({
     required this.name,
@@ -61,6 +95,7 @@ class BragCardData {
     this.stats = const BragStats(),
     this.officeShot,
     this.link = kNeovarchLandingUrl,
+    this.radar,
   });
 
   final String name;
@@ -72,8 +107,11 @@ class BragCardData {
   final Uint8List? officeShot;
   final String link;
 
+  /// Pamerkan radar (null on older PCs).
+  final BragRadar? radar;
+
   BragCardData withOfficeShot(Uint8List? shot) =>
-      BragCardData(name: name, login: login, avatarUrl: avatarUrl, heatmap: heatmap, stats: stats, officeShot: shot, link: link);
+      BragCardData(name: name, login: login, avatarUrl: avatarUrl, heatmap: heatmap, stats: stats, officeShot: shot, link: link, radar: radar);
 
   /// Build from the remote controller's state. Every field is optional on
   /// purpose: a phone that is offline or not signed in to GitHub still gets a
@@ -86,6 +124,7 @@ class BragCardData {
     ModelRef? defaultModel,
     Uint8List? officeShot,
     Map<String, dynamic>? usage,
+    Map<String, dynamic>? pamerkan,
   }) {
     final login = safeHandle(profile?.login);
     final name = safeLabel(profile?.name, max: 32) ?? login ?? 'Pengguna Neovarch';
@@ -103,6 +142,7 @@ class BragCardData {
       avatarUrl: _safeAvatar(profile?.avatarUrl, login),
       heatmap: profile?.heatmap,
       officeShot: officeShot,
+      radar: BragRadar.parse(pamerkan),
       stats: BragStats(
         agentsActive: office?.working,
         agentsTotal: office?.agents.length,

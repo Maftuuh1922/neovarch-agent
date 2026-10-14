@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { OfficeSnapshot } from './office-store'
 import {
   cardColors,
   contrast,
@@ -18,6 +17,7 @@ import {
   shareLinks,
   statsFromOffice
 } from './kartu-card'
+import type { OfficeSnapshot } from './office-store'
 
 const office = {
   agents: [
@@ -67,6 +67,7 @@ describe('Kartu Neovarch (desktop)', () => {
       showStats: true,
       style: 'kaca'
     })
+
     const all = texts(ops).join(' ')
     expect(all).not.toMatch(/ghp_|my-secret-pc|\/home\/aku|Hermes/)
     expect(all).toContain('Kantor AI-ku')
@@ -97,7 +98,7 @@ describe('Kartu Neovarch (desktop)', () => {
 
         // content above the QR block never runs into it
         const qr = ops.find(op => op.kind === 'qr')!
-        const model = ops.find(op => op.kind === 'text' && op.text.startsWith('model ·'))!
+        const model = ops.find((op): op is Extract<DrawOp, { kind: 'text' }> => op.kind === 'text' && op.text.startsWith('model ·'))!
         expect(model.y).toBeLessThan(qr.y)
       })
     }

@@ -3419,6 +3419,65 @@ export interface Translations extends NoticeTranslations {
     versionDetailsUncommittedChanges: string
   }
 
+  /** Kantor ▸ "Bagikan kartu" (Pamerkan): share card dialog + texts drawn on the card (core/neovarch/pamerkan.py). */
+  nvPamerkan: {
+    open: string
+    title: string
+    description: string
+    privacy: string
+    previewAlt: string
+    rendering: string
+    loading: string
+    empty: string
+    unavailable: string
+    dropped: string
+    officeHint: string
+    sections: Record<'theme' | 'layout' | 'background' | 'widgets' | 'format' | 'window' | 'trend', string>
+    themes: Record<'kaca' | 'gelap' | 'warna' | 'neon' | 'kertas' | 'terminal', string>
+    layouts: Record<'grafik' | 'kartu' | 'ringkas', string>
+    backgrounds: Record<'gaya' | 'polos' | 'grid' | 'titik' | 'aurora' | 'simbol' | 'garis', string>
+    widgets: Record<'stats' | 'totals' | 'office' | 'radar' | 'bars' | 'donut' | 'trend' | 'model', string>
+    formats: Record<'story' | 'feed', string>
+    windowDays: string
+    trendModes: Record<'daily' | 'weekly', string>
+    nameLabel: string
+    handleLabel: string
+    save: string
+    copy: string
+    saved: string
+    copied: string
+    copyFailed: string
+    renderFailed: string
+    shareText: string
+    card: {
+      agents: string
+      tasks: string
+      messages: string
+      model: string
+      kartu: string
+      defaultName: string
+      officeCaption: string
+      officeWorking: string
+      cta: string
+      ctaSub: string
+      footer: string
+      axes: Record<'coding' | 'riset' | 'ppt' | 'browser' | 'otomasi' | 'token', string>
+      lainnya: string
+      radarTitle: string
+      barsTitle: string
+      donutTitle: string
+      trendDaily: string
+      trendWeekly: string
+      empty: string
+      window: string
+      calls: string
+      tokens: string
+      toolCalls: string
+      activeDays: string
+      streak: string
+    }
+  }
+
   /** Settings ▸ Tentang ▸ "Perbarui": git pull update (core/neovarch/pull_update.py) with a release fallback. */
   nvPull: {
     title: string

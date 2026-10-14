@@ -5,20 +5,69 @@
 //
 // The layout is a pure list of draw ops (tested without a real canvas);
 // paintShareCard() replays it on a CanvasRenderingContext2D. No gradients.
+//
+// Pamerkan (v1.4.8): six themes, seven backgrounds, three layouts and
+// hideable widgets; with `pamerkan` stats (GET /api/pamerkan) the card adds a
+// radar, bar, donut and trend chart and usage tiles (pamerkan-card.ts).
 import QRCode from 'qrcode'
 
 import type { OfficeSnapshot } from './office-store'
+import {
+  barsOps,
+  type ChartBlock,
+  donutOps,
+  PAMERKAN_LABELS_ID,
+  type PamerkanCardLabels,
+  planBlocks,
+  radarOps,
+  totalsTiles,
+  trendOps
+} from './pamerkan-card'
+import type { PamerkanBackground, PamerkanLayout, PamerkanTrendMode, PamerkanWidget } from './pamerkan-prefs'
+import type { PamerkanStats } from './pamerkan-store'
 
 export const NEOVARCH_LANDING_URL = 'https://maftuuh1922.github.io/neorachAgent_lp/'
 
-export type ShareCardStyle = 'gelap' | 'kaca' | 'warna'
+export type ShareCardStyle = 'gelap' | 'kaca' | 'kertas' | 'neon' | 'terminal' | 'warna'
 export type ShareCardFormat = 'feed' | 'story'
 
 export const SHARE_CARD_STYLES: { label: string; value: ShareCardStyle }[] = [
   { label: 'Kaca', value: 'kaca' },
   { label: 'Gelap', value: 'gelap' },
-  { label: 'Warna-warni', value: 'warna' }
+  { label: 'Warna-warni', value: 'warna' },
+  { label: 'Neon', value: 'neon' },
+  { label: 'Kertas', value: 'kertas' },
+  { label: 'Terminal', value: 'terminal' }
 ]
+
+/** Texts drawn on the card (Indonesian default; the dialog passes the UI locale's). */
+export interface ShareCardText {
+  agents: string
+  cta: string
+  ctaSub: string
+  defaultName: string
+  footer: string
+  kartu: string
+  messages: string
+  model: string
+  officeCaption: string
+  officeWorking: string
+  tasks: string
+}
+
+export const SHARE_CARD_TEXT_ID: ShareCardText = {
+  agents: 'agen aktif',
+  cta: 'Coba Neovarch',
+  ctaSub: 'Agen AI di PC-mu, dipantau dari HP.',
+  defaultName: 'Kantor AI-ku',
+  footer: 'Dibuat dengan Neovarch',
+  kartu: 'KARTU',
+  messages: 'pesan',
+  model: 'model',
+  officeCaption: 'KANTOR 3D',
+  officeWorking: 'KANTOR · {active}/{total} BEKERJA',
+  tasks: 'tugas selesai'
+}
 
 export const SHARE_CARD_SIZE: Record<ShareCardFormat, { h: number; w: number }> = {
   feed: { h: 1080, w: 1080 },
@@ -46,10 +95,24 @@ export interface ShareCardData {
 
 export interface ShareCardOptions {
   accent: string
+  /** Default 'gaya' = the theme's own background. */
+  background?: PamerkanBackground
   format: ShareCardFormat
+  /** Labels for the Pamerkan charts (default Indonesian). */
+  labels?: PamerkanCardLabels
+  /** Default 'kartu' (the classic card: office shot first). */
+  layout?: PamerkanLayout
+  /** BCP-47 tag for number formatting in the charts (default 'id'). */
+  locale?: string
+  /** Radar / charts data; null/undefined = no chart blocks. */
+  pamerkan?: null | PamerkanStats
   showOffice: boolean
   showStats: boolean
   style: ShareCardStyle
+  text?: Partial<ShareCardText>
+  trend?: PamerkanTrendMode
+  /** Widget toggles; a missing key counts as on. */
+  widgets?: Partial<Record<PamerkanWidget, boolean>>
 }
 
 // ------------------------------------------------------------- privacy --
@@ -169,6 +232,30 @@ export interface CardColors {
 export function cardColors(style: ShareCardStyle, accentHex: string): CardColors {
   const accent = /^#?[0-9a-f]{3,6}$/i.test(accentHex) ? (accentHex.startsWith('#') ? accentHex : `#${accentHex}`) : '#EE1C1C'
 
+  if (style === 'neon') {
+    let a = accent
+
+    for (let i = 0; i < 6 && contrast(a, '#07040f') < 5; i++) {
+      a = mixHex(a, '#ffffff', 0.2)
+    }
+
+    return { accent: a, cell: alpha(a, 0.1), ground: '#05030b', line: alpha(a, 0.42), muted: '#b9b3d4', panel: '#0c0818', text: '#f5f3ff' }
+  }
+
+  if (style === 'kertas') {
+    let a = accent
+
+    for (let i = 0; i < 8 && contrast(a, '#fffdf8') < 3.2; i++) {
+      a = mixHex(a, '#000000', 0.16)
+    }
+
+    return { accent: a, cell: '#f3ede2', ground: '#ece4d6', line: '#d4cbbb', muted: '#57534e', panel: '#fffdf8', text: '#1c1917' }
+  }
+
+  if (style === 'terminal') {
+    return { accent: '#39ff88', cell: '#06200f', ground: '#010805', line: '#11502b', muted: '#7fcf98', panel: '#03120a', text: '#c8fbd8' }
+  }
+
   if (style === 'gelap' || style === 'kaca') {
     let a = accent
 
@@ -215,6 +302,8 @@ export type DrawOp =
   | { blur?: number; fill: string; kind: 'circle'; r: number; stroke?: string; x: number; y: number }
   | { h: number; kind: 'image'; r: number; src: string; w: number; x: number; y: number }
   | { kind: 'qr'; modules: boolean[][]; size: number; x: number; y: number }
+  | { closed: boolean; fill?: string; kind: 'path'; points: [number, number][]; stroke?: string; width?: number }
+  | { end: number; fill: string; inner: number; kind: 'arc'; r: number; start: number; x: number; y: number }
 
 export function qrModules(text: string): boolean[][] {
   const qr = QRCode.create(text, { errorCorrectionLevel: 'M' })
@@ -249,45 +338,46 @@ function compactNum(n: number): string {
   return String(n)
 }
 
-/** Every op the card draws, in pixel units of the export size. */
-export function layoutShareCard(data: ShareCardData, opts: ShareCardOptions): DrawOp[] {
-  const { h: H, w: W } = SHARE_CARD_SIZE[opts.format]
-  const story = opts.format === 'story'
-  const c = cardColors(opts.style, opts.accent)
+const LIGHT_STYLES = new Set<ShareCardStyle>(['kertas'])
+
+/** The theme's own background ('gaya'): kaca → aurora, gelap/neon → grid, warna → simbol, kertas → titik, terminal → garis. */
+export function themeBackground(style: ShareCardStyle): Exclude<PamerkanBackground, 'gaya'> {
+  return ({ gelap: 'grid', kaca: 'aurora', kertas: 'titik', neon: 'grid', terminal: 'garis', warna: 'simbol' } as const)[style]
+}
+
+function backgroundOps(bg: Exclude<PamerkanBackground, 'gaya'>, c: CardColors, W: number, H: number, story: boolean): DrawOp[] {
   const ops: DrawOp[] = []
-  const name = safeLabel(data.name) || 'Kantor AI-ku'
-  const handle = safeHandle(data.handle)
-  const s = data.stats
-  const stats: [string, string][] = []
+  const ink = c.text.startsWith('#') ? c.text : '#f4f2ed'
 
-  if (opts.showStats) {
-    if (s.agentsActive !== undefined) {
-      stats.push([`${s.agentsActive}${s.agentsTotal !== undefined ? `/${s.agentsTotal}` : ''}`, 'agen aktif'])
-    }
-
-    if (s.tasksDone !== undefined) {
-      stats.push([String(s.tasksDone), 'tugas selesai'])
-    }
-
-    if (s.messages !== undefined) {
-      stats.push([compactNum(s.messages), 'pesan'])
-    }
+  if (bg === 'aurora') {
+    const glow = c.accent.startsWith('#') ? c.accent : ink
+    ops.push({ blur: 120, fill: alpha(glow, 0.42), kind: 'circle', r: W * 0.42, x: W * 0.15, y: H * 0.15 })
+    ops.push({ blur: 120, fill: alpha(glow, 0.3), kind: 'circle', r: W * 0.36, x: W * 0.95, y: H * 0.65 })
   }
 
-  ops.push({ fill: c.ground, h: H, kind: 'rect', r: 0, w: W, x: 0, y: 0 })
+  if (bg === 'grid') {
+    const line = c.line.startsWith('#') ? alpha(c.line, 0.5) : c.line
 
-  if (opts.style === 'kaca') {
-    ops.push({ blur: 120, fill: alpha(c.accent, 0.42), kind: 'circle', r: W * 0.42, x: W * 0.15, y: H * 0.15 })
-    ops.push({ blur: 120, fill: alpha(c.accent, 0.3), kind: 'circle', r: W * 0.36, x: W * 0.95, y: H * 0.65 })
-  }
-
-  if (opts.style === 'gelap') {
     for (let x = 0; x < W; x += 72) {
-      ops.push({ fill: alpha('#2a2a30', 0.5), h: H, kind: 'rect', r: 0, w: 1.5, x, y: 0 })
+      ops.push({ fill: line, h: H, kind: 'rect', r: 0, w: 1.5, x, y: 0 })
     }
   }
 
-  if (opts.style === 'warna') {
+  if (bg === 'garis') {
+    for (let y = 0; y < H; y += 10) {
+      ops.push({ fill: alpha(ink, 0.05), h: 3, kind: 'rect', r: 0, w: W, x: 0, y })
+    }
+  }
+
+  if (bg === 'titik') {
+    for (let y = 30; y < H; y += 60) {
+      for (let x = 30; x < W; x += 60) {
+        ops.push({ fill: alpha(ink, 0.12), kind: 'circle', r: 3, x, y })
+      }
+    }
+  }
+
+  if (bg === 'simbol') {
     let seed = 7
 
     const rnd = () => {
@@ -300,7 +390,7 @@ export function layoutShareCard(data: ShareCardData, opts: ShareCardOptions): Dr
 
     for (let i = 0; i < (story ? 34 : 20); i++) {
       ops.push({
-        color: alpha(c.text, 0.13),
+        color: alpha(ink, 0.13),
         font: `600 ${Math.round(40 + rnd() * 40)}px ${SANS}`,
         kind: 'text',
         text: marks[i % marks.length],
@@ -309,6 +399,54 @@ export function layoutShareCard(data: ShareCardData, opts: ShareCardOptions): Dr
       })
     }
   }
+
+  return ops
+}
+
+export interface ShareCardPlan {
+  /** Chart blocks that were on but did not fit this format / layout. */
+  dropped: ChartBlock[]
+  ops: DrawOp[]
+}
+
+/** Every op the card draws, in pixel units of the export size. */
+export function layoutShareCard(data: ShareCardData, opts: ShareCardOptions): DrawOp[] {
+  return planShareCard(data, opts).ops
+}
+
+export function planShareCard(data: ShareCardData, opts: ShareCardOptions): ShareCardPlan {
+  const { h: H, w: W } = SHARE_CARD_SIZE[opts.format]
+  const story = opts.format === 'story'
+  const c = cardColors(opts.style, opts.accent)
+  const tx = { ...SHARE_CARD_TEXT_ID, ...(opts.text ?? {}) }
+  const labels = opts.labels ?? PAMERKAN_LABELS_ID
+  const locale = opts.locale ?? 'id'
+  const layout = opts.layout ?? 'kartu'
+  const on = (w: PamerkanWidget) => opts.widgets?.[w] !== false
+  const ops: DrawOp[] = []
+  const name = safeLabel(data.name) || tx.defaultName
+  const handle = safeHandle(data.handle)
+  const s = data.stats
+  const stats: [string, string][] = []
+  const pk = opts.pamerkan ?? null
+
+  if (opts.showStats && on('stats')) {
+    if (s.agentsActive !== undefined) {
+      stats.push([`${s.agentsActive}${s.agentsTotal !== undefined ? `/${s.agentsTotal}` : ''}`, tx.agents])
+    }
+
+    if (s.tasksDone !== undefined) {
+      stats.push([String(s.tasksDone), tx.tasks])
+    }
+
+    if (s.messages !== undefined) {
+      stats.push([compactNum(s.messages), tx.messages])
+    }
+  }
+
+  ops.push({ fill: c.ground, h: H, kind: 'rect', r: 0, w: W, x: 0, y: 0 })
+  const bg = !opts.background || opts.background === 'gaya' ? themeBackground(opts.style) : opts.background
+  ops.push(...backgroundOps(bg, c, W, H, story))
 
   const m = story ? 54 : 42
   const top = story ? 120 : 42
@@ -324,7 +462,7 @@ export function layoutShareCard(data: ShareCardData, opts: ShareCardOptions): Dr
 
   // brand
   ops.push({ color: c.text, font: `600 28px ${MONO}`, kind: 'text', text: 'NEOVARCH AGENT', x: x0, y: y + 24 })
-  ops.push({ align: 'right', color: c.muted, font: `500 24px ${MONO}`, kind: 'text', text: 'KARTU', x: x0 + iw, y: y + 24 })
+  ops.push({ align: 'right', color: c.muted, font: `500 24px ${MONO}`, kind: 'text', text: tx.kartu, x: x0 + iw, y: y + 24 })
   y += story ? 80 : 60
 
   // avatar (initial) + name
@@ -355,50 +493,132 @@ export function layoutShareCard(data: ShareCardData, opts: ShareCardOptions): Dr
 
   y += 2 * av + (story ? 48 : 30)
 
-  // Kantor 3D snapshot
-  if (opts.showOffice && data.officeShot) {
-    const oh = story ? 720 : 250
+  // Kantor 3D snapshot: full size on the classic card, a strip on "grafik" (story only), never on "ringkas"
+  const officeH = layout === 'kartu' ? (story ? 720 : 250) : layout === 'grafik' && story ? 300 : 0
+
+  if (opts.showOffice && on('office') && data.officeShot && officeH) {
+    const oh = officeH
     ops.push({ h: oh, kind: 'image', r: 54, src: data.officeShot, w: iw, x: x0, y })
     ops.push({ fill: 'rgba(0, 0, 0, 0.55)', h: 52, kind: 'rect', r: 26, w: 420, x: x0 + 24, y: y + oh - 76 })
-    const caption = s.agentsTotal !== undefined ? `KANTOR · ${s.agentsActive ?? 0}/${s.agentsTotal} BEKERJA` : 'KANTOR 3D'
+
+    const caption =
+      s.agentsTotal !== undefined ? tx.officeWorking.replace('{active}', String(s.agentsActive ?? 0)).replace('{total}', String(s.agentsTotal)) : tx.officeCaption
+
     ops.push({ color: '#ffffff', font: `600 24px ${MONO}`, kind: 'text', maxWidth: 380, text: caption, x: x0 + 46, y: y + oh - 41 })
     y += oh + (story ? 36 : 24)
   }
 
-  // stats
-  if (stats.length) {
+  const tiles = (list: [string, string][], ch: number) => {
     const gap = 24
-    const cw = (iw - gap * (stats.length - 1)) / stats.length
-    const ch = story ? 150 : 120
+    const cw = (iw - gap * (list.length - 1)) / list.length
+    const few = list.length <= 3
 
-    stats.forEach(([value, label], i) => {
+    list.forEach(([value, label], i) => {
       const cx = x0 + i * (cw + gap)
       ops.push({ fill: c.cell, h: ch, kind: 'rect', r: 36, stroke: c.line, w: cw, x: cx, y })
-      ops.push({ color: c.text, font: `700 ${story ? 64 : 52}px ${SANS}`, kind: 'text', maxWidth: cw - 48, text: value, x: cx + 28, y: y + (story ? 80 : 64) })
-      ops.push({ color: c.muted, font: `500 ${story ? 26 : 22}px ${MONO}`, kind: 'text', maxWidth: cw - 48, text: label, x: cx + 28, y: y + (story ? 124 : 100) })
+      ops.push({ color: c.text, font: `700 ${few ? (story ? 64 : 52) : story ? 52 : 40}px ${SANS}`, kind: 'text', maxWidth: cw - 48, text: value, x: cx + 28, y: y + ch * 0.53 })
+      ops.push({ color: c.muted, font: `500 ${story ? 26 : 22}px ${MONO}`, kind: 'text', maxWidth: cw - 48, text: label, x: cx + 28, y: y + ch * 0.83 })
     })
     y += ch + 24
   }
 
-  if (opts.showStats && s.model) {
+  // stats
+  if (stats.length) {
+    tiles(stats, story ? 150 : 120)
+  }
+
+  if (opts.showStats && on('model') && s.model) {
     ops.push({ fill: c.cell, h: 60, kind: 'rect', r: 30, stroke: c.line, w: iw, x: x0, y })
-    ops.push({ color: c.text, font: `500 26px ${MONO}`, kind: 'text', maxWidth: iw - 60, text: `model · ${s.model}`, x: x0 + 30, y: y + 40 })
+    ops.push({ color: c.text, font: `500 26px ${MONO}`, kind: 'text', maxWidth: iw - 60, text: `${tx.model} · ${s.model}`, x: x0 + 30, y: y + 40 })
+    y += 84
   }
 
   // QR + call to action, pinned to the bottom of the panel
   const qs = story ? 230 : 190
   const qy = top + ph - pad - qs
+
+  // Pamerkan charts: radar > usage tiles > bars|donut row > trend, as many as fit above the QR
+  let dropped: ChartBlock[] = []
+
+  if (pk) {
+    const want: ChartBlock[] = []
+    const rowParts = layout === 'ringkas' ? [] : (['bars', 'donut'] as const).filter(b => on(b))
+
+    if (on('radar')) {
+      want.push('radar')
+    }
+
+    if (on('totals') && layout !== 'ringkas') {
+      want.push('totals')
+    }
+
+    if (layout === 'ringkas' && on('donut') && !on('radar')) {
+      want.push('donut')
+    }
+
+    if (rowParts.length === 2) {
+      want.push('row')
+    } else if (rowParts.length === 1) {
+      want.push(rowParts[0])
+    }
+
+    if (on('trend') && layout !== 'ringkas') {
+      want.push('trend')
+    }
+
+    const gap = story ? 28 : 20
+    const plan = planBlocks(want, qy - y - (story ? 12 : 8), gap, opts.format)
+    dropped = plan.dropped
+    const scale = story ? 1 : 0.82
+    const bo = { colors: c, labels, locale, scale }
+
+    for (const b of want) {
+      const bh = plan.heights[b]
+
+      if (bh === undefined) {
+        continue
+      }
+
+      const box = { h: bh, w: iw, x: x0, y }
+
+      if (b === 'radar') {
+        if (layout === 'ringkas' && on('donut')) {
+          const half = (iw - gap) / 2
+          ops.push(...radarOps(pk, { ...box, w: half + 40 }, { ...bo, scale: scale * 0.85 }))
+          ops.push(...donutOps(pk, { ...box, w: half - 40, x: x0 + half + gap + 40 }, { ...bo, scale: scale * 0.85, style: opts.style }))
+        } else {
+          ops.push(...radarOps(pk, box, bo))
+        }
+      } else if (b === 'totals') {
+        tiles(totalsTiles(pk, labels, locale), bh)
+        y -= bh + 24
+      } else if (b === 'row') {
+        const half = (iw - gap * 2) / 2
+        ops.push(...barsOps(pk, { ...box, w: half }, bo))
+        ops.push(...donutOps(pk, { ...box, w: half, x: x0 + half + gap * 2 }, { ...bo, style: opts.style }))
+      } else if (b === 'bars') {
+        ops.push(...barsOps(pk, box, bo))
+      } else if (b === 'donut') {
+        ops.push(...donutOps(pk, box, { ...bo, style: opts.style }))
+      } else if (b === 'trend') {
+        ops.push(...trendOps(pk, box, { ...bo, mode: opts.trend ?? 'daily' }))
+      }
+
+      y += bh + gap
+    }
+  }
+
   ops.push({ fill: '#ffffff', h: qs, kind: 'rect', r: 36, w: qs, x: x0, y: qy })
   ops.push({ kind: 'qr', modules: qrModules(data.link), size: qs - 32, x: x0 + 16, y: qy + 16 })
-  const tx = x0 + qs + 40
-  ops.push({ color: c.text, font: `600 ${story ? 46 : 40}px ${SANS}`, kind: 'text', text: 'Coba Neovarch', x: tx, y: qy + (story ? 80 : 66) })
+  const tx0 = x0 + qs + 40
+  ops.push({ color: c.text, font: `600 ${story ? 46 : 40}px ${SANS}`, kind: 'text', text: tx.cta, x: tx0, y: qy + (story ? 80 : 66) })
   ops.push({
     color: c.muted,
     font: `400 ${story ? 32 : 28}px ${SANS}`,
     kind: 'text',
     maxWidth: iw - qs - 40,
-    text: 'Agen AI di PC-mu, dipantau dari HP.',
-    x: tx,
+    text: tx.ctaSub,
+    x: tx0,
     y: qy + (story ? 130 : 108)
   })
   ops.push({
@@ -407,22 +627,22 @@ export function layoutShareCard(data: ShareCardData, opts: ShareCardOptions): Dr
     kind: 'text',
     maxWidth: iw - qs - 40,
     text: data.link.replace(/^https?:\/\//, '').replace(/\/$/, ''),
-    x: tx,
+    x: tx0,
     y: qy + (story ? 180 : 150)
   })
 
   // footer
   ops.push({
     align: 'center',
-    color: opts.style === 'warna' ? c.text : alpha('#f4f2ed', 0.8),
+    color: opts.style === 'warna' || LIGHT_STYLES.has(opts.style) ? c.text : alpha('#f4f2ed', 0.8),
     font: `500 ${story ? 30 : 24}px ${MONO}`,
     kind: 'text',
-    text: 'Dibuat dengan Neovarch',
+    text: tx.footer,
     x: W / 2,
     y: story ? H - 50 : H - 12
   })
 
-  return ops
+  return { dropped, ops }
 }
 
 // ---------------------------------------------------------------- paint --
@@ -490,7 +710,46 @@ export async function paintShareCard(ctx: CanvasRenderingContext2D, ops: DrawOp[
         ctx.fillText(op.text, op.x, op.y, op.maxWidth)
 
         break
+      case 'path': {
+        if (op.points.length < 2) {
+          break
+        }
 
+        ctx.beginPath()
+        ctx.moveTo(op.points[0][0], op.points[0][1])
+
+        for (const [px, py] of op.points.slice(1)) {
+          ctx.lineTo(px, py)
+        }
+
+        if (op.closed) {
+          ctx.closePath()
+        }
+
+        if (op.fill) {
+          ctx.fillStyle = op.fill
+          ctx.fill()
+        }
+
+        if (op.stroke) {
+          ctx.strokeStyle = op.stroke
+          ctx.lineWidth = op.width ?? 2
+          ctx.lineJoin = 'round'
+          ctx.stroke()
+        }
+
+        break
+      }
+
+      case 'arc':
+        ctx.beginPath()
+        ctx.arc(op.x, op.y, op.r, op.start, op.end)
+        ctx.arc(op.x, op.y, op.inner, op.end, op.start, true)
+        ctx.closePath()
+        ctx.fillStyle = op.fill
+        ctx.fill()
+
+        break
       case 'qr': {
         const n = op.modules.length
         const cell = op.size / n

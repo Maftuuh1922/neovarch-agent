@@ -114,6 +114,10 @@ const enStrings = <String, String>{
   'Riwayat perubahan': 'Changelog',
   'Yang baru di setiap versi': "What's new in each version",
   'Pamerkan': 'Show off',
+  'Radar pemakaian': 'Usage radar',
+  'Perbarui Neovarch di PC untuk radar': 'Update Neovarch on the PC for the radar',
+  'Belum ada data pemakaian di PC': 'No usage data on the PC yet',
+  'Coding, riset, PPT, browser, otomasi, token · {days} hari': 'Coding, research, PPT, browser, automation, tokens · {days} days',
 
   // ---- hubungkan PC -------------------------------------------------------------
   'Terhubung ke {name}': 'Connected to {name}',

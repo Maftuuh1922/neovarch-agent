@@ -2400,6 +2400,17 @@ def build_app(gw: Gateway) -> web.Application:
         return web.json_response(await asyncio.to_thread(usage_stats.summary, session=rec))
 
     r.add_get("/api/usage", usage_get)
+
+    async def pamerkan_get(request):
+        # Pamerkan card radar/bar/donut/trend: local sessions + usage.json only (pamerkan.py).
+        from neovarch import pamerkan
+        try:
+            days = int(request.query.get("days") or pamerkan.DEFAULT_DAYS)
+        except ValueError:
+            days = pamerkan.DEFAULT_DAYS
+        return web.json_response(await asyncio.to_thread(pamerkan.cached, days))
+
+    r.add_get("/api/pamerkan", pamerkan_get)
     _add_remote_link_routes(app, gw)
     from neovarch.background import add_routes as _add_background_routes
     _add_background_routes(app, gw)

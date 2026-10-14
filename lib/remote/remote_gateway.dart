@@ -1017,6 +1017,18 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
     }
   }
 
+  /// Pamerkan radar (core ≥ 1.4.8, `GET /api/pamerkan`): coding / riset / PPT /
+  /// browser / otomasi / token counted from the PC's own sessions + usage.json.
+  /// Null on older PCs or when the PC does not answer.
+  Future<Map<String, dynamic>?> pamerkanStats({int days = 30}) async {
+    try {
+      final j = await _json('GET', '/api/pamerkan', query: {'days': '$days'});
+      return j is Map ? Map<String, dynamic>.from(j) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Public `/api/status` (version, components); never throws.
   Future<Map<String, dynamic>> serverStatus() async {
     try {
