@@ -12,6 +12,7 @@ import { enOnboarding } from './en_onboarding'
 import { enProjects } from './en_projects'
 import { enSharedMetrics } from './en_shared_metrics'
 import { enUninstallSection } from './en_uninstall_section'
+import { nvPullEn } from './nv-pull'
 import type { Translations } from './types'
 
 export const en: Translations = {
@@ -3980,6 +3981,8 @@ export const en: Translations = {
     versionDetailsInstallId: 'Install ID',
     versionDetailsUncommittedChanges: 'uncommitted changes'
   },
+
+  nvPull: nvPullEn,
 
   nvUpdate: {
     title: 'Neovarch updates',

@@ -390,7 +390,14 @@ def build_parser() -> argparse.ArgumentParser:
     ro.add_argument("--wait", default="40", help="seconds to wait for 9Router to answer")
 
     sub.add_parser("version", help="show version")
-    sub.add_parser("update", help="how to update Neovarch")
+    up = sub.add_parser("update", help="update Neovarch: git pull (git install) or the latest release, "
+                                       "reinstall dependencies, check extras, restart")
+    up.add_argument("--check", action="store_true", help="only check whether an update exists")
+    up.add_argument("--no-deps", action="store_true", help="git install: skip the dependency reinstall")
+    up.add_argument("--no-extras", action="store_true", help="skip the optional extras check (Obsidian)")
+    up.add_argument("--no-restart", action="store_true", help="do not restart a running gateway")
+    up.add_argument("--rollback", action="store_true", help="git install: go back to the commit before the last update")
+    up.add_argument("--json", action="store_true")
     u = sub.add_parser("uninstall", help="remove Neovarch (only ~/.neovarch)")
     u.add_argument("-y", "--yes", action="store_true")
     sub.add_parser("desktop", help="open the desktop app")
@@ -444,7 +451,7 @@ def cmd_vault(args) -> int:
 
 
 def cmd_extras(args) -> int:
-    """Hook for installers and the future `neovarch update`: `neovarch extras ensure --reason update`."""
+    """Hook for installers and `neovarch update`: `neovarch extras ensure --reason update`."""
     import json as _json
 
     from neovarch import extras
@@ -478,6 +485,75 @@ def cmd_extras(args) -> int:
             print(f"{r.get('label') or r.get('name')}: {state}" + (f" ({r['path']})" if r.get("path") else "")
                   + (f" — {r['detail']}" if r.get("detail") else ""))
     return 1 if any(r.get("status") == "failed" for r in res) else 0
+
+
+STEP_LABELS = {"detect": "Deteksi instalasi", "clean": "Cek perubahan lokal", "fetch": "git fetch",
+               "pull": "git pull (fast-forward)", "deps": "Pasang ulang dependensi", "check": "Cek rilis terbaru",
+               "install": "Jalankan installer rilis", "extras": "Cek ekstra (Obsidian)", "restart": "Mulai ulang"}
+STEP_MARKS = {"running": "…", "done": "✓", "skipped": "-", "failed": "✗", "warning": "!", "manual": "→"}
+
+
+def cmd_update(args) -> int:
+    """`neovarch update` (see neovarch/pull_update.py and docs/update.md)."""
+    import json as _json
+
+    from neovarch import pull_update
+
+    def progress(ev: dict) -> None:
+        if args.json:
+            return
+        if ev.get("kind") == "step":
+            if ev["status"] == "running":
+                print(f"==> {STEP_LABELS.get(ev['step'], ev['step'])}…", flush=True)
+            else:
+                mark = STEP_MARKS.get(ev["status"], "·")
+                print(f" {mark} {STEP_LABELS.get(ev['step'], ev['step'])}"
+                      + (f": {ev['detail']}" if ev.get("detail") else ""), flush=True)
+        elif ev.get("kind") == "line":
+            print(f"   {ev['text']}", flush=True)
+
+    ctx = pull_update.Ctx(progress=progress)
+    try:
+        if args.rollback:
+            res = pull_update.rollback(ctx)
+            if not args.no_restart:
+                res["restart"] = pull_update.request_gateway_restart()
+        else:
+            res = pull_update.run(ctx, check_only=args.check, deps=not args.no_deps,
+                                  restart=not args.no_restart, extras=not args.no_extras)
+    except pull_update.UpdateError as exc:
+        if args.json:
+            print(_json.dumps({"ok": False, "code": exc.code, "error": exc.message,
+                               "rolled_back": exc.rolled_back}, ensure_ascii=False, indent=1))
+        else:
+            print(f"\nneovarch update: {exc.message}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\nneovarch update: dibatalkan.", file=sys.stderr)
+        return 130
+    if args.json:
+        print(_json.dumps({"ok": True, **res}, ensure_ascii=False, indent=1, default=str))
+        return 0
+    if res.get("rolled_back"):
+        print(f"\nDipulihkan ke {str(res.get('new'))[:10]}.")
+    elif res.get("manual"):
+        print(f"\nVersi {res.get('latest')} tersedia. Instalasi ini (paket/AppImage/.deb/pip) tidak bisa "
+              f"memperbarui dirinya sendiri; unduh dari:\n  {res.get('download_url') or res.get('url')}\n"
+              f"atau pasang ulang lewat installer:\n  curl -fsSL {INSTALLER}.sh | sh\n  irm {INSTALLER}.ps1 | iex")
+    elif res.get("available"):
+        print(f"\nPembaruan tersedia ({res.get('behind') or res.get('latest')}). Jalankan `neovarch update`.")
+    elif res.get("up_to_date"):
+        print("\nNeovarch sudah versi terbaru.")
+    elif res.get("updated"):
+        if res.get("kind") == "git":
+            print(f"\nDiperbarui {str(res.get('old'))[:10]} → {str(res.get('new'))[:10]} "
+                  f"({len(res.get('commits') or [])} commit).")
+        else:
+            print(f"\nDiperbarui ke {res.get('latest')}.")
+        if (res.get("restart") or {}).get("requested"):
+            print("Gateway yang sedang berjalan (bila ada) dimulai ulang setelah giliran aktif selesai. "
+                  "Buka ulang aplikasi desktop untuk memuat versi baru.")
+    return 0
 
 
 def cmd_rewind(args) -> int:
@@ -536,8 +612,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "extras":
         raise SystemExit(cmd_extras(args))
     if args.cmd == "update":
-        print(f"Update Neovarch by re-running its installer:\n  curl -fsSL {INSTALLER}.sh | sh\n  irm {INSTALLER}.ps1 | iex")
-        return
+        raise SystemExit(cmd_update(args))
     query = getattr(args, "chat_query", None) or args.query
     resume = getattr(args, "chat_resume", None) or args.resume
     args.plain = bool(args.plain or getattr(args, "chat_plain", False))

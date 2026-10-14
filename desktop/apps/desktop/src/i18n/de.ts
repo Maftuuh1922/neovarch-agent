@@ -10,8 +10,10 @@ import { deProjects } from './de_projects'
 import { deSharedMetrics } from './de_shared_metrics'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introDe } from './intro-de'
+import { nvPullDe } from './nv-pull'
 
 export const deOverrides = {
+  nvPull: nvPullDe,
   sharedMetrics: deSharedMetrics,
   intro: introDe,
   connectors: {

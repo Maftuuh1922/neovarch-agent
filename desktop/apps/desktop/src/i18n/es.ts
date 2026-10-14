@@ -10,8 +10,10 @@ import { esOnboarding } from './es_onboarding'
 import { esProjects } from './es_projects'
 import { esSharedMetrics } from './es_shared_metrics'
 import { introEs } from './intro-es'
+import { nvPullEs } from './nv-pull'
 
 export const esOverrides = {
+  nvPull: nvPullEs,
   sharedMetrics: esSharedMetrics,
   intro: introEs,
   connectors: {

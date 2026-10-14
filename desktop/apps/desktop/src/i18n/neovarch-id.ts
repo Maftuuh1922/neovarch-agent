@@ -8,8 +8,10 @@
  * upstream English until they are translated.
  */
 import type { TranslationOverrides } from './define-locale'
+import { nvPullId } from './nv-pull'
 
 export const NEOVARCH_ID = {
+  "nvPull": nvPullId,
   "common": {
     "apply": "Terapkan",
     "back": "Kembali",

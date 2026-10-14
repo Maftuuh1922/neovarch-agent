@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { type ReactElement, useEffect } from 'react'
 
+import { NeovarchPullUpdate } from '@/components/neovarch-pull-update'
 import { NeovarchUpdateCard } from '@/components/neovarch-update-card'
 import { UpdateStatusCard, VersionHero } from '@/components/update-status'
 import { VersionDetails } from '@/components/version-details'
@@ -59,6 +60,8 @@ function AppUpdatesSettings({ includeUninstall }: AppUpdatesSettingsProps): Reac
         <div className="grid gap-3" id={settingElementId(SETTING_IDS.about.updates)}>
           {/* Neovarch itself updates from GitHub Releases; the upstream feed updater is off. */}
           <NeovarchUpdateCard autoCheck />
+          {/* "Perbarui": git pull + deps + extras + restart (falls back to the release updater above). */}
+          {!remote && <NeovarchPullUpdate />}
           {/* Client and remote backend updates are independent. Only the client has release notes. */}
           {remote && <UpdateStatusCard showReleaseNotes={false} target="backend" />}
         </div>
