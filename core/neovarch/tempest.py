@@ -141,6 +141,8 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "adaptive_effort": True,       # high effort on the first step / after a failure, lighter on routine steps
     "parallel_tools": True,        # read-only tool calls of one model message run at the same time
     "ground_check": True,          # numbers in a web answer must appear in the fetched text (tempest_ground.py)
+    # Codemode: one sandboxed Python program calls many tools in one model call (codemode.py)
+    "codemode": True,              # bench/codemode_bench.py: fewer model calls + tokens on the fixed task set
 }
 
 HEAD_LINES = 30
