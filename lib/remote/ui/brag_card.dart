@@ -104,6 +104,7 @@ class NeovarchBragCard extends StatelessWidget {
     this.format = BragFormat.story,
     this.showStats = true,
     this.showOffice = true,
+    this.showRadar = true,
     this.background,
     this.avatar,
   });
@@ -112,6 +113,9 @@ class NeovarchBragCard extends StatelessWidget {
   final BragStyle style;
   final BragFormat format;
   final bool showStats, showOffice;
+
+  /// Pamerkan radar (only drawn when the PC counted something).
+  final bool showRadar;
 
   /// Overrides the wallpaper behind the Kaca style (tests / screenshots).
   final Widget? background;
@@ -126,8 +130,8 @@ class NeovarchBragCard extends StatelessWidget {
     final content = Padding(
       padding: story ? const EdgeInsets.fromLTRB(20, 20, 20, 18) : const EdgeInsets.fromLTRB(16, 15, 16, 13),
       child: story
-          ? _StoryLayout(data: data, c: c, showStats: showStats, showOffice: showOffice, avatar: avatar)
-          : _FeedLayout(data: data, c: c, showStats: showStats, showOffice: showOffice, avatar: avatar),
+          ? _StoryLayout(data: data, c: c, showStats: showStats, showOffice: showOffice, showRadar: showRadar, avatar: avatar)
+          : _FeedLayout(data: data, c: c, showStats: showStats, showOffice: showOffice, showRadar: showRadar, avatar: avatar),
     );
     return SizedBox(
       key: ValueKey('brag-card-${style.name}-${format.name}'),
@@ -292,10 +296,10 @@ class _Panel extends StatelessWidget {
 // ---------------------------------------------------------------- layouts --
 
 class _StoryLayout extends StatelessWidget {
-  const _StoryLayout({required this.data, required this.c, required this.showStats, required this.showOffice, this.avatar});
+  const _StoryLayout({required this.data, required this.c, required this.showStats, required this.showOffice, this.showRadar = true, this.avatar});
   final BragCardData data;
   final BragColors c;
-  final bool showStats, showOffice;
+  final bool showStats, showOffice, showRadar;
   final ImageProvider? avatar;
   @override
   Widget build(BuildContext context) {
@@ -321,17 +325,20 @@ class _StoryLayout extends StatelessWidget {
         const SizedBox(height: 4),
         Text('${data.heatmap!.total} kontribusi · streak ${data.heatmap!.streak} hari', style: NV.monoLabel(size: 8.5, color: c.muted)),
       ],
-      const Spacer(),
+      if (showRadar && data.radar != null && !data.radar!.isEmpty)
+        Expanded(child: Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: BragRadarChart(radar: data.radar!, c: c)))
+      else
+        const Spacer(),
       _QrRow(link: data.link, c: c, qr: 74),
     ]);
   }
 }
 
 class _FeedLayout extends StatelessWidget {
-  const _FeedLayout({required this.data, required this.c, required this.showStats, required this.showOffice, this.avatar});
+  const _FeedLayout({required this.data, required this.c, required this.showStats, required this.showOffice, this.showRadar = true, this.avatar});
   final BragCardData data;
   final BragColors c;
-  final bool showStats, showOffice;
+  final bool showStats, showOffice, showRadar;
   final ImageProvider? avatar;
   @override
   Widget build(BuildContext context) {
@@ -351,7 +358,10 @@ class _FeedLayout extends StatelessWidget {
         _OfficeShot(data: data, c: c, height: 84)
       else if (stats && data.heatmap != null)
         BragHeat(heatmap: data.heatmap!, c: c, height: 48),
-      const Spacer(),
+      if (showRadar && data.radar != null && !data.radar!.isEmpty)
+        Expanded(child: Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: BragRadarChart(radar: data.radar!, c: c)))
+      else
+        const Spacer(),
       Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
         Expanded(child: side),
         const SizedBox(width: 10),
@@ -569,6 +579,83 @@ class _HeatPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_HeatPainter o) => o.h != h || o.c.accent != c.accent || o.c.cell != c.cell;
+}
+
+/// Pamerkan spider chart (6 axes, scores from the PC core). Hides itself when
+/// the space left on the card is too small to read.
+class BragRadarChart extends StatelessWidget {
+  const BragRadarChart({super.key, required this.radar, required this.c});
+  final BragRadar radar;
+  final BragColors c;
+
+  static const labels = {'coding': 'Coding', 'riset': 'Riset', 'ppt': 'PPT', 'browser': 'Browser', 'otomasi': 'Otomasi', 'token': 'Token'};
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
+        if (box.maxHeight < 72 || box.maxWidth < 120) return const SizedBox.shrink();
+        return Column(key: const ValueKey('brag-radar'), crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _Label('RADAR · ${radar.days} HARI', c),
+          Expanded(child: CustomPaint(size: Size.infinite, painter: BragRadarPainter(radar, c, labelStyle: NV.monoLabel(size: 8, color: c.text)))),
+        ]);
+      });
+}
+
+class BragRadarPainter extends CustomPainter {
+  BragRadarPainter(this.radar, this.c, {required this.labelStyle});
+  final BragRadar radar;
+  final BragColors c;
+  final TextStyle labelStyle;
+
+  /// Corner of axis [i] of [n] at [f] of radius [r] (axis 0 up, clockwise).
+  static Offset point(int i, int n, double f, Offset center, double r) {
+    final a = -math.pi / 2 + i * 2 * math.pi / n;
+    return center + Offset(math.cos(a), math.sin(a)) * r * f;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final n = radar.axes.length;
+    if (n < 3) return;
+    final center = Offset(size.width / 2, size.height / 2);
+    final r = math.max(8.0, math.min(size.width / 2 - 44, size.height / 2 - 14));
+    final grid = Paint()
+      ..style = PaintingStyle.stroke
+      ..color = c.line
+      ..strokeWidth = 0.8;
+    for (final f in const [0.25, 0.5, 0.75, 1.0]) {
+      canvas.drawPath(Path()..addPolygon([for (var i = 0; i < n; i++) point(i, n, f, center, r)], true), grid);
+    }
+    for (var i = 0; i < n; i++) {
+      canvas.drawLine(center, point(i, n, 1, center, r), grid);
+    }
+    final pts = [for (var i = 0; i < n; i++) point(i, n, math.max(0.04, radar.axes[i].score / 100), center, r)];
+    final shape = Path()..addPolygon(pts, true);
+    canvas.drawPath(shape, Paint()..color = c.accent.withValues(alpha: 0.30));
+    canvas.drawPath(
+        shape,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeJoin = StrokeJoin.round
+          ..color = c.accent
+          ..strokeWidth = 1.6);
+    final dot = Paint()..color = c.accent;
+    for (final p in pts) {
+      canvas.drawCircle(p, 2.2, dot);
+    }
+    for (var i = 0; i < n; i++) {
+      final a = radar.axes[i];
+      final label = '${BragRadarChart.labels[a.id] ?? a.id} ${a.id == 'token' ? compactTokens(a.value) : _compactNum(a.value)}';
+      final tp = TextPainter(text: TextSpan(text: label, style: labelStyle), textDirection: TextDirection.ltr, maxLines: 1)..layout(maxWidth: 88);
+      final at = point(i, n, 1, center, r + 6);
+      final dx = at.dx - center.dx;
+      final x = dx.abs() < 2 ? at.dx - tp.width / 2 : (dx > 0 ? at.dx : at.dx - tp.width);
+      final y = at.dy < center.dy - 2 ? at.dy - tp.height : (at.dy > center.dy + 2 ? at.dy : at.dy - tp.height / 2);
+      tp.paint(canvas, Offset(x.clamp(0, math.max(0, size.width - tp.width)).toDouble(), y.clamp(0, math.max(0, size.height - tp.height)).toDouble()));
+    }
+  }
+
+  @override
+  bool shouldRepaint(BragRadarPainter o) => o.radar != radar || o.c.accent != c.accent || o.c.line != c.line || o.labelStyle != labelStyle;
 }
 
 class _QrRow extends StatelessWidget {

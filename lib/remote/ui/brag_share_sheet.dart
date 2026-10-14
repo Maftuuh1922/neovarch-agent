@@ -15,6 +15,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../theme/neovarch_mobile_theme.dart';
 import '../../ui/widgets/common.dart' show toast;
 import '../remote_controller.dart';
+import '../l10n/strings.dart';
 import '../share/brag_card_data.dart';
 import '../share/share_targets.dart';
 import 'brag_card.dart';
@@ -67,6 +68,8 @@ Future<void> showBragShareSheet(BuildContext context, WidgetRef ref, {Uint8List?
   final shot = officeShot ?? await captureOfficeSnapshot();
   // Token tiles (token hari ini / total token) from the PC's own counter.
   final usage = r.connected ? await r.gateway?.usageStats().timeout(const Duration(seconds: 4), onTimeout: () => null) : null;
+  // Pamerkan radar (coding / riset / PPT / browser / otomasi / token) counted by the PC core.
+  final pamerkan = r.connected ? await r.gateway?.pamerkanStats().timeout(const Duration(seconds: 4), onTimeout: () => null) : null;
   if (!context.mounted) return;
   final data = BragCardData.gather(
     profile: profile,
@@ -76,6 +79,7 @@ Future<void> showBragShareSheet(BuildContext context, WidgetRef ref, {Uint8List?
     defaultModel: r.models?.defaultModel,
     officeShot: shot,
     usage: usage,
+    pamerkan: pamerkan,
   );
   await showModalBottomSheet<void>(
     context: context,
@@ -104,6 +108,7 @@ class _BragSharePreviewState extends State<BragSharePreview> {
   late BragFormat format = widget.initialFormat;
   bool showStats = true;
   late bool showOffice = widget.data.officeShot != null;
+  late bool showRadar = widget.data.radar != null && !widget.data.radar!.isEmpty;
   bool busy = false;
   List<ResolvedShareTarget> targets = const [];
 
@@ -128,6 +133,7 @@ class _BragSharePreviewState extends State<BragSharePreview> {
         format: format,
         showStats: showStats,
         showOffice: showOffice,
+        showRadar: showRadar,
         background: widget.debugBackground,
       );
 
@@ -237,6 +243,17 @@ class _BragSharePreviewState extends State<BragSharePreview> {
                 sub: widget.data.officeShot == null ? 'Buka tab Kantor (3D) dulu' : 'Gambar kantor saat ini',
                 value: showOffice,
                 onChanged: widget.data.officeShot == null ? null : (v) => setState(() => showOffice = v),
+              ),
+              _Toggle(
+                key: const ValueKey('brag-toggle-radar'),
+                label: tr('Radar pemakaian'),
+                sub: widget.data.radar == null
+                    ? tr('Perbarui Neovarch di PC untuk radar')
+                    : widget.data.radar!.isEmpty
+                        ? tr('Belum ada data pemakaian di PC')
+                        : tr('Coding, riset, PPT, browser, otomasi, token · {days} hari', {'days': widget.data.radar!.days}),
+                value: showRadar,
+                onChanged: widget.data.radar == null || widget.data.radar!.isEmpty ? null : (v) => setState(() => showRadar = v),
               ),
             ]),
           ),

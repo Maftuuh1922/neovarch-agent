@@ -500,8 +500,10 @@ export function planShareCard(data: ShareCardData, opts: ShareCardOptions): Shar
     const oh = officeH
     ops.push({ h: oh, kind: 'image', r: 54, src: data.officeShot, w: iw, x: x0, y })
     ops.push({ fill: 'rgba(0, 0, 0, 0.55)', h: 52, kind: 'rect', r: 26, w: 420, x: x0 + 24, y: y + oh - 76 })
+
     const caption =
       s.agentsTotal !== undefined ? tx.officeWorking.replace('{active}', String(s.agentsActive ?? 0)).replace('{total}', String(s.agentsTotal)) : tx.officeCaption
+
     ops.push({ color: '#ffffff', font: `600 24px ${MONO}`, kind: 'text', maxWidth: 380, text: caption, x: x0 + 46, y: y + oh - 41 })
     y += oh + (story ? 36 : 24)
   }
@@ -708,7 +710,6 @@ export async function paintShareCard(ctx: CanvasRenderingContext2D, ops: DrawOp[
         ctx.fillText(op.text, op.x, op.y, op.maxWidth)
 
         break
-
       case 'path': {
         if (op.points.length < 2) {
           break
@@ -749,7 +750,6 @@ export async function paintShareCard(ctx: CanvasRenderingContext2D, ops: DrawOp[
         ctx.fill()
 
         break
-
       case 'qr': {
         const n = op.modules.length
         const cell = op.size / n

@@ -64,8 +64,19 @@ List<ChatSessionInfo> _sessions() => [
       for (var i = 0; i < 37; i++) ChatSessionInfo(id: 's$i', title: 'Sesi $i', profile: 'default', messageCount: 40 + i),
     ];
 
-BragCardData _data({Uint8List? shot}) =>
-    BragCardData.gather(profile: _profile(), office: _office(), board: _board(), sessions: _sessions(), officeShot: shot);
+BragCardData _data({Uint8List? shot, Map<String, dynamic>? pamerkan}) =>
+    BragCardData.gather(profile: _profile(), office: _office(), board: _board(), sessions: _sessions(), officeShot: shot, pamerkan: pamerkan);
+
+/// `GET /api/pamerkan` as the PC core answers it (core/neovarch/pamerkan.py).
+Map<String, dynamic> _pamerkan({bool empty = false}) => {
+      'version': 1,
+      'days': 30,
+      'empty': empty,
+      'axes': [
+        for (final (id, score, value) in [('coding', 62, 312), ('riset', 48, 40), ('ppt', 30, 2), ('browser', 41, 18), ('otomasi', 35, 7), ('token', 77, 1234567)])
+          {'id': id, 'score': empty ? 0 : score, 'value': empty ? 0 : value, 'reference': 100},
+      ],
+    };
 
 void main() {
   group('share targets', () {
@@ -119,6 +130,26 @@ void main() {
       expect(d.stats.model, 'claude-sonnet-4.5');
       expect(d.link, kNeovarchLandingUrl);
       expect(d.avatarUrl, 'https://github.com/Maftuuh1922.png?size=160');
+    });
+
+    test('Pamerkan radar: parsed from the PC, empty / old PC / junk', () {
+      final r = _data(pamerkan: _pamerkan()).radar!;
+      expect(r.axes.map((a) => a.id).toList(), BragRadar.axisIds);
+      expect(r.axes.first.score, 62);
+      expect(r.axes.last.value, 1234567);
+      expect(r.isEmpty, isFalse);
+      expect(_data(pamerkan: _pamerkan(empty: true)).radar!.isEmpty, isTrue);
+      expect(_data().radar, isNull);
+      final junk = BragRadar.parse({
+        'axes': [
+          {'id': 'coding', 'score': 900, 'value': -4},
+          'x',
+        ],
+      })!;
+      expect(junk.axes.first.score, 100);
+      expect(junk.axes.first.value, 0);
+      expect(junk.isEmpty, isTrue);
+      expect(BragRadar.parse({'axes': 'no'}), isNull);
     });
 
     test('works offline / signed out', () {
@@ -258,6 +289,28 @@ void main() {
       expect(find.byKey(const ValueKey('brag-office')), findsNothing);
       expect(tester.takeException(), isNull);
     });
+
+    for (final format in BragFormat.values) {
+      testWidgets('Pamerkan radar on the ${format.name} card, hideable, none when empty', (tester) async {
+        tester.view.physicalSize = const Size(1200, 2100);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        for (final style in BragStyle.values) {
+          await tester.pumpWidget(host(NeovarchBragCard(data: _data(pamerkan: _pamerkan()), style: style, format: format, showOffice: false, background: backdrop())));
+          await tester.pump();
+          expect(tester.takeException(), isNull);
+          expect(find.byKey(const ValueKey('brag-radar')), findsOneWidget, reason: style.name);
+          expect(find.byKey(const ValueKey('brag-qr')), findsOneWidget);
+        }
+        await tester.pumpWidget(host(NeovarchBragCard(data: _data(pamerkan: _pamerkan()), format: format, showRadar: false, background: backdrop())));
+        await tester.pump();
+        expect(find.byKey(const ValueKey('brag-radar')), findsNothing);
+        await tester.pumpWidget(host(NeovarchBragCard(data: _data(pamerkan: _pamerkan(empty: true)), format: format, background: backdrop())));
+        await tester.pump();
+        expect(find.byKey(const ValueKey('brag-radar')), findsNothing);
+        expect(tester.takeException(), isNull);
+      });
+    }
 
     test('Warna-warni text stays readable on light and dark accents', () {
       for (final hex in [0xFFEE1C1C, 0xFFFACC15, 0xFF84CC16, 0xFF1E3A8A, 0xFFFFFFFF]) {

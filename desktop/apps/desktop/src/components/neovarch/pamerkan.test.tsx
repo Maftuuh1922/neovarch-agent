@@ -1,14 +1,19 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type * as KartuCardModule from './kartu-card'
+
 const api = vi.fn()
 
-vi.mock('@/api/client', () => ({ hermesApi: (req: { path: string }) => api(req) }))
+vi.mock('@/api/client', async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  hermesApi: (req: { path: string }) => api(req)
+}))
 
 const renderPng = vi.fn(async () => new Blob(['png'], { type: 'image/png' }))
 
 vi.mock('./kartu-card', async importOriginal => ({
-  ...(await importOriginal<typeof import('./kartu-card')>()),
+  ...(await importOriginal<typeof KartuCardModule>()),
   renderShareCardPng: (...args: unknown[]) => renderPng(...(args as []))
 }))
 
@@ -30,7 +35,7 @@ import { type DrawOp, layoutShareCard, NEOVARCH_LANDING_URL, planShareCard, SHAR
 import { KartuCardDialog } from './kartu-card-dialog'
 import { barsOps, donutOps, PAMERKAN_LABELS_ID, planBlocks, radarOps, radarPoint, trendOps } from './pamerkan-card'
 import { DEFAULT_PAMERKAN_PREFS, loadPamerkanPrefs, PAMERKAN_PREFS_KEY, PAMERKAN_THEMES, sanitizePrefs, savePamerkanPrefs } from './pamerkan-prefs'
-import { $pamerkan, $pamerkanState, parsePamerkan, type PamerkanStats, refreshPamerkan } from './pamerkan-store'
+import { $pamerkan, $pamerkanState, type PamerkanStats, parsePamerkan, refreshPamerkan } from './pamerkan-store'
 
 const RAW = {
   axes: [
@@ -221,6 +226,7 @@ describe('Kartu with Pamerkan', () => {
     for (const style of PAMERKAN_THEMES) {
       it(`${style} ${format}: charts above the QR, inside the canvas`, () => {
         const { h, w } = SHARE_CARD_SIZE[format]
+
         const plan = planShareCard(card(), {
           accent: '#EE1C1C',
           format,
@@ -230,12 +236,13 @@ describe('Kartu with Pamerkan', () => {
           showStats: true,
           style
         })
+
         inside(plan.ops, w, h)
         const t = texts(plan.ops)
         expect(t.some(x => x.startsWith('RADAR'))).toBe(true)
         expect(t).toContain('Dibuat dengan Neovarch')
         const qr = plan.ops.find(o => o.kind === 'qr')!
-        const radarTitle = plan.ops.find(o => o.kind === 'text' && o.text.startsWith('RADAR'))!
+        const radarTitle = plan.ops.find((o): o is Extract<DrawOp, { kind: 'text' }> => o.kind === 'text' && o.text.startsWith('RADAR'))!
         expect(radarTitle.y).toBeLessThan(qr.y)
 
         for (const op of plan.ops) {
@@ -285,6 +292,7 @@ describe('Kartu with Pamerkan', () => {
       style: 'kertas',
       text: nvPamerkanEn.card
     })
+
     expect(texts(ops)).toEqual(expect.arrayContaining(['Made with Neovarch', 'agents active', 'Research', 'Try Neovarch']))
 
     for (const background of ['gaya', 'polos', 'grid', 'titik', 'aurora', 'simbol', 'garis'] as const) {

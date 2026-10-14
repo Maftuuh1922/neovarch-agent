@@ -78,9 +78,11 @@ export function parsePamerkan(raw: unknown): null | PamerkanStats {
   })
 
   const bars = PAMERKAN_ACTIVITY.map(id => ({ id, value: num(list(raw.bars).find(b => b.id === id)?.value) }))
+
   const donut = list(raw.donut)
     .filter(d => SLICES.has(String(d.id)) && num(d.value) > 0)
     .map(d => ({ id: String(d.id) as PamerkanSlice, value: num(d.value) }))
+
   const trend = isObj(raw.trend) ? raw.trend : {}
   const totals = isObj(raw.totals) ? raw.totals : {}
 
