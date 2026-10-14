@@ -87,7 +87,7 @@ neovarch --resume <id>      # resume a session
 neovarch sessions           # list, view, or delete saved chats
 neovarch config show        # view or edit config.yaml
 neovarch desktop            # open the desktop app
-neovarch update             # how to update Neovarch
+neovarch update             # update in place (git pull or latest release) + deps + extras + restart
 neovarch version            # print the version
 ```
 
@@ -234,11 +234,11 @@ Risky commands (deleting with `rm -rf`, `sudo`, formatting disks, shutting down,
 
 | Action | Linux | Windows (PowerShell) |
 |---|---|---|
-| **Update** (keeps chats & settings) | Re-run the install command | Re-run the install command |
+| **Update** (keeps chats & settings) | `neovarch update` (or re-run the install command) | `neovarch update` (or re-run the install command) |
 | **Uninstall** (removes app, command, chats & keys) | `curl -fsSL https://raw.githubusercontent.com/Maftuuh1922/neovrach_Agent/main/scripts/install.sh \| sh -s -- --uninstall` | `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Maftuuh1922/neovrach_Agent/main/scripts/install.ps1))) -Uninstall` |
 | **Phone** | Uninstall like any Android app | |
 
-`neovarch update` prints the update commands for you.
+`neovarch update` updates in place: a git clone is fast-forwarded (refused when it has local changes) and its dependencies reinstalled, with an automatic rollback if that fails; other installs re-run the official installer for the latest release. Optional extras (Obsidian) are checked afterwards. The desktop has the same as Settings ▸ About ▸ **Perbarui**. Details: [docs/update.md](docs/update.md).
 
 ### FAQ and troubleshooting
 

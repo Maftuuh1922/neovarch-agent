@@ -602,6 +602,66 @@ class Gateway:
             return
         loop.run_in_executor(None, work)
 
+    # ---- `neovarch update` / desktop "Perbarui" (git pull or latest release) ------
+    pull_job: dict | None = None
+
+    def start_pull_update(self, *, restart: bool = False, check_only: bool = False) -> dict:
+        """Run :func:`neovarch.pull_update.run` in a worker thread. The job dict (steps, log lines,
+        result or error code) is what ``GET /api/update/pull`` returns and what `update.progress`
+        events carry. ``restart`` restarts this core when idle; the desktop instead relaunches
+        the whole app (which restarts the core with it) and passes ``restart=False``."""
+        from neovarch import pull_update
+        loop = asyncio.get_running_loop()
+        job: dict = {"state": "running", "steps": {}, "lines": [], "started_at": time.time(),
+                     "check_only": check_only, "result": None, "error": None, "code": None}
+        self.pull_job = job
+
+        def progress(ev: dict) -> None:
+            if ev.get("kind") == "step":
+                job["steps"][ev["step"]] = {"status": ev["status"], "detail": ev.get("detail", "")}
+                job["step"] = ev["step"]
+            elif ev.get("kind") == "line":
+                job["lines"] = (job["lines"] + [ev["text"]])[-400:]
+            loop.call_soon_threadsafe(self.broadcast_event, "update.progress", None,
+                                      {"state": job["state"], "step": job.get("step"), "event": ev})
+
+        def work() -> None:
+            ctx = pull_update.Ctx(progress=progress, restart=lambda: {"requested": False, "detail": "desktop"})
+            try:
+                res = pull_update.run(ctx, check_only=check_only, restart=False)
+                job.update(state="done", result=res)
+            except pull_update.UpdateError as exc:
+                job.update(state="failed", error=exc.message, code=exc.code, rolled_back=exc.rolled_back)
+            except Exception as exc:  # noqa: BLE001
+                job.update(state="failed", error=f"{type(exc).__name__}: {exc}"[:400], code="internal")
+            job["finished_at"] = time.time()
+            loop.call_soon_threadsafe(self.broadcast_event, "update.progress", None,
+                                      {"state": job["state"], "code": job.get("code")})
+            if restart and job["state"] == "done" and (job.get("result") or {}).get("updated"):
+                loop.call_soon_threadsafe(self.request_restart, "")
+
+        loop.run_in_executor(None, work)
+        return job
+
+    async def watch_update_restart(self, interval: float = 2.0) -> None:
+        """`neovarch update` in a terminal writes <home>/update/restart-request.json; restart when idle."""
+        from neovarch import pull_update
+        started = time.time()
+        path = pull_update.restart_request_path()
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                ts = float(json.loads(path.read_text(encoding="utf-8")).get("ts") or 0)
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue
+            if ts > started:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+                self.request_restart("")
+                return
+
     def consume_restart_notice(self) -> None:
         """First boot after a restart: tell the chat that asked for it how it went."""
         from neovarch import selfedit
@@ -1525,6 +1585,27 @@ def build_app(gw: Gateway) -> web.Application:
                                                      platform=str(request.query.get("platform") or "")))
 
     r.add_get("/api/update", update_check)
+
+    async def pull_update_get(_):
+        from neovarch import pull_update
+        install = await asyncio.to_thread(pull_update.detect)
+        return web.json_response({"install": install, "job": gw.pull_job,
+                                  "last": await asyncio.to_thread(pull_update.read_state)})
+
+    async def pull_update_post(request):
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        job = gw.pull_job
+        if job and job.get("state") == "running":
+            return web.json_response({"detail": "Pembaruan sedang berjalan", "code": "busy", "job": job}, status=409)
+        job = gw.start_pull_update(restart=bool((body or {}).get("restart")),
+                                   check_only=bool((body or {}).get("check_only")))
+        return web.json_response({"job": job}, status=202)
+
+    r.add_get("/api/update/pull", pull_update_get)
+    r.add_post("/api/update/pull", pull_update_post)
     r.add_get("/api/cron/jobs", cron_list)
     r.add_post("/api/cron/jobs", cron_create)
     r.add_get("/api/cron/jobs/{jid}", cron_get)
@@ -2844,6 +2925,8 @@ def serve(host: str, port: int, *, isolated: bool = False) -> int:
             gw.ensure_extras_after_install_or_update()
         except Exception:  # noqa: BLE001
             pass
+        if os.environ.get("NEOVARCH_UPDATE_WATCH", "1").lower() not in ("0", "false", "off"):
+            gw._update_watch = asyncio.get_running_loop().create_task(gw.watch_update_restart())
         # The desktop waits for this exact sentinel (legacy wire name, kept for compatibility).
         print(f"HERMES_BACKEND_READY port={gw.port}", flush=True)
         print(f"Neovarch gateway listening on {host}:{gw.port} (home {neovarch_home()})", flush=True)

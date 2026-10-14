@@ -3419,6 +3419,44 @@ export interface Translations extends NoticeTranslations {
     versionDetailsUncommittedChanges: string
   }
 
+  /** Settings ▸ Tentang ▸ "Perbarui": git pull update (core/neovarch/pull_update.py) with a release fallback. */
+  nvPull: {
+    title: string
+    description: string
+    button: string
+    detecting: string
+    gitInstall: string
+    releaseInstall: string
+    running: string
+    upToDate: string
+    updated: string
+    restartNow: string
+    later: string
+    failed: string
+    rolledBack: string
+    log: string
+    retry: string
+    releaseManual: string
+    openRelease: string
+    steps: Record<'detect' | 'clean' | 'fetch' | 'pull' | 'deps' | 'check' | 'install' | 'extras' | 'restart', string>
+    errors: Record<
+      | 'dirty'
+      | 'detached'
+      | 'no_upstream'
+      | 'diverged'
+      | 'fetch_failed'
+      | 'merge_failed'
+      | 'deps_failed'
+      | 'git_missing'
+      | 'release_failed'
+      | 'busy'
+      | 'aborted'
+      | 'internal'
+      | 'unreachable',
+      string
+    >
+  }
+
   /** Neovarch's GitHub Releases updater. `{version}` / `{percent}` are filled in by the UI. */
   nvUpdate: {
     title: string

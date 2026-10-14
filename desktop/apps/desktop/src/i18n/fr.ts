@@ -10,8 +10,10 @@ import { frOnboarding } from './fr_onboarding'
 import { frProjects } from './fr_projects'
 import { frSharedMetrics } from './fr_shared_metrics'
 import { introFr } from './intro-fr'
+import { nvPullFr } from './nv-pull'
 
 export const frOverrides = {
+  nvPull: nvPullFr,
   sharedMetrics: frSharedMetrics,
   intro: introFr,
   connectors: {

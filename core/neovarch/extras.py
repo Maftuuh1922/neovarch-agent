@@ -12,7 +12,7 @@ redistribution, so its binaries are never bundled):
 * Android (phone app): opens the Play Store page (``market://details?id=md.obsidian``).
 
 Already installed = skipped. :func:`ensure_all` is the hook for the desktop installer's first run,
-app updates and the future ``neovarch update``: it checks every extra, installs what is missing
+app updates and ``neovarch update``: it checks every extra, installs what is missing
 (when ``extras.auto_install`` is on), records the outcome in ``<home>/extras.json`` and does not
 retry a failed install more than once a day. Nothing here raises into its caller.
 """
@@ -373,7 +373,7 @@ def ensure_all(*, reason: str = "manual", plat: str | None = None, progress: Pro
                force: bool = False, **kw: Any) -> list[dict[str, Any]]:
     """Check every extra and install the missing ones. Called by the desktop app on its first
     run after an install or update (``reason="install"`` / ``"update"``), by ``neovarch extras
-    ensure`` (installer scripts, the future ``neovarch update``) and on demand. Never raises."""
+    ensure`` (installer scripts, ``neovarch update``) and on demand. Never raises."""
     plat = plat or platform_key()
     st = state()
     results = []
