@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from neovarch import codemode
 from neovarch import config as cfgmod
 from neovarch import scaffold
 from neovarch import session_settings
@@ -789,6 +790,11 @@ class Agent:
                         self._publish_plan(args)
                     elif st and prep.name == "apply_patch":
                         result = await self._checked_patch(args)
+                    elif st and prep.name == codemode.NAME:
+                        try:
+                            result = await self._cancellable(self._codemode(call.id, args, ledger, all_schemas, cfg))
+                        except TurnInterrupted:
+                            result = "interrupted: dihentikan oleh pengguna"
                     elif st and prep.name == "session_search" and st.get("session_search"):
                         result = await asyncio.to_thread(tempest_search.run, args, cfgmod.neovarch_home(),
                                                          str(self.rec.get("id") or ""))
@@ -1147,6 +1153,93 @@ class Agent:
             _log.warning("tempest lint gate skipped: %s", exc)
             return []
 
+    async def _codemode(self, call_id: str, args: dict, ledger, all_schemas: list[dict], cfg: dict) -> str:
+        """Run one codemode program (codemode.py). Every tool it calls goes through
+        :meth:`_codemode_call`, i.e. the same gates as a direct call, and lands in the ledger."""
+        st = getattr(self, "_tempest", None) or {}
+        deferred = getattr(self, "_deferred", None) or {}
+        by_name = {str((t.get("function") or {}).get("name") or ""): t for t in all_schemas}
+        sent = [t for t in all_schemas if str((t.get("function") or {}).get("name") or "") not in deferred]
+        counter = [0]
+        self.emit("status.update", {"kind": "codemode", "text": "Mode kode: menjalankan program alat"})
+
+        async def dispatch(name: str, cargs: dict) -> str:
+            counter[0] += 1
+            sub_id = f"{call_id}.{counter[0]}"
+            self.emit("tool.start", {"tool_id": sub_id, "name": name, "args": cargs, "parent": call_id,
+                                     "via": "codemode", "preview": _preview(cargs)})
+            t0 = time.monotonic()
+            result = await self._codemode_call(name, cargs, st, all_schemas)
+            ledger.record(name, cargs, result)
+            if st.get("ground_check") and name in tempest_ground.WEB_TOOLS \
+                    and not str(result).startswith(("error", "tidak ditemukan")):
+                self._web_texts.append(str(result))
+            self.emit("tool.complete", {"tool_id": sub_id, "name": name, "parent": call_id, "via": "codemode",
+                                        "summary": result.splitlines()[0][:160] if result else "",
+                                        "result": result[:2000], "result_text": result[:2000],
+                                        "duration_s": round(time.monotonic() - t0, 2)})
+            return result
+
+        def parallel_safe(name: str, cargs: dict) -> bool:
+            from neovarch.tools import READ_ONLY_TOOLS, danger_reason
+            if name in READ_ONLY_TOOLS and name != "task":
+                return True
+            if name == "shell" and not cargs.get("background") and not cargs.get("workdir"):
+                cmd = str(cargs.get("command") or "")
+                return bool(cmd) and danger_reason(cmd) is None
+            return False
+
+        network = codemode.as_bool(args.get("network")) and codemode.config_allows_network(cfg)
+        text, stats = await codemode.run(
+            str(args.get("code") or ""), dispatch, Path(self.ctx.cwd),
+            timeout=float(args.get("timeout") or codemode.DEFAULT_TIMEOUT), network=network,
+            list_tools=lambda: codemode.tool_list_text(sent, deferred),
+            describe_tool=lambda n: codemode.describe_text(n, by_name),
+            is_parallel_safe=parallel_safe)
+        self._codemode_stats = getattr(self, "_codemode_stats", {"programs": 0, "calls": 0})
+        self._codemode_stats["programs"] += 1
+        self._codemode_stats["calls"] += stats.calls
+        return text
+
+    async def _codemode_call(self, name: str, args: dict, st: dict, all_schemas: list[dict]) -> str:
+        """One tool call from inside a codemode program, through the direct-call gates."""
+        known = {str((t.get("function") or {}).get("name") or "") for t in all_schemas}
+        if name not in known:
+            company = getattr(self.ctx, "company", None)
+            try:
+                in_company = company is not None and name in company.tool_names()
+            except Exception:
+                in_company = False
+            if not in_company:
+                return f"error: alat '{name}' tidak ada. tools.list() menampilkan semua alat."
+        if self.interrupted:
+            return "interrupted"
+        if self._plan_mode and name not in PLAN_MODE_TOOLS:
+            return PLAN_MODE_REFUSE.format(tool=name)
+        if st.get("checkpoints") and self._ckpt is None and not self._plan_mode \
+                and name in ("write_file", "edit_file", "shell", "apply_patch"):
+            await asyncio.to_thread(self._ckpt_start, st)
+        if name == "update_plan" and self._progress is not None:
+            res = self._progress.update(args, str(self.rec.get("id") or ""))
+            self._publish_plan(args)
+            return res
+        if name == "apply_patch":
+            return await self._checked_patch(args)
+        if name == "session_search" and st.get("session_search"):
+            return await asyncio.to_thread(tempest_search.run, args, cfgmod.neovarch_home(),
+                                           str(self.rec.get("id") or ""))
+        if st.get("memory_dedup") and name in tempest_memory.MEMORY_TOOLS:
+            args, blocked = tempest_memory.guard_write(name, args, cfgmod.neovarch_home() / "memory")
+            if blocked:
+                return blocked
+        if name in ("write_file", "edit_file"):
+            return await self._checked_write(name, args)
+        result = await run_tool(name, args, self.ctx)  # deferred tools share the same registry
+        if name in tempest_memory.MEMORY_TOOLS and str(args.get("action")) in ("append", "write", "replace") \
+                and not str(result).startswith(("error", "denied")):
+            tempest_memory.note_memory_write(self.rec)
+        return result
+
     async def _checked_write(self, name: str, args: dict) -> str:
         """Tempest: write/edit, then syntax-check .py/.json/.js/.ts; a broken file is restored."""
         try:
@@ -1238,6 +1331,8 @@ class Agent:
             tools = tools + [tempest_progress.SCHEMA]
         if st and st.get("session_search"):
             tools = tools + [tempest_search.SCHEMA]
+        if st and st.get("codemode") and codemode.available() is None:
+            tools = tools + [{"type": "function", "function": {"name": codemode.NAME, **codemode.SCHEMA}}]
         if tempest_diet.enabled(st):
             company = getattr(self.ctx, "company", None)
             try:
@@ -1447,7 +1542,7 @@ def _explain(error: str, endpoint: dict, tried: list[str] | None = None) -> str:
 PLAN_COMMAND = re.compile(r"^\s*/(?:rencana|plan)\b", re.I)
 PLAN_MODE_TOOLS = frozenset({"read_file", "grep", "glob", "repo_map", "task", "web_search", "web_fetch",
                              "session_search", "obsidian_search", "obsidian_read", "obsidian_links", "office_status",
-                             "skill", "update_plan", "plan_update", "extra_tool"})
+                             "skill", "update_plan", "plan_update", "extra_tool", "codemode"})
 PLAN_MODE_NOTE = ("[Mode rencana /rencana] Giliran ini HANYA meneliti dan merencanakan: baca kode/web seperlunya "
                   "(read_file, grep, glob, repo_map, task), lalu tulis rencana bernomor (file yang diubah, langkah, "
                   "risiko, cara verifikasi) dan simpan dengan alat rencana. Jangan mengubah file atau menjalankan "
