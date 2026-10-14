@@ -375,11 +375,73 @@ class TicketComment {
   final bool fromUser;
 }
 
+/// One line of a ticket's thread: a comment, an audit event (move, assign,
+/// approval) or a heartbeat run. Core `ticket_timeline`, oldest first.
+class TimelineEntry {
+  const TimelineEntry({required this.type, required this.actor, required this.text, this.fromUser = false});
+  final String type; // comment | event | run
+  final String actor;
+  final String text;
+  final bool fromUser;
+  bool get isComment => type == 'comment';
+
+  factory TimelineEntry.fromJson(Map<String, dynamic> j) => TimelineEntry(
+        type: _s(j['type']),
+        actor: _s(j['actor_name']),
+        text: _s(j['type'] == 'comment' ? j['body'] : j['summary']),
+        fromUser: j['actor_type'] == 'user',
+      );
+}
+
+/// A row of the Kantor activity log (pushed live as `company.activity`).
+class CompanyActivity {
+  const CompanyActivity({required this.id, required this.actor, required this.summary, this.action = '', this.ts = 0, this.actorType = '', this.actorId, this.entity = '', this.entityId});
+  final int id;
+  final String actor;
+  final String actorType;
+  final int? actorId;
+  final String action;
+  final String summary;
+  final String entity;
+  final int? entityId;
+  final double ts;
+
+  factory CompanyActivity.fromJson(Map<String, dynamic> j) => CompanyActivity(
+        id: _i(j['id']),
+        actor: _s(j['actor_name']),
+        actorType: _s(j['actor_type']),
+        actorId: j['actor_id'] == null ? null : _i(j['actor_id']),
+        action: _s(j['action']),
+        summary: _s(j['summary']),
+        entity: _s(j['entity']),
+        entityId: j['entity_id'] == null ? null : _i(j['entity_id']),
+        ts: _d(j['ts']),
+      );
+
+  /// This employee did it, or it was done to them.
+  bool involves(int? agentId) =>
+      agentId == null || (actorType == 'agent' && actorId == agentId) || (entity == 'agent' && entityId == agentId);
+}
+
+/// Newest first, de-duplicated by id, capped.
+List<CompanyActivity> mergeFeed(List<CompanyActivity> items, List<CompanyActivity> incoming, {int cap = 300}) {
+  final seen = <int>{};
+  final all = [...incoming, ...items]..sort((a, b) => b.id.compareTo(a.id));
+  final out = <CompanyActivity>[];
+  for (final a in all) {
+    if (!seen.add(a.id)) continue;
+    out.add(a);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
 class TicketDetail {
-  const TicketDetail({required this.ticket, this.ancestry = const [], this.comments = const []});
+  const TicketDetail({required this.ticket, this.ancestry = const [], this.comments = const [], this.timeline = const []});
   final CompanyTicket ticket;
   final List<String> ancestry;
   final List<TicketComment> comments;
+  final List<TimelineEntry> timeline;
 
   factory TicketDetail.fromJson(Map<String, dynamic> j) => TicketDetail(
         ticket: CompanyTicket.fromJson(j),
@@ -394,17 +456,24 @@ class TicketDetail {
               fromUser: c['author_type'] == 'user',
             ),
         ],
+        timeline: [for (final t in _l(j['timeline'])) TimelineEntry.fromJson(t)],
       );
 }
 
 class CompanyApproval {
-  const CompanyApproval({required this.id, required this.kind, required this.title, this.status = 'pending', this.detail = '', this.agentName});
+  const CompanyApproval({required this.id, required this.kind, required this.title, this.status = 'pending', this.detail = '', this.agentName, this.tickets = const [], this.extraTokens = 0, this.extraCents = 0});
   final int id;
   final String kind;
   final String title;
   final String status;
   final String detail;
   final String? agentName;
+  /// Strategy approvals: "title → assignee" for each ticket the CEO proposed.
+  final List<String> tickets;
+  /// Budget approvals: how much the board adds when it approves.
+  final int extraTokens;
+  final double extraCents;
+  bool get canRevise => const {'hire', 'plan', 'strategy'}.contains(kind);
 
   factory CompanyApproval.fromJson(Map<String, dynamic> j) {
     final p = _m(j['payload']);
@@ -415,10 +484,17 @@ class CompanyApproval {
       status: _s(j['status']),
       detail: _s(p['plan'] ?? p['summary'] ?? ''),
       agentName: j['agent_name'] == null ? null : _s(j['agent_name']),
+      tickets: [
+        for (final t in _l(p['tickets']))
+          if (_s(t['title']).isNotEmpty) '${_s(t['title'])} → ${t['assignee'] == null ? 'belum ada penanggung jawab' : _s(t['assignee'])}',
+      ],
+      extraTokens: _i(p['extra_tokens']),
+      extraCents: _d(p['extra_cents']),
     );
   }
 
-  String get kindLabel => const {'hire': 'rekrut', 'plan': 'rencana', 'review': 'tinjau hasil', 'budget': 'anggaran'}[kind] ?? kind;
+  String get kindLabel =>
+      const {'hire': 'rekrut', 'plan': 'rencana', 'review': 'tinjau hasil', 'budget': 'anggaran', 'strategy': 'strategi CEO'}[kind] ?? kind;
 }
 
 class CostRow {
@@ -466,6 +542,13 @@ class CompanyClient {
 
   Future<void> seedDemo() => api.companyCall('seed_demo');
   Future<void> setAutorun(bool on) => api.companyCall('update', {'autorun': on});
+  /// Heartbeat on/off (the pause switch); the core logs who paused it.
+  Future<void> setHeartbeat(bool on) => api.companyCall('heartbeat', {'on': on});
+  Future<List<CompanyActivity>> activity({int? agentId, int limit = 100}) async => [
+        for (final a in _l(_m(await api.companyCall('activity', {'limit': limit, 'agent_id': ?agentId}))['items'])) CompanyActivity.fromJson(a)
+      ];
+  Future<void> revise(int id, {String note = ''}) =>
+      api.companyCall('approval.decide', {'id': id, 'decision': 'revise', 'note': note});
   Future<void> wake(int id) => api.companyCall('agent.wake', {'id': id});
   Future<void> pause(int id) => api.companyCall('agent.pause', {'id': id});
   Future<void> resume(int id) => api.companyCall('agent.resume', {'id': id});

@@ -5,8 +5,9 @@ ticket checkout, heartbeats, approvals, budgets, an activity log, routines) foll
 public design of Paperclip (MIT); the code is Neovarch's own. See
 docs/company-flow-design.md.
 
-Everything is stored in ``~/.neovarch/company.db`` (SQLite). Nothing runs on its own
-until the user turns ``autorun`` on, except an explicit "Bangunkan" (manual wake).
+Everything is stored in ``~/.neovarch/company.db`` (SQLite). Once a company exists its
+heartbeat (``autorun``) is on, so employees pick up assigned tickets by themselves; the
+user can pause it at any time ("Jeda heartbeat"), and budgets hard-stop an agent.
 """
 
 from __future__ import annotations
@@ -31,7 +32,8 @@ TRANSITIONS: dict[str, set[str]] = {
     "cancelled": set(),
 }
 AGENT_STATUSES = ("pending_approval", "idle", "running", "paused", "error", "terminated")
-APPROVAL_KINDS = ("hire", "plan", "review", "budget")
+APPROVAL_KINDS = ("hire", "plan", "review", "budget", "strategy")
+APPROVAL_DECISIONS = ("approved", "rejected", "cancelled", "revision_requested")
 STATUS_LABEL = {"backlog": "Backlog", "todo": "Akan dikerjakan", "in_progress": "Dikerjakan",
                 "review": "Ditinjau", "blocked": "Terhambat", "done": "Selesai", "cancelled": "Dibatalkan"}
 
@@ -150,6 +152,7 @@ class CompanyStore:
         self.db.executescript(SCHEMA)
         self._migrate()
         self.on_change: Callable[[str, int | None, str], None] | None = None
+        self.on_activity: Callable[[dict], None] | None = None
 
     def _migrate(self) -> None:
         """Columns added after the first release of company.db (old files keep working)."""
@@ -161,6 +164,23 @@ class CompanyStore:
                          ("skills", "TEXT NOT NULL DEFAULT '[]'"), ("tools", "TEXT NOT NULL DEFAULT '[]'")):
             if col not in cols:
                 self.db.execute(f"ALTER TABLE agents ADD COLUMN {col} {ddl}")
+        tcols = {r[1] for r in self.db.execute("PRAGMA table_info(tickets)").fetchall()}
+        if "kind" not in tcols:   # task | strategy (the CEO's "turn this goal into work" ticket)
+            self.db.execute("ALTER TABLE tickets ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'")
+        ccols = {r[1] for r in self.db.execute("PRAGMA table_info(company)").fetchall()}
+        if "require_strategy_approval" not in ccols:
+            self.db.execute("ALTER TABLE company ADD COLUMN require_strategy_approval INTEGER NOT NULL DEFAULT 1")
+        if "autorun_user_set" not in ccols:
+            # Heartbeat is on by default now. A company made before this switch existed and never
+            # toggled by the user was simply sitting idle: turn its heartbeat on once.
+            self.db.execute("ALTER TABLE company ADD COLUMN autorun_user_set INTEGER NOT NULL DEFAULT 0")
+            row = self.db.execute("SELECT autorun FROM company WHERE id=1").fetchone()
+            if row is not None and not row[0]:
+                self.db.execute("UPDATE company SET autorun=1 WHERE id=1")
+                self.db.execute(
+                    "INSERT INTO activity (ts, actor_type, actor_id, actor_name, action, entity, entity_id, summary, data) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)", (self.clock(), "system", None, "Sistem", "company.heartbeat_on",
+                                                   "company", 1, "menyalakan heartbeat Kantor (bawaan baru)", "{}"))
 
     # ------------------------------------------------------------ plumbing --
     def close(self) -> None:
@@ -204,20 +224,30 @@ class CompanyStore:
                 pass
 
     def log(self, action: str, entity: str, eid: int | None, summary: str, *, actor: str = "user",
-            actor_id: int | None = None, data: dict | None = None) -> None:
+            actor_id: int | None = None, data: dict | None = None) -> dict:
         name = "Kamu" if actor == "user" else ("Sistem" if actor == "system" else "")
         if actor == "agent" and actor_id:
             a = self.q1("SELECT name FROM agents WHERE id=?", (actor_id,))
             name = a["name"] if a else "Agen"
-        self.x("INSERT INTO activity (ts, actor_type, actor_id, actor_name, action, entity, entity_id, summary, data) "
-               "VALUES (?,?,?,?,?,?,?,?,?)", (self.clock(), actor, actor_id, name, action, entity, eid,
-                                               summary[:400], json.dumps(data or {}, ensure_ascii=False)))
+        row = {"ts": self.clock(), "actor_type": actor, "actor_id": actor_id, "actor_name": name, "action": action,
+               "entity": entity, "entity_id": eid, "summary": summary[:400], "data": data or {}}
+        row["id"] = self.x("INSERT INTO activity (ts, actor_type, actor_id, actor_name, action, entity, entity_id, summary, "
+                           "data) VALUES (?,?,?,?,?,?,?,?,?)",
+                           (row["ts"], actor, actor_id, name, action, entity, eid, row["summary"],
+                            json.dumps(data or {}, ensure_ascii=False))).lastrowid
+        if self.on_activity:
+            try:
+                self.on_activity(row)
+            except Exception:  # a live listener must never break a write
+                pass
+        return row
 
     # ------------------------------------------------------------- company --
     def company(self) -> dict | None:
         c = self.q1("SELECT * FROM company WHERE id=1")
         if c:
-            for k in ("autorun", "require_hire_approval", "require_review"):
+            for k in ("autorun", "require_hire_approval", "require_review", "require_strategy_approval",
+                      "autorun_user_set"):
                 c[k] = bool(c[k])
         return c
 
@@ -244,8 +274,9 @@ class CompanyStore:
         with self.tx():
             if self.company():
                 raise CompanyError("conflict", "Perusahaan sudah ada")
-            self.db.execute("INSERT INTO company (id, name, mission, created_at, updated_at) VALUES (1,?,?,?,?)",
-                            (name, mission.strip(), now, now))
+            # Heartbeat on from the start: employees pick up assigned tickets by themselves.
+            self.db.execute("INSERT INTO company (id, name, mission, autorun, autorun_user_set, created_at, updated_at) "
+                            "VALUES (1,?,?,1,0,?,?)", (name, mission.strip(), now, now))
             self.log("company.created", "company", 1, f"membuat perusahaan “{name}”")
         if settings:
             self.update_company(settings)
@@ -253,7 +284,8 @@ class CompanyStore:
         return self.require_company()
 
     COMPANY_FIELDS = {"name": str, "mission": str, "autorun": bool, "max_parallel": int,
-                      "require_hire_approval": bool, "require_review": bool, "budget_monthly_cents": int,
+                      "require_hire_approval": bool, "require_review": bool, "require_strategy_approval": bool,
+                      "budget_monthly_cents": int,
                       "budget_monthly_tokens": int, "warn_pct": int, "price_in_per_mtok": float,
                       "price_out_per_mtok": float, "ticket_prefix": str}
 
@@ -264,6 +296,9 @@ class CompanyStore:
             raise CompanyError("invalid", "max_parallel harus 1–8")
         if "warn_pct" in fields and not 1 <= int(fields["warn_pct"]) <= 100:
             raise CompanyError("invalid", "warn_pct harus 1–100")
+        if "autorun" in fields and actor == "user":
+            sets.append("autorun_user_set=?")
+            args.append(1)
         if sets:
             self.x(f"UPDATE company SET {', '.join(sets)}, updated_at=? WHERE id=1", [*args, self.clock()])
             self.log("company.updated", "company", 1, "mengubah pengaturan perusahaan: " + ", ".join(
@@ -558,7 +593,9 @@ class CompanyStore:
             raise CompanyError("invalid", "Nama pegawai wajib diisi")
         if self.q1("SELECT id FROM agents WHERE lower(name)=lower(?) AND status!='terminated'", (name,)):
             raise CompanyError("conflict", f"Sudah ada pegawai bernama {name}")
-        needs_ok = bool(c["require_hire_approval"]) and not body.get("skip_approval")
+        # An agent asking to hire always goes to the board; the user (or the chat agent on the user's
+        # command) follows the company setting.
+        needs_ok = actor == "agent" or (bool(c["require_hire_approval"]) and not body.get("skip_approval"))
         status = "pending_approval" if needs_ok else "idle"
         unit = body.get("unit_id")
         unit = self.require_unit(unit)["id"] if unit not in (None, "", 0, "0") else None
@@ -665,10 +702,11 @@ class CompanyStore:
             key = f"{c['ticket_prefix']}-{n}"
             tid = self.db.execute(
                 "INSERT INTO tickets (key, project_id, goal_id, parent_id, title, description, status, priority, "
-                "assignee_id, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "assignee_id, created_by, kind, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (key, project_id, goal_id, parent_id, title, str(body.get("description") or ""), status,
                  max(0, min(3, int(body.get("priority") if body.get("priority") is not None else 1))),
-                 int(assignee) if assignee else None, f"{actor}:{actor_id}" if actor_id else actor, now, now)).lastrowid
+                 int(assignee) if assignee else None, f"{actor}:{actor_id}" if actor_id else actor,
+                 "strategy" if body.get("kind") == "strategy" else "task", now, now)).lastrowid
         who = self.agent(int(assignee))["name"] if assignee else None
         self.log("ticket.created", "ticket", tid, f"membuat {key} “{title}”" + (f" untuk {who}" if who else ""),
                  actor=actor, actor_id=actor_id)
@@ -884,7 +922,45 @@ class CompanyStore:
             "ancestry": self.ancestry(t["id"]),
             "runs": self.q("SELECT * FROM runs WHERE ticket_id=? ORDER BY id DESC LIMIT 20", (t["id"],)),
             "approvals": self.q("SELECT * FROM approvals WHERE ticket_id=? ORDER BY id DESC", (t["id"],)),
+            "timeline": self.ticket_timeline(t["id"]),
         }
+
+    def ticket_timeline(self, tid: int, limit: int = 300) -> list[dict]:
+        """The ticket's thread: comments and its audit trail (moves, assignment, checkout, runs,
+        approvals) in one chronological list, oldest first."""
+        items: list[dict] = []
+        comments = self.q("SELECT c.*, a.name AS author_name FROM comments c LEFT JOIN agents a ON c.author_type='agent' "
+                          "AND a.id=c.author_id WHERE ticket_id=? ORDER BY c.id", (tid,))
+
+        def as_item(c: dict) -> dict:
+            who = c["author_name"] or ("Kamu" if c["author_type"] == "user" else "Sistem")
+            return {"type": "comment", "id": f"c{c['id']}", "ts": c["created_at"], "actor_type": c["author_type"],
+                    "actor_name": who, "body": c["body"]}
+        apids = [r["id"] for r in self.q("SELECT id FROM approvals WHERE ticket_id=?", (tid,))]
+        rids = [r["id"] for r in self.q("SELECT id FROM runs WHERE ticket_id=?", (tid,))]
+        where = ["(entity='ticket' AND entity_id=?)"]
+        args: list = [tid]
+        if apids:
+            where.append(f"(entity='approval' AND entity_id IN ({','.join('?' * len(apids))}))")
+            args += apids
+        pending = list(comments)
+        for a in self.q("SELECT * FROM activity WHERE (" + " OR ".join(where) + ") ORDER BY id", args):
+            if a["action"] == "ticket.commented":
+                if pending:   # every comment logs one activity row: put the comment itself there
+                    items.append(as_item(pending.pop(0)))
+                continue
+            items.append({"type": "event", "id": f"a{a['id']}", "ts": a["ts"], "actor_type": a["actor_type"],
+                          "actor_name": a["actor_name"], "action": a["action"], "summary": a["summary"]})
+        items += [as_item(c) for c in pending]
+        for r in self.q("SELECT r.*, a.name AS agent_name FROM runs r LEFT JOIN agents a ON a.id=r.agent_id "
+                        f"WHERE r.id IN ({','.join('?' * len(rids))})" if rids else "SELECT 1 WHERE 0", rids):
+            tok = int(r["prompt_tokens"] or 0) + int(r["completion_tokens"] or 0)
+            items.append({"type": "run", "id": f"r{r['id']}", "ts": r["started_at"], "actor_type": "agent",
+                          "actor_name": r["agent_name"] or "Agen", "status": r["status"],
+                          "summary": f"heartbeat #{r['id']} ({r['reason']}) · {r['status']}" + (f" · {tok} token" if tok else "")
+                          + (f" · {r['error']}" if r["error"] else "")})
+        items.sort(key=lambda x: float(x["ts"] or 0))   # stable: same-second rows keep their log order
+        return items[-limit:]
 
     def _ticket_public(self, t: dict) -> dict:
         a = self.agent(t["assignee_id"])
@@ -916,6 +992,75 @@ class CompanyStore:
             if not self.open_blockers(t["id"]):
                 return t
         return None
+
+    # ------------------------------------------------------------- the CEO --
+    def ceo(self) -> dict | None:
+        """The agent who turns goals into work: role 'ceo', else the top of the org chart with a team."""
+        r = self.q1("SELECT * FROM agents WHERE lower(role)='ceo' AND status NOT IN ('terminated','pending_approval') "
+                    "ORDER BY id LIMIT 1")
+        if r:
+            return r
+        for a in self.q("SELECT * FROM agents WHERE reports_to IS NULL AND status NOT IN ('terminated','pending_approval') "
+                        "ORDER BY id"):
+            if self.reports(a["id"]):
+                return a
+        return None
+
+    def ensure_goal_planning(self) -> list[dict]:
+        """Every active goal with no work under it gets a "Susun strategi" ticket for the CEO, so the
+        company does not sit idle waiting for the user to write tickets by hand."""
+        ceo = self.ceo()
+        if not ceo or not self.company():
+            return []
+        out = []
+        for g in self.q("SELECT * FROM goals WHERE status='active' ORDER BY id"):
+            busy = self.q1("SELECT t.id FROM tickets t LEFT JOIN projects p ON p.id=t.project_id "
+                           "WHERE (t.goal_id=? OR p.goal_id=?) AND t.status!='cancelled' LIMIT 1", (g["id"], g["id"]))
+            if busy:
+                continue
+            out.append(self.create_ticket({
+                "title": f"Susun strategi: {g['title']}"[:200], "goal_id": g["id"], "assignee_id": ceo["id"],
+                "kind": "strategy", "priority": 2, "status": "todo",
+                "description": (g["description"] or "") + "\n\nPecah tujuan ini jadi tiket konkret untuk timmu, lalu "
+                               "ajukan dengan company_propose_strategy."}, actor="system"))
+        return out
+
+    def _apply_strategy(self, ap: dict, decision: str, note: str) -> None:
+        """Board decision on the CEO's strategy: approve creates the planned tickets and wakes the
+        assignees; reject / revise sends the planning ticket back to the CEO with the note."""
+        t = self.ticket(ap["ticket_id"]) if ap["ticket_id"] else None
+        ceo_id = ap["agent_id"]
+        if decision == "approved":
+            made = []
+            for item in ap["payload"].get("tickets") or []:
+                who = item.get("assignee_id")
+                a = self.agent(who) if who else None
+                if not a or a["status"] == "terminated":
+                    a = None
+                nt = self.create_ticket({
+                    "title": str(item.get("title") or "")[:200] or "Tugas", "description": str(item.get("description") or ""),
+                    "assignee_id": a["id"] if a else None, "parent_id": t["id"] if t else None,
+                    "goal_id": (t or {}).get("goal_id"), "priority": item.get("priority", 1),
+                    "status": "todo" if a else "backlog"}, actor="agent" if ceo_id else "system", actor_id=ceo_id)
+                made.append(nt)
+                if a:
+                    self.wake(a["id"], "assignment", nt["id"])
+            if t:
+                self.comment(t["id"], "Strategi disetujui dewan" + (f": {note}" if note else "") + ". Tiket dibuat: "
+                             + ", ".join(m["key"] for m in made), actor="user")
+                if t["status"] not in ("done", "cancelled"):
+                    self.move_ticket(t["id"], "done", actor="user", force=True)
+            return
+        if decision in ("rejected", "revision_requested") and t:
+            label = "ditolak" if decision == "rejected" else "perlu revisi"
+            self.comment(t["id"], f"Strategi {label}" + (f": {note}" if note else "."), actor="user")
+            # Rejected: parked in the backlog (the CEO does not retry on its own). Revise: back to todo.
+            to = "backlog" if decision == "rejected" else "todo"
+            if t["status"] not in ("done", "cancelled", to):
+                self.release(t["id"], actor="system")
+                self.move_ticket(t["id"], to, actor="user", force=True)
+            if ceo_id and decision == "revision_requested":
+                self.wake(ceo_id, "approval", t["id"])
 
     # ----------------------------------------------------------- approvals --
     def create_approval(self, kind: str, *, ticket_id=None, agent_id=None, title: str = "", payload: dict | None = None,
@@ -956,16 +1101,21 @@ class CompanyStore:
         ap = self.approval(apid)
         if ap["status"] != "pending":
             raise CompanyError("conflict", "Persetujuan ini sudah diputuskan", status=ap["status"])
-        if decision not in ("approved", "rejected", "cancelled"):
-            raise CompanyError("invalid", "keputusan harus approved / rejected / cancelled")
+        if decision not in APPROVAL_DECISIONS:
+            raise CompanyError("invalid", "keputusan harus approved / rejected / cancelled / revision_requested")
+        if decision == "revision_requested" and ap["kind"] not in ("plan", "strategy", "hire"):
+            raise CompanyError("invalid", "revisi hanya untuk rencana, strategi, atau rekrutmen")
         self.x("UPDATE approvals SET status=?, note=?, decided_at=? WHERE id=?", (decision, note or "", self.clock(), ap["id"]))
-        verb = {"approved": "menyetujui", "rejected": "menolak", "cancelled": "membatalkan"}[decision]
+        verb = {"approved": "menyetujui", "rejected": "menolak", "cancelled": "membatalkan",
+                "revision_requested": "minta revisi"}[decision]
         self.log(f"approval.{decision}", "approval", ap["id"], f"{verb}: {ap['title']}" + (f" — {note}" if note else ""))
         # Side effects of the decision.
-        if ap["kind"] == "hire" and ap["agent_id"]:
+        if ap["kind"] == "hire" and ap["agent_id"] and decision != "revision_requested":
             a = self.agent(ap["agent_id"])
             if a and a["status"] == "pending_approval":
                 self.set_agent_status(a["id"], "idle" if decision == "approved" else "terminated", log=False)
+        elif ap["kind"] == "strategy":
+            self._apply_strategy(ap, decision, note)
         elif ap["kind"] == "review" and ap["ticket_id"]:
             t = self.ticket(ap["ticket_id"])
             if t and t["status"] == "review":
@@ -976,11 +1126,16 @@ class CompanyStore:
                     self.comment(t["id"], "Ditolak saat ditinjau" + (f": {note}" if note else "."), actor="user")
         elif ap["kind"] == "budget" and ap["agent_id"] and decision == "approved":
             a = self.agent(ap["agent_id"])
-            if a and a["status"] == "paused" and a["pause_reason"] == "budget":
+            if a:
                 extra = int(ap["payload"].get("extra_cents") or 0)
+                extra_tok = int(ap["payload"].get("extra_tokens") or 0)
                 if extra:
                     self.x("UPDATE agents SET budget_monthly_cents=budget_monthly_cents+? WHERE id=?", (extra, a["id"]))
-                self.set_agent_status(a["id"], "idle", log=False)
+                if extra_tok:
+                    self.x("UPDATE agents SET budget_monthly_tokens=budget_monthly_tokens+? WHERE id=?", (extra_tok, a["id"]))
+                if a["status"] == "paused" and a["pause_reason"] == "budget":
+                    if self.budget_state(agent=self.require_agent(a["id"]))["level"] != "exceeded":
+                        self.set_agent_status(a["id"], "idle", log=False)
         self.changed("approval", ap["id"], decision)
         return self.approval(ap["id"])
 
@@ -1063,7 +1218,19 @@ class CompanyStore:
                     self.log("budget.hard_stop", "budget", a["id"] if scope.startswith("agent") and a else None,
                              f"anggaran {label} habis ({st['pct']}%) — pekerjaan dihentikan", actor="system")
                 out.append(f"exceeded:{scope}")
-        if a and any(x.startswith("exceeded") for x in out) and a["status"] not in ("paused", "terminated"):
+        if a and f"exceeded:agent:{a['id']}" in out and a["status"] not in ("terminated", "pending_approval"):
+            if a["status"] == "paused":
+                return out   # already stopped; the board request was filed when it paused
+            self.set_agent_status(a["id"], "paused", reason="budget", actor="system", log=False)
+            # Board action: raise this agent's budget by one more month's worth (Paperclip "budget override").
+            extra_c = int(a["budget_monthly_cents"] or 0)
+            extra_t = int(a["budget_monthly_tokens"] or 0)
+            self.create_approval("budget", agent_id=a["id"], requested_by="system",
+                                 title=f"Naikkan anggaran {a['name']} dan lanjutkan",
+                                 payload={"extra_cents": extra_c, "extra_tokens": extra_t,
+                                          "spent_cents": self.spend(agent_id=a["id"])["cents"],
+                                          "spent_tokens": self.spend(agent_id=a["id"])["tokens"]})
+        elif a and any(x.startswith("exceeded") for x in out) and a["status"] not in ("paused", "terminated"):
             self.set_agent_status(a["id"], "paused", reason="budget", actor="system", log=False)
         return out
 
@@ -1182,11 +1349,17 @@ class CompanyStore:
 
     # ------------------------------------------------------------ activity --
     def activity(self, limit: int = 100, before: int | None = None, entity: str | None = None,
-                 entity_id: int | None = None) -> list[dict]:
+                 entity_id: int | None = None, after: int | None = None, agent_id: int | None = None) -> list[dict]:
         where, args = [], []
         if before:
             where.append("id<?")
             args.append(int(before))
+        if after:
+            where.append("id>?")
+            args.append(int(after))
+        if agent_id:   # what this employee did, plus what was done to them
+            where.append("((actor_type='agent' AND actor_id=?) OR (entity='agent' AND entity_id=?))")
+            args += [int(agent_id), int(agent_id)]
         if entity:
             where.append("entity=?")
             args.append(entity)

@@ -141,7 +141,7 @@ export async function assignOfficeTask(
     throw new Error('Judul tugas kosong')
   }
 
-  // A Perusahaan agent gets a real ticket (it wakes them when "Jalan otomatis" is on).
+  // A Perusahaan agent gets a real ticket (it wakes them while the Kantor heartbeat is on).
   if (agent.company) {
     const gateway = $gateway.get()
 

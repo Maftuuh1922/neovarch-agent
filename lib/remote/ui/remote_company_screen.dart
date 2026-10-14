@@ -19,7 +19,7 @@ import 'nv_widgets.dart';
 import 'remote_company_forms.dart';
 
 /// Sub-views of the Perusahaan screen.
-const companySegOrg = 0, companySegTickets = 1, companySegApprovals = 2, companySegCosts = 3, companySegPlan = 4;
+const companySegOrg = 0, companySegTickets = 1, companySegApprovals = 2, companySegCosts = 3, companySegPlan = 4, companySegFeed = 5;
 
 class RemoteCompanyScreen extends ConsumerStatefulWidget {
   const RemoteCompanyScreen({super.key, this.initialSegment = companySegOrg});
@@ -34,6 +34,8 @@ class _RemoteCompanyScreenState extends ConsumerState<RemoteCompanyScreen> {
   List<CompanyTicket> tickets = const [];
   List<CompanyApproval> approvals = const [];
   CompanyCosts? costs;
+  List<CompanyActivity> feed = const [];
+  int? feedAgent;
   String? error;
   bool unsupported = false;
   bool loading = false;
@@ -52,7 +54,7 @@ class _RemoteCompanyScreenState extends ConsumerState<RemoteCompanyScreen> {
     if (mounted) setState(() => loading = true);
     try {
       final s = await c.snapshot();
-      final results = s.exists ? await Future.wait([c.tickets(), c.approvals(), c.costs()]) : const [];
+      final results = s.exists ? await Future.wait([c.tickets(), c.approvals(), c.costs(), c.activity(agentId: feedAgent)]) : const [];
       if (!mounted) return;
       setState(() {
         snap = s;
@@ -60,6 +62,7 @@ class _RemoteCompanyScreenState extends ConsumerState<RemoteCompanyScreen> {
           tickets = results[0] as List<CompanyTicket>;
           approvals = results[1] as List<CompanyApproval>;
           costs = results[2] as CompanyCosts;
+          feed = results[3] as List<CompanyActivity>;
         }
         error = null;
         unsupported = false;
@@ -180,7 +183,7 @@ class _RemoteCompanyScreenState extends ConsumerState<RemoteCompanyScreen> {
                 title: 'Kantor masih kosong',
                 body: 'Susunannya Organisasi → Agency → Orang. Minta Neovarch Agent di Chat, misalnya “buat organisasi '
                     'Neovarch Labs dengan agency Kreatif, lalu rekrut Sinta sebagai copywriter”. '
-                    'Tidak ada pegawai yang berjalan sendiri sampai kamu menyalakan “Jalan otomatis”.',
+                    'Begitu Kantor ada, heartbeat-nya aktif: pegawai mengambil tiket sendiri. Kamu bisa menjedanya kapan saja.',
               ),
             if (s != null && s.exists) ...[
               if (s.mission.isNotEmpty)
@@ -194,17 +197,23 @@ class _RemoteCompanyScreenState extends ConsumerState<RemoteCompanyScreen> {
                 child: SwitchListTile(
                   key: const ValueKey('company-autorun'),
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Jalan otomatis'),
-                  subtitle: Text('Agen bangun sendiri saat ada tiket, komentar, atau jadwal', style: TextStyle(fontSize: 12, color: NV.muted)),
+                  title: Text(s.autorun ? 'Heartbeat aktif' : 'Heartbeat dijeda'),
+                  subtitle: Text(
+                      s.autorun
+                          ? '${s.agents.where(s.isRunning).length} bekerja · pegawai mengambil tiket sendiri. Matikan untuk menjeda.'
+                          : 'Pegawai tidak bangun sendiri sampai heartbeat dinyalakan lagi.',
+                      style: TextStyle(fontSize: 12, color: NV.muted)),
                   value: s.autorun,
-                  onChanged: busy || !online ? null : (v) => act((c) => c.setAutorun(v)),
+                  onChanged: busy || !online
+                      ? null
+                      : (v) => act((c) => c.setHeartbeat(v), done: v ? 'Heartbeat dinyalakan' : 'Heartbeat dijeda'),
                 ),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
                 child: NvGlassSegmented(
                   key: const ValueKey('company-segments'),
-                  labels: ['Organisasi', 'Tiket', 'Setujui${approvals.isEmpty ? '' : ' (${approvals.length})'}', 'Biaya', 'Rencana'],
+                  labels: ['Organisasi', 'Tiket', 'Setujui${approvals.isEmpty ? '' : ' (${approvals.length})'}', 'Biaya', 'Rencana', 'Feed'],
                   index: seg,
                   onChanged: (i) => setState(() => seg = i),
                 ),
@@ -214,6 +223,7 @@ class _RemoteCompanyScreenState extends ConsumerState<RemoteCompanyScreen> {
                 companySegApprovals => _approvals(),
                 companySegCosts => _costs(s),
                 companySegPlan => _plan(s),
+                companySegFeed => _feed(s, r.companyFeed),
                 _ => _org(s),
               },
             ],
@@ -236,7 +246,9 @@ class _RemoteCompanyScreenState extends ConsumerState<RemoteCompanyScreen> {
               label: const Text('Rekrut'),
             )),
         for (final (a, depth) in s.orgTree)
-          NvPanel(
+          CustomPaint(
+            painter: OrgRailPainter(depth: depth, color: NV.faint),
+            child: NvPanel(
             key: ValueKey('company-agent-${a.id}'),
             margin: EdgeInsets.fromLTRB(16.0 + depth * 18, 0, 16, 8),
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
@@ -282,6 +294,7 @@ class _RemoteCompanyScreenState extends ConsumerState<RemoteCompanyScreen> {
                 ),
               ]),
             ]),
+          ),
           ),
         if (s.agents.isEmpty) const NvEmpty(title: 'Belum ada pegawai', body: 'Ketuk Rekrut untuk menambah pegawai pertama.'),
       ];
@@ -409,15 +422,80 @@ class _RemoteCompanyScreenState extends ConsumerState<RemoteCompanyScreen> {
               const SizedBox(height: 8),
               Text(ap.title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
               if (ap.detail.isNotEmpty) ...[const SizedBox(height: 6), Text(ap.detail, style: TextStyle(fontSize: 13, height: 1.4, color: NV.muted))],
+              for (final line in ap.tickets)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('• $line', key: ValueKey('company-strategy-${ap.id}-$line'), style: const TextStyle(fontSize: 13)),
+                ),
+              if (ap.kind == 'budget')
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                      'Setujui untuk menambah anggaran${ap.extraTokens > 0 ? ' ${formatTokens(ap.extraTokens)}' : ''}'
+                      '${ap.extraCents > 0 ? ' ${formatCents(ap.extraCents)}' : ''} lalu melanjutkan pegawai ini.',
+                      style: TextStyle(fontSize: 13, color: NV.muted)),
+                ),
               const SizedBox(height: 10),
-              Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+              Wrap(alignment: WrapAlignment.end, spacing: 6, children: [
+                if (ap.canRevise)
+                  TextButton(
+                    key: ValueKey('company-revise-${ap.id}'),
+                    onPressed: _locked ? null : () => act((c) => c.revise(ap.id), done: 'Diminta revisi'),
+                    child: const Text('Minta revisi'),
+                  ),
                 TextButton(onPressed: _locked ? null : () => act((c) => c.decide(ap.id, false), done: 'Ditolak'), child: const Text('Tolak')),
-                const SizedBox(width: 6),
                 FilledButton(onPressed: _locked ? null : () => act((c) => c.decide(ap.id, true), done: 'Disetujui'), child: const Text('Setujui')),
               ]),
             ]),
           ),
       ];
+
+  // ----------------------------------------------------------------- feed --
+  List<Widget> _feed(CompanySnapshot s, List<CompanyActivity> pushed) {
+    final rows = mergeFeed(feed, pushed.where((a) => a.involves(feedAgent)).toList());
+    final now = DateTime.now().millisecondsSinceEpoch / 1000;
+    String ago(double ts) {
+      final d = (now - ts).clamp(0, double.infinity).round();
+      return d < 60 ? 'baru saja' : d < 3600 ? '${d ~/ 60} mnt' : d < 86400 ? '${d ~/ 3600} jam' : '${d ~/ 86400} hr';
+    }
+
+    return [
+      NvSection('aktivitas live', count: rows.length),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        child: DropdownButton<int?>(
+          key: const ValueKey('company-feed-agent'),
+          isExpanded: true,
+          value: s.agents.any((a) => a.id == feedAgent) ? feedAgent : null,
+          items: [
+            const DropdownMenuItem<int?>(value: null, child: Text('Semua pegawai')),
+            for (final a in s.agents) DropdownMenuItem<int?>(value: a.id, child: Text(a.name)),
+          ],
+          onChanged: (v) {
+            setState(() => feedAgent = v);
+            unawaited(load());
+          },
+        ),
+      ),
+      if (rows.isEmpty) const NvEmpty(title: 'Belum ada aktivitas', body: 'Yang dikerjakan pegawai muncul di sini saat itu juga.'),
+      for (final a in rows)
+        NvPanel(
+          key: ValueKey('company-feed-${a.id}'),
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: Text.rich(TextSpan(children: [
+                TextSpan(text: '${a.actor} ', style: const TextStyle(fontWeight: FontWeight.w600)),
+                TextSpan(text: a.summary, style: TextStyle(color: NV.muted)),
+              ]), style: const TextStyle(fontSize: 13, height: 1.35)),
+            ),
+            const SizedBox(width: 8),
+            Text(ago(a.ts), style: TextStyle(fontSize: 11, color: NV.faint)),
+          ]),
+        ),
+    ];
+  }
 
   // ---------------------------------------------------------------- costs --
   List<Widget> _costs(CompanySnapshot s) {
@@ -754,14 +832,26 @@ class _TicketSheetState extends State<_TicketSheet> {
               ),
           ]),
           const SizedBox(height: 12),
-          for (final c in d?.comments ?? const <TicketComment>[])
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text.rich(TextSpan(children: [
-                TextSpan(text: '${c.author}: ', style: TextStyle(fontWeight: FontWeight.w600, color: c.fromUser ? NV.redInk : NV.text)),
-                TextSpan(text: c.body, style: TextStyle(color: NV.muted)),
-              ])),
-            ),
+          if (d != null && d!.timeline.isNotEmpty)
+            for (final e in d!.timeline)
+              Padding(
+                padding: EdgeInsets.only(bottom: e.isComment ? 8 : 4),
+                child: e.isComment
+                    ? Text.rich(TextSpan(children: [
+                        TextSpan(text: '${e.actor}: ', style: TextStyle(fontWeight: FontWeight.w600, color: e.fromUser ? NV.redInk : NV.text)),
+                        TextSpan(text: e.text, style: TextStyle(color: NV.muted)),
+                      ]))
+                    : Text('· ${e.actor} ${e.text}', key: ValueKey('company-audit-${e.type}'), style: TextStyle(fontSize: 11.5, color: NV.faint)),
+              )
+          else
+            for (final c in d?.comments ?? const <TicketComment>[])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text.rich(TextSpan(children: [
+                  TextSpan(text: '${c.author}: ', style: TextStyle(fontWeight: FontWeight.w600, color: c.fromUser ? NV.redInk : NV.text)),
+                  TextSpan(text: c.body, style: TextStyle(color: NV.muted)),
+                ])),
+              ),
           Row(children: [
             Expanded(child: TextField(key: const ValueKey('company-comment'), controller: comment, decoration: const InputDecoration(hintText: 'Tulis komentar…'))),
             IconButton(
@@ -781,4 +871,31 @@ class _TicketSheetState extends State<_TicketSheet> {
       ),
     );
   }
+}
+
+
+/// Reporting lines on the phone's org list: a vertical rail for each level
+/// above the employee and an elbow into their card (drawn in the left margin,
+/// so the layout of the cards themselves does not change).
+class OrgRailPainter extends CustomPainter {
+  const OrgRailPainter({required this.depth, required this.color});
+  final int depth;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (depth <= 0) return;
+    final p = Paint()
+      ..color = color
+      ..strokeWidth = 1;
+    for (var i = 0; i < depth; i++) {
+      final x = 16.0 + i * 18 + 9;
+      final last = i == depth - 1;
+      canvas.drawLine(Offset(x, 0), Offset(x, last ? 22 : size.height), p);
+      if (last) canvas.drawLine(Offset(x, 22), Offset(16.0 + depth * 18, 22), p);
+    }
+  }
+
+  @override
+  bool shouldRepaint(OrgRailPainter old) => old.depth != depth || old.color != color;
 }

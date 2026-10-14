@@ -19,6 +19,8 @@ export interface CompanyInfo {
   price_out_per_mtok: number
   require_hire_approval: boolean
   require_review: boolean
+  /** The board approves the CEO's strategy before its tickets are created. */
+  require_strategy_approval?: boolean
   ticket_prefix: string
   warn_pct: number
 }
@@ -155,25 +157,51 @@ export interface TicketDetail extends CompanyTicket {
   blockers: { id: number; key: string; status: TicketStatus; title: string }[]
   children: { id: number; key: string; status: TicketStatus; title: string }[]
   comments: TicketComment[]
+  kind?: 'strategy' | 'task'
+  /** Comments + audit events + heartbeat runs, oldest first (core ticket_timeline). */
+  timeline?: TimelineItem[]
   work_products: { id: number; kind: string; ref: string; title: string }[]
+}
+
+export interface TimelineItem {
+  action?: string
+  actor_name: string
+  actor_type: string
+  body?: string
+  id: string
+  status?: string
+  summary?: string
+  ts: number
+  type: 'comment' | 'event' | 'run'
+}
+
+export interface StrategyTicket {
+  assignee?: null | string
+  assignee_id?: null | number
+  description?: string
+  priority?: number
+  title: string
 }
 
 export interface CompanyApproval {
   agent_name: null | string
   created_at: number
   id: number
-  kind: 'budget' | 'hire' | 'plan' | 'review'
+  kind: 'budget' | 'hire' | 'plan' | 'review' | 'strategy'
   note: string
   payload: Record<string, unknown>
-  status: 'approved' | 'cancelled' | 'pending' | 'rejected'
+  status: 'approved' | 'cancelled' | 'pending' | 'rejected' | 'revision_requested'
   ticket_key: null | string
   title: string
 }
 
 export interface CompanyActivity {
   action: string
+  actor_id?: null | number
   actor_name: string
   actor_type: string
+  entity?: string
+  entity_id?: null | number
   id: number
   summary: string
   ts: number
@@ -249,8 +277,67 @@ export const APPROVAL_KIND_LABEL: Record<CompanyApproval['kind'], string> = {
   budget: 'Anggaran',
   hire: 'Rekrut',
   plan: 'Rencana',
-  review: 'Tinjau hasil'
+  review: 'Tinjau hasil',
+  strategy: 'Strategi CEO'
 }
+
+/** Kinds the board can send back for revision (core APPROVAL_DECISIONS). */
+export const REVISABLE_KINDS: CompanyApproval['kind'][] = ['hire', 'plan', 'strategy']
+
+/** Tickets the CEO proposed in a strategy approval (payload.tickets). */
+export function strategyTickets(ap: Pick<CompanyApproval, 'payload'>): StrategyTicket[] {
+  const raw = ap.payload?.tickets
+
+  return Array.isArray(raw)
+    ? raw.filter((t): t is StrategyTicket => Boolean(t && typeof t === 'object' && 'title' in t))
+    : []
+}
+
+/** Newest first, de-duplicated by id, capped: the live feed after a pushed row lands. */
+export function mergeFeed(items: CompanyActivity[], incoming: CompanyActivity[], cap = 300): CompanyActivity[] {
+  const seen = new Set<number>()
+  const out: CompanyActivity[] = []
+
+  for (const item of [...incoming, ...items].sort((a, b) => b.id - a.id)) {
+    if (!item || typeof item.id !== 'number' || seen.has(item.id)) {
+      continue
+    }
+
+    seen.add(item.id)
+    out.push(item)
+
+    if (out.length >= cap) {
+      break
+    }
+  }
+
+  return out
+}
+
+/** Did this activity row involve the agent (as actor or as subject)? */
+export function feedInvolves(item: CompanyActivity, agentId: null | number): boolean {
+  if (agentId === null) {
+    return true
+  }
+
+  return (
+    (item.actor_type === 'agent' && item.actor_id === agentId) ||
+    (item.entity === 'agent' && item.entity_id === agentId)
+  )
+}
+
+/** Rows pushed live by the core (`company.activity`), newest first. Views merge them in. */
+export const $companyFeed = atom<CompanyActivity[]>([])
+
+onMount($companyFeed, () =>
+  onGatewayEvent('company.activity', event => {
+    const row = event.payload as unknown as CompanyActivity | undefined
+
+    if (row && typeof row.id === 'number') {
+      $companyFeed.set(mergeFeed($companyFeed.get(), [row], 100))
+    }
+  })
+)
 
 /** null = not loaded yet. `{exists: false}` = no company created on this PC. */
 export const $company = atom<CompanySnapshot | null | { exists: false }>(null)

@@ -819,7 +819,7 @@ function RoutineForm({
   )
 }
 
-/** "Rutinitas" tab: recurring work that becomes a ticket on schedule (only while “Jalan otomatis” is on). */
+/** "Rutinitas" tab: recurring work that becomes a ticket on schedule (only while the heartbeat is on). */
 export function Routines({ snap }: { snap: CompanySnapshot }) {
   const routines = Array.isArray(snap.routines) ? snap.routines : []
   const [edit, setEdit] = useState<null | number>(null)
@@ -832,7 +832,7 @@ export function Routines({ snap }: { snap: CompanySnapshot }) {
       <div className="nv-co-plan-col">
         {!snap.company.autorun && (
           <p className="nv-co-card nv-co-muted">
-            “Jalan otomatis” sedang mati: rutinitas tidak membuat tiket sendiri. Pakai “Jalankan sekarang” untuk
+            Heartbeat Kantor sedang dijeda: rutinitas tidak membuat tiket sendiri. Pakai “Jalankan sekarang” untuk
             mencobanya.
           </p>
         )}

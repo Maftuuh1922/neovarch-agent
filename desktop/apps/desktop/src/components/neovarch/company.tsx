@@ -6,9 +6,11 @@ import { useNavigate } from 'react-router'
 
 import { sessionRoute } from '@/app/routes'
 
+import { AgentEditor, GoalsAndProjects, Routines, TicketBlockers } from './company-plan'
 import {
   $company,
   $companyError,
+  $companyFeed,
   $companyRev,
   AGENT_STATUS_LABEL,
   APPROVAL_KIND_LABEL,
@@ -20,18 +22,22 @@ import {
   type CompanySnapshot,
   type CompanyTicket,
   type CompanyUnit,
+  feedInvolves,
   formatCents,
   formatTokens,
   hasCompany,
+  mergeFeed,
   orgTree,
+  REVISABLE_KINDS,
+  strategyTickets,
   TICKET_COLUMNS,
   TICKET_LABEL,
   TICKET_TRANSITIONS,
   type TicketDetail,
   type TicketStatus,
+  type TimelineItem,
   unitTree
 } from './company-store'
-import { AgentEditor, GoalsAndProjects, Routines, TicketBlockers } from './company-plan'
 import { ErrorLine, useAction } from './company-ui'
 import { relativeTime } from './office-store'
 
@@ -44,7 +50,7 @@ export const COMPANY_TABS: { label: string; value: CompanyTab }[] = [
   { label: 'Rutinitas', value: 'routines' },
   { label: 'Persetujuan', value: 'approvals' },
   { label: 'Biaya', value: 'costs' },
-  { label: 'Aktivitas', value: 'activity' }
+  { label: 'Aktivitas live', value: 'activity' }
 ]
 
 /** Before anything exists only the org view is shown (its empty state creates the first unit). */
@@ -74,7 +80,8 @@ export function CompanySetup() {
       <p>
         Susunannya Organisasi → Agency → Orang, sedalam yang kamu mau. Minta Neovarch Agent di Chat, misalnya “buat
         organisasi Neovarch Labs dengan agency Kreatif, lalu rekrut Sinta sebagai copywriter”, atau buat organisasi
-        pertamamu di sini. Tidak ada pegawai yang berjalan sendiri sampai kamu menyalakan “Jalan otomatis”.
+        pertamamu di sini. Begitu Kantor ada, heartbeat-nya aktif: pegawai mengambil tiket yang ditugaskan sendiri. Kamu
+        bisa menjedanya kapan saja.
       </p>
       <form className="nv-co-form" onSubmit={submit}>
         <label>
@@ -95,6 +102,8 @@ export function CompanySetup() {
 function CompanyBar({ snap }: { snap: CompanySnapshot }) {
   const [error, run, busy] = useAction()
   const c = snap.company
+  const active = new Set(snap.active_agents ?? [])
+  const working = snap.agents.filter(a => active.has(a.id) || a.status === 'running').length
 
   return (
     <div className="nv-co-bar" data-slot="nv-company-bar">
@@ -105,16 +114,25 @@ function CompanyBar({ snap }: { snap: CompanySnapshot }) {
         </p>
       </div>
       <div className="nv-co-bar-tools">
+        <span className="nv-co-chip" data-slot="nv-company-working">
+          {working} bekerja · {snap.agents.length} pegawai
+        </span>
         <span className="nv-co-chip">{snap.pending_approvals} menunggu persetujuan</span>
-        <label className="nv-co-switch" title="Agen bangun sendiri saat ada tiket, komentar, atau jadwal">
+        <label
+          className="nv-co-switch"
+          data-on={c.autorun ? 'true' : 'false'}
+          title="Heartbeat: pegawai bangun sendiri untuk tiket, komentar, persetujuan, dan jadwal. Jeda kapan saja."
+        >
           <input
-            aria-label="Jalan otomatis"
+            aria-label="Heartbeat Kantor"
             checked={c.autorun}
             disabled={busy}
-            onChange={e => void run(() => companyCall('update', { autorun: e.target.checked }))}
+            onChange={e => void run(() => companyCall('heartbeat', { on: e.target.checked }))}
             type="checkbox"
           />
-          <span>Jalan otomatis</span>
+          <span className="nv-co-heartbeat" data-on={c.autorun ? 'true' : 'false'}>
+            {c.autorun ? 'Heartbeat aktif' : 'Heartbeat dijeda'}
+          </span>
         </label>
       </div>
       <ErrorLine error={error} />
@@ -412,6 +430,109 @@ function UnitRow({ depth, people, unit }: { depth: number; people: number; unit:
   )
 }
 
+interface OrgBranch {
+  agent: CompanyAgent
+  reports: OrgBranch[]
+}
+
+/** Agents as nested branches (roots = report to the board). */
+export function orgBranches(agents: CompanyAgent[]): OrgBranch[] {
+  const ids = new Set(agents.map(a => a.id))
+  const byManager = new Map<null | number, CompanyAgent[]>()
+
+  for (const a of agents) {
+    const key = a.reports_to !== null && ids.has(a.reports_to) ? a.reports_to : null
+
+    byManager.set(key, [...(byManager.get(key) ?? []), a])
+  }
+
+  const seen = new Set<number>()
+
+  const build = (manager: null | number): OrgBranch[] => {
+    const out: OrgBranch[] = []
+
+    for (const agent of byManager.get(manager) ?? []) {
+      if (seen.has(agent.id)) {
+        continue
+      }
+
+      seen.add(agent.id)
+      out.push({ agent, reports: build(agent.id) })
+    }
+
+    return out
+  }
+
+  return build(null)
+}
+
+function OrgCard({ agent, running }: { agent: CompanyAgent; running: boolean }) {
+  const status = running ? 'running' : agent.status
+  const used = agent.budget.tokens
+
+  return (
+    <div className="nv-co-oc-card" data-status={status} data-testid={`org-card-${agent.id}`}>
+      <div className="nv-co-oc-top">
+        <i aria-hidden className="nv-co-oc-dot" data-status={status} />
+        <strong>{agent.name}</strong>
+      </div>
+      <span className="nv-co-oc-title">{agent.title || agent.role}</span>
+      <span className="nv-co-oc-task">
+        {status === 'pending_approval'
+          ? 'menunggu persetujuan rekrut'
+          : agent.current_ticket
+            ? `${agent.current_ticket.key} · ${agent.current_ticket.title}`
+            : AGENT_STATUS_LABEL[status]}
+      </span>
+      <span className="nv-co-oc-cost">
+        {formatTokens(used)} bln ini
+        {agent.budget.pct !== null ? ` · ${agent.budget.pct}%` : ''}
+      </span>
+      {agent.budget.pct !== null && (
+        <span className="nv-co-meter" data-level={agent.budget.level}>
+          <i style={{ width: `${Math.min(100, agent.budget.pct)}%` }} />
+        </span>
+      )}
+    </div>
+  )
+}
+
+function OrgBranchView({ active, branch }: { active: Set<number>; branch: OrgBranch }) {
+  return (
+    <li>
+      <OrgCard agent={branch.agent} running={active.has(branch.agent.id) || branch.agent.status === 'running'} />
+      {branch.reports.length > 0 && (
+        <ul>
+          {branch.reports.map(b => (
+            <OrgBranchView active={active} branch={b} key={b.agent.id} />
+          ))}
+        </ul>
+      )}
+    </li>
+  )
+}
+
+/** The chart itself: boxes joined by reporting lines, the board on top. */
+export function OrgTreeChart({ snap }: { snap: CompanySnapshot }) {
+  const active = new Set(snap.active_agents ?? [])
+  const roots = orgBranches(snap.agents)
+
+  if (roots.length === 0) {
+    return null
+  }
+
+  return (
+    <div aria-label="Bagan organisasi" className="nv-co-orgchart" data-slot="nv-company-orgchart" role="tree">
+      <div className="nv-co-oc-board">Dewan (kamu)</div>
+      <ul>
+        {roots.map(b => (
+          <OrgBranchView active={active} branch={b} key={b.agent.id} />
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 export function OrgChart({ snap }: { snap: CompanySnapshot }) {
   const active = new Set(snap.active_agents ?? [])
   const units = Array.isArray(snap.units) ? snap.units : []
@@ -421,6 +542,7 @@ export function OrgChart({ snap }: { snap: CompanySnapshot }) {
   return (
     <div className="nv-co-split">
       <div>
+        <OrgTreeChart snap={snap} />
         {tree.length > 0 && (
           <ul aria-label="Organisasi dan agency" className="nv-co-org" data-slot="nv-company-units">
             {tree.map(({ depth, unit }) => (
@@ -681,15 +803,7 @@ export function TicketDetailPanel({
           ))}
         </ul>
       )}
-      <ol className="nv-co-thread" data-slot="nv-company-thread">
-        {detail.comments.map(c => (
-          <li data-author={c.author_type} key={c.id}>
-            <span className="nv-co-who">{c.author_name || (c.author_type === 'user' ? 'Kamu' : 'Sistem')}</span>
-            <time>{relativeTime(c.created_at, now())}</time>
-            <p>{c.body}</p>
-          </li>
-        ))}
-      </ol>
+      <TicketThread detail={detail} />
       <form
         className="nv-co-row"
         onSubmit={e => {
@@ -712,6 +826,51 @@ export function TicketDetailPanel({
         </button>
       </form>
     </aside>
+  )
+}
+
+/** One thread per ticket: comments, the audit trail (moves, assignment, approvals) and heartbeat runs. */
+export function TicketThread({ detail }: { detail: TicketDetail }) {
+  const [audit, setAudit] = useState(true)
+
+  const items: TimelineItem[] = Array.isArray(detail.timeline)
+    ? detail.timeline
+    : detail.comments.map(c => ({
+        actor_name: c.author_name || (c.author_type === 'user' ? 'Kamu' : 'Sistem'),
+        actor_type: c.author_type,
+        body: c.body,
+        id: `c${c.id}`,
+        ts: c.created_at,
+        type: 'comment' as const
+      }))
+
+  const shown = audit ? items : items.filter(i => i.type === 'comment')
+
+  return (
+    <section className="nv-co-thread-wrap">
+      <label className="nv-co-switch">
+        <input checked={audit} onChange={e => setAudit(e.target.checked)} type="checkbox" />
+        <span>Tampilkan jejak audit</span>
+      </label>
+      <ol className="nv-co-thread" data-slot="nv-company-thread">
+        {shown.length === 0 && <li className="nv-co-empty">Belum ada percakapan.</li>}
+        {shown.map(item =>
+          item.type === 'comment' ? (
+            <li data-author={item.actor_type} data-kind="comment" key={item.id}>
+              <span className="nv-co-who">{item.actor_name}</span>
+              <time>{relativeTime(item.ts, now())}</time>
+              <p>{item.body}</p>
+            </li>
+          ) : (
+            <li className="nv-co-audit" data-action={item.action ?? item.status} data-kind={item.type} key={item.id}>
+              <span className="nv-co-who">{item.actor_name}</span>
+              <span>{item.summary}</span>
+              <time>{relativeTime(item.ts, now())}</time>
+            </li>
+          )
+        )}
+      </ol>
+    </section>
   )
 }
 
@@ -782,7 +941,7 @@ export function Approvals() {
       .catch(e => setLoadError(e instanceof Error ? e.message : String(e)))
   }, [load, rev])
 
-  const decide = (id: number, decision: 'approve' | 'reject') =>
+  const decide = (id: number, decision: 'approve' | 'reject' | 'revise') =>
     void run(async () => {
       await companyCall('approval.decide', {
         decision,
@@ -810,8 +969,26 @@ export function Approvals() {
               <strong>{ap.title}</strong>
               <time>{relativeTime(ap.created_at, now())}</time>
             </div>
+            {ap.agent_name && <p className="nv-co-muted">Diajukan oleh {ap.agent_name}</p>}
             {typeof ap.payload.plan === 'string' && <p className="nv-co-desc">{ap.payload.plan}</p>}
             {typeof ap.payload.summary === 'string' && <p className="nv-co-desc">{ap.payload.summary}</p>}
+            {ap.kind === 'strategy' && strategyTickets(ap).length > 0 && (
+              <ol className="nv-co-list nv-co-strategy" data-slot="nv-company-strategy">
+                {strategyTickets(ap).map((t, i) => (
+                  <li key={i}>
+                    <strong>{t.title}</strong> → {t.assignee || 'belum ada penanggung jawab'}
+                  </li>
+                ))}
+              </ol>
+            )}
+            {ap.kind === 'budget' && (
+              <p className="nv-co-desc">
+                Setujui untuk menambah anggaran
+                {Number(ap.payload.extra_tokens) > 0 ? ` ${formatTokens(Number(ap.payload.extra_tokens))}` : ''}
+                {Number(ap.payload.extra_cents) > 0 ? ` ${formatCents(Number(ap.payload.extra_cents))}` : ''} lalu
+                melanjutkan pegawai ini.
+              </p>
+            )}
             {ap.status === 'pending' ? (
               <div className="nv-co-row">
                 <input
@@ -829,13 +1006,24 @@ export function Approvals() {
                 >
                   Setujui
                 </button>
+                {REVISABLE_KINDS.includes(ap.kind) && (
+                  <button className="nv-co-btn" disabled={busy} onClick={() => decide(ap.id, 'revise')} type="button">
+                    Minta revisi
+                  </button>
+                )}
                 <button className="nv-co-btn" disabled={busy} onClick={() => decide(ap.id, 'reject')} type="button">
                   Tolak
                 </button>
               </div>
             ) : (
               <p className="nv-co-desc">
-                {ap.status === 'approved' ? 'Disetujui' : ap.status === 'rejected' ? 'Ditolak' : 'Dibatalkan'}
+                {ap.status === 'approved'
+                  ? 'Disetujui'
+                  : ap.status === 'rejected'
+                    ? 'Ditolak'
+                    : ap.status === 'revision_requested'
+                      ? 'Diminta revisi'
+                      : 'Dibatalkan'}
                 {ap.note ? ` — ${ap.note}` : ''}
               </p>
             )}
@@ -1010,34 +1198,68 @@ export function Costs() {
 
 export function ActivityLog() {
   const rev = useStore($companyRev)
+  const snap = useStore($company)
+  const pushed = useStore($companyFeed)
   const [items, setItems] = useState<CompanyActivity[]>([])
+  const [agent, setAgent] = useState<null | number>(null)
   const [loadError, setLoadError] = useState<null | string>(null)
 
   useEffect(() => {
-    companyCall<{ items: CompanyActivity[] }>('activity', { limit: 150 })
+    companyCall<{ items: CompanyActivity[] }>('activity', {
+      agent_id: agent ?? undefined,
+      limit: 150
+    })
       .then(res => {
         setItems(Array.isArray(res?.items) ? res.items : [])
         setLoadError(null)
       })
       .catch(e => setLoadError(e instanceof Error ? e.message : String(e)))
-  }, [rev])
+  }, [rev, agent])
+
+  const agents = hasCompany(snap) ? snap.agents : []
+
+  const live = mergeFeed(
+    items,
+    pushed.filter(row => feedInvolves(row, agent))
+  )
+
+  const newest = live[0]?.id
 
   return (
-    <ol className="nv-co-activity" data-slot="nv-company-activity">
-      {loadError && (
-        <li className="nv-co-error" role="alert">
-          Aktivitas belum bisa dimuat: {loadError}
-        </li>
-      )}
-      {items.length === 0 && !loadError && <li className="nv-co-empty">Belum ada aktivitas.</li>}
-      {items.map(item => (
-        <li data-action={item.action} key={item.id}>
-          <span className="nv-co-who">{item.actor_name}</span>
-          <span>{item.summary}</span>
-          <time>{relativeTime(item.ts, now())}</time>
-        </li>
-      ))}
-    </ol>
+    <section className="nv-co-feed" data-slot="nv-company-feed">
+      <div className="nv-co-row">
+        <span className="nv-co-live" title="Baris baru muncul langsung saat pegawai bekerja">
+          <i aria-hidden /> Live
+        </span>
+        <select
+          aria-label="Saring pegawai"
+          onChange={e => setAgent(e.target.value ? Number(e.target.value) : null)}
+          value={agent ?? ''}
+        >
+          <option value="">Semua pegawai</option>
+          {agents.map(a => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <ol className="nv-co-activity" data-slot="nv-company-activity">
+        {loadError && (
+          <li className="nv-co-error" role="alert">
+            Aktivitas belum bisa dimuat: {loadError}
+          </li>
+        )}
+        {live.length === 0 && !loadError && <li className="nv-co-empty">Belum ada aktivitas.</li>}
+        {live.map(item => (
+          <li data-action={item.action} data-fresh={item.id === newest ? 'true' : undefined} key={item.id}>
+            <span className="nv-co-who">{item.actor_name}</span>
+            <span>{item.summary}</span>
+            <time>{relativeTime(item.ts, now())}</time>
+          </li>
+        ))}
+      </ol>
+    </section>
   )
 }
 

@@ -5,9 +5,10 @@ Paperclip (MIT, github.com/paperclipai/paperclip: doc/SPEC-implementation.md §7
 no code copied; rewritten for Neovarch's Python core, Electron/React desktop and Flutter remote.
 
 ## 1. Principles
-- **Off by default, never surprising.** The company exists only after the user creates it
-  (or taps "Buat contoh perusahaan"). `autorun` is **off** by default: no agent spends tokens
-  until the user turns on "Jalan otomatis" or presses "Bangunkan" on one agent.
+- **Never surprising, never idle.** The company exists only after the user creates it
+  (or taps "Coba contoh"). No agent spends tokens until the company exists; from then on its
+  heartbeat ("autorun") is on by default so employees pick up assigned tickets by themselves, and
+  the user can pause it ("Jeda heartbeat") at any time. Budgets hard-stop an agent mid-run.
 - **Single source of truth = core.** Desktop and phone are views/controllers over the same RPCs.
 - **Isolated files.** Everything lives in `~/.neovarch/company.db` (SQLite, WAL). Never `~/.hermes`.
 - **Minimal hooks into existing code** (server.py / tools.py / agent.py / office.py get a few lines each),
@@ -92,7 +93,7 @@ Event: `company.changed` `{entity, id, action}` (coalesced) and `office.update` 
 ## 8. UI
 - **Desktop** Kantor tabs: `Ruang` (existing 3D/list) · `Organisasi` · `Tiket` (kanban) · `Tujuan` · `Rutinitas` ·
   `Persetujuan` · `Biaya` · `Aktivitas`. Hidden behind an empty state ("Buat perusahaan") until a company exists;
-  "Jalan otomatis" (autorun) stays off until the user turns it on.
+  The heartbeat (autorun) is on by default once a company exists (since 1.4.8; an older idle company is switched on once on upgrade). "Jeda heartbeat" pauses it; a budget hard stop pauses one agent and files a budget approval.
   - Organisasi: each agent has "Ubah" → profile, manager (own reports excluded), heartbeat, monthly budget
     (cents/tokens), model (from `model.options`, empty = PC default; stored as `model`+`provider` on the agent and
     applied to its persona session at once), "Berhentikan" (terminate, two-click confirm).
@@ -102,3 +103,16 @@ Event: `company.changed` `{entity, id, action}` (coalesced) and `office.update` 
   - The Kantor desk model popover on a company desk (`PUT /api/agents/company:<id>/model`) changes that agent only.
 - **Android remote**: "Perusahaan" screen with tabs Organisasi / Tiket / Persetujuan / Biaya; approve/reject, pause/resume,
   wake, assign, move — all through the same RPCs over the paired gateway.
+
+
+## 10. Paperclip gap-closing pass (feat/kantor-paperclip, 2026-10-14)
+- Heartbeat on by default (`company.heartbeat {on, stop_running?}` is the pause switch).
+- CEO: each active goal without work gets a `kind=strategy` ticket for the CEO (role `ceo`, else the
+  top of the chart with a team). Tool `company_propose_strategy` files a `strategy` approval; approve
+  → tickets created under the strategy ticket and assignees woken; revise → back to todo + CEO woken;
+  reject → backlog. `require_strategy_approval` (default on) can skip the board.
+- Agents may ask to hire (`company_hire`); that always needs a hire approval.
+- Costs are captured per model call (`usage.update`); a hard stop interrupts the running heartbeat and
+  files one `budget` approval (approve adds one more month of the agent's budget and resumes).
+- Live feed: every activity row is pushed as `company.activity`; `company.activity {after, agent_id}`.
+- Ticket thread: `ticket.get` returns `timeline` (comments + audit events + heartbeat runs).

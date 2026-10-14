@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -23,7 +23,8 @@ vi.mock('./office3d-scene', () => ({
   })
 }))
 
-const { $company, orgTree } = await import('./company-store')
+const { $company, $companyFeed, feedInvolves, mergeFeed, orgTree, strategyTickets } = await import('./company-store')
+const { emitGatewayEvent } = await import('@/contrib/events')
 const { CompanyPanel } = await import('./company')
 const { sceneAgentsFromSnapshot } = await import('./office3d-model')
 
@@ -198,6 +199,7 @@ beforeEach(() => {
   gw.request.mockImplementation(async (method: string, params?: Record<string, unknown>) => respond(method, params))
   snapshot = SNAP
   $company.set(SNAP as never)
+  $companyFeed.set([])
 })
 
 afterEach(() => {
@@ -325,15 +327,191 @@ describe('Perusahaan (company) views', () => {
     )
   })
 
-  it('toggles autorun through company.update', async () => {
+  it('pauses the heartbeat through company.heartbeat', async () => {
+    $company.set({
+      ...SNAP,
+      company: { ...SNAP.company, autorun: true }
+    } as never)
     wrap(<CompanyPanel tab="activity" />)
     await screen.findByText('membuat NV-7')
-    fireEvent.click(screen.getByLabelText('Jalan otomatis'))
+    expect(screen.getByText('Heartbeat aktif')).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Heartbeat Kantor'))
     await waitFor(() =>
-      expect(gw.request).toHaveBeenCalledWith('company.update', {
-        autorun: true
+      expect(gw.request).toHaveBeenCalledWith('company.heartbeat', {
+        on: false
       })
     )
+  })
+
+  it('live feed: a pushed company.activity row appears at once, agent filter refetches', async () => {
+    wrap(<CompanyPanel tab="activity" />)
+    await screen.findByText('membuat NV-7')
+    act(() =>
+      emitGatewayEvent({
+        payload: {
+          action: 'run.started',
+          actor_id: 3,
+          actor_name: 'Raka',
+          actor_type: 'agent',
+          entity: 'agent',
+          entity_id: 3,
+          id: 99,
+          summary: 'mulai bekerja di NV-7',
+          ts: 0
+        },
+        type: 'company.activity'
+      } as never)
+    )
+    const row = await screen.findByText('mulai bekerja di NV-7')
+    expect(row.closest('li')?.getAttribute('data-fresh')).toBe('true')
+    fireEvent.change(screen.getByLabelText('Saring pegawai'), {
+      target: { value: '1' }
+    })
+    await waitFor(() =>
+      expect(gw.request).toHaveBeenCalledWith('company.activity', {
+        agent_id: 1,
+        limit: 150
+      })
+    )
+    expect(screen.queryByText('mulai bekerja di NV-7')).toBeNull() // Raka's row filtered out for Dimas
+  })
+
+  it('draws the org chart as connected boxes with live status and token use', () => {
+    $company.set({
+      ...SNAP,
+      active_agents: [3],
+      agents: [
+        agent(1, 'Dimas', 'CEO', null),
+        agent(2, 'Hana', 'CTO', 1),
+        agent(3, 'Raka', 'Engineer', 2, {
+          budget: { cents: 0, level: 'warning', pct: 85, tokens: 1700 },
+          current_ticket: {
+            id: 7,
+            key: 'NV-7',
+            status: 'in_progress',
+            title: 'Perbaiki crash'
+          }
+        })
+      ]
+    } as never)
+    wrap(<CompanyPanel tab="org" />)
+    const chart = screen.getByRole('tree', { name: 'Bagan organisasi' })
+    const raka = within(chart).getByTestId('org-card-3')
+    expect(raka.getAttribute('data-status')).toBe('running')
+    expect(raka.textContent).toContain('NV-7 · Perbaiki crash')
+    expect(raka.textContent).toContain('1.7 rb token')
+    // Raka sits under Hana, who sits under Dimas
+    const hanaLi = within(chart).getByTestId('org-card-2').closest('li') as HTMLElement
+    expect(within(hanaLi).getByTestId('org-card-3')).toBeTruthy()
+    expect(within(chart).getByText('Dewan (kamu)')).toBeTruthy()
+  })
+
+  it('shows the CEO strategy tickets and can ask for a revision', async () => {
+    gw.request.mockImplementation(async (method: string, params?: Record<string, unknown>) =>
+      method === 'company.approval.list'
+        ? {
+            approvals: [
+              {
+                agent_name: 'Dimas',
+                created_at: 0,
+                id: 9,
+                kind: 'strategy',
+                note: '',
+                payload: {
+                  plan: 'Teknik dulu',
+                  tickets: [
+                    { assignee: 'Hana', title: 'Rancang arsitektur' },
+                    { assignee: null, title: 'Cari desainer' }
+                  ]
+                },
+                status: 'pending',
+                ticket_key: 'NV-1',
+                title: 'Strategi CEO: Rilis bertahap'
+              },
+              {
+                agent_name: 'Raka',
+                created_at: 0,
+                id: 10,
+                kind: 'budget',
+                note: '',
+                payload: { extra_cents: 0, extra_tokens: 50000 },
+                status: 'pending',
+                ticket_key: null,
+                title: 'Naikkan anggaran Raka dan lanjutkan'
+              }
+            ]
+          }
+        : respond(method, params)
+    )
+    wrap(<CompanyPanel tab="approvals" />)
+    await screen.findByText('Strategi CEO: Rilis bertahap')
+    expect(screen.getByText('Strategi CEO')).toBeTruthy()
+    expect(screen.getByText('Rancang arsitektur')).toBeTruthy()
+    expect(screen.getByText(/belum ada penanggung jawab/)).toBeTruthy()
+    expect(screen.getByText(/50.0 rb token/)).toBeTruthy()
+    // budget approvals cannot be "revised"; only the strategy card has the button
+    expect(screen.getAllByRole('button', { name: 'Minta revisi' })).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Minta revisi' }))
+    await waitFor(() =>
+      expect(gw.request).toHaveBeenCalledWith('company.approval.decide', {
+        decision: 'revise',
+        id: 9,
+        note: ''
+      })
+    )
+  })
+
+  it('ticket thread mixes comments with the audit trail, audit can be hidden', async () => {
+    gw.request.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      const base = respond(method, params) as Record<string, unknown>
+
+      return method === 'company.ticket.get'
+        ? {
+            ...base,
+            timeline: [
+              {
+                action: 'ticket.created',
+                actor_name: 'Kamu',
+                actor_type: 'user',
+                id: 'a1',
+                summary: 'membuat NV-7',
+                ts: 0,
+                type: 'event'
+              },
+              {
+                actor_name: 'Raka',
+                actor_type: 'agent',
+                body: 'Sedang saya telusuri',
+                id: 'c1',
+                ts: 1,
+                type: 'comment'
+              },
+              {
+                actor_name: 'Raka',
+                actor_type: 'agent',
+                id: 'r1',
+                status: 'succeeded',
+                summary: 'heartbeat #1 (assignment) · succeeded',
+                ts: 2,
+                type: 'run'
+              }
+            ]
+          }
+        : base
+    })
+    $company.set(SNAP as never)
+    const { TicketDetailPanel } = await import('./company')
+    wrap(<TicketDetailPanel id={7} onClose={() => {}} snap={SNAP as never} />)
+    const thread = await screen.findByText('Sedang saya telusuri')
+    const list = thread.closest('ol') as HTMLElement
+    expect(within(list).getByText('heartbeat #1 (assignment) · succeeded')).toBeTruthy()
+    expect(
+      within(list)
+        .getAllByRole('listitem')
+        .map(li => li.getAttribute('data-kind'))
+    ).toEqual(['event', 'comment', 'run'])
+    fireEvent.click(screen.getByLabelText('Tampilkan jejak audit'))
+    expect(within(list).getAllByRole('listitem')).toHaveLength(1)
   })
 })
 
@@ -441,5 +619,34 @@ describe('company helpers', () => {
       status: 'idle',
       statusText: 'Dijeda · anggaran habis'
     })
+  })
+})
+
+describe('live feed helpers', () => {
+  const row = (id: number, extra = {}) => ({
+    action: 'x',
+    actor_name: 'A',
+    actor_type: 'user',
+    id,
+    summary: `s${id}`,
+    ts: 0,
+    ...extra
+  })
+
+  it('mergeFeed keeps newest first, drops duplicates, caps the list', () => {
+    expect(mergeFeed([row(2), row(1)], [row(3), row(2)]).map(r => r.id)).toEqual([3, 2, 1])
+    expect(mergeFeed([row(2), row(1)], [row(3)], 2).map(r => r.id)).toEqual([3, 2])
+  })
+
+  it('feedInvolves matches the agent as actor or subject', () => {
+    expect(feedInvolves(row(1, { actor_id: 3, actor_type: 'agent' }) as never, 3)).toBe(true)
+    expect(feedInvolves(row(1, { entity: 'agent', entity_id: 3 }) as never, 3)).toBe(true)
+    expect(feedInvolves(row(1, { actor_id: 3, actor_type: 'user' }) as never, 3)).toBe(false)
+    expect(feedInvolves(row(1) as never, null)).toBe(true)
+  })
+
+  it('strategyTickets ignores malformed payloads', () => {
+    expect(strategyTickets({ payload: {} })).toEqual([])
+    expect(strategyTickets({ payload: { tickets: [{ title: 'a' }, null, 5] } }).map(t => t.title)).toEqual(['a'])
   })
 })

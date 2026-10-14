@@ -851,7 +851,7 @@ def office_summary(snap: dict) -> str:
     if isinstance(company, dict):
         tc = company.get("ticket_counts") or {}
         lines.append(f"Perusahaan: {company.get('name')} — misi: {company.get('mission') or '-'}; "
-                     f"jalan otomatis {'aktif' if company.get('autorun') else 'mati'}; "
+                     f"heartbeat {'aktif' if company.get('autorun') else 'dijeda'}; "
                      f"{company.get('pending_approvals', 0)} persetujuan menunggu.")
         lines.append("Tiket: " + ", ".join(f"{k} {v}" for k, v in tc.items() if v))
         for a in (company.get("agents") or [])[:20]:
