@@ -28,9 +28,9 @@
 #   [--dir <install dir>] [--neovarch-home <dir>] [--branch <b>] [--commit <sha>]
 # Environment:
 #   NEOVARCH_HOME       data home (default ~/.neovarch)
-#   NEOVARCH_VERSION    desktop release tag (e.g. v1.4.7). Default: latest.
+#   NEOVARCH_VERSION    desktop release tag (e.g. v1.4.8). Default: latest.
 #   NEOVARCH_REF        git ref of this repo to take the core from. Default:
-#                       NEOVARCH_VERSION when set, else v1.4.7.
+#                       NEOVARCH_VERSION when set, else v1.4.8.
 #   NEOVARCH_CORE_SRC   local checkout of this repo (or its core/ dir) to
 #                       install the core from instead of downloading.
 #   NEOVARCH_KEEP_RUNNING  set (to anything) to not close a running desktop app
@@ -44,7 +44,7 @@ ASSET="neovarch-agent-linux-x64.tar.gz"
 EXE="neovarch-agent"
 PY_VERSION="3.14"
 # Core ref used when nothing else is asked for: the tag this installer ships with.
-DEFAULT_CORE_REF="v1.4.7"
+DEFAULT_CORE_REF="v1.4.8"
 
 NEOVARCH_HOME="${NEOVARCH_HOME:-$HOME/.neovarch}"
 CORE_DIR=""            # set after argument parsing (default $NEOVARCH_HOME/neovarch-agent)
@@ -103,8 +103,8 @@ Options:
 
 Environment:
   NEOVARCH_HOME      data home (default ~/.neovarch)
-  NEOVARCH_VERSION   desktop release tag, e.g. v1.4.7 (default: latest)
-  NEOVARCH_REF       git ref for the core (default: NEOVARCH_VERSION or v1.4.7)
+  NEOVARCH_VERSION   desktop release tag, e.g. v1.4.8 (default: latest)
+  NEOVARCH_REF       git ref for the core (default: NEOVARCH_VERSION or v1.4.8)
   NEOVARCH_CORE_SRC  install the core from a local checkout instead
 EOF
 }

@@ -27,6 +27,59 @@ class ChangelogEntry {
 /// Newest first. Keep in step with CHANGELOG.md.
 const changelog = <ChangelogEntry>[
   ChangelogEntry(
+    version: '1.4.8',
+    date: '2026-10-14',
+    summary: 'Codemode (satu program memanggil banyak alat dalam satu panggilan model), Kantor ala Paperclip yang benar-benar bekerja, perintah neovarch update dan cek pembaruan dari GitHub Releases, Pamerkan dengan radar pemakaian nyata, Vault jadi vault Obsidian asli, Tempest v2 dengan web_search tanpa konfigurasi, alat agen yang lebih pintar, Mode Desain, dan chat Android yang lebih rapi.',
+    sections: [
+      ChangelogSection('Penting saat memperbarui', [
+        'Perbarui aplikasi desktop dan aplikasi HP bersamaan.',
+        'Heartbeat Kantor kini aktif secara bawaan begitu perusahaan ada; perusahaan lama yang belum pernah diubah dinyalakan sekali saat upgrade. Bisa dijeda di desktop dan HP.',
+        'Mulai versi ini desktop memeriksa pembaruan dari GitHub Releases; pembaruan berikutnya cukup lewat neovarch update atau tombol Perbarui.',
+      ]),
+      ChangelogSection('Codemode', [
+        'Alat codemode: model menulis satu program Python yang memanggil alat lain (juga paralel) dan hanya mencetak yang penting, jadi satu panggilan model menggantikan banyak.',
+        'Program jalan di proses terpisah yang dijaga (tanpa jaringan dan tanpa proses baru secara bawaan); setiap panggilan alat di dalamnya lewat gerbang yang sama: persetujuan, /rencana, cek sintaks, checkpoint, dan hooks.',
+        'Uji replay 10 tugas: panggilan model −60% dibanding satu alat per panggilan.',
+      ]),
+      ChangelogSection('Kantor ala Paperclip', [
+        'Pegawai tidak lagi diam: heartbeat aktif, CEO mendapat tiket Susun strategi untuk tiap tujuan aktif lalu mengajukan strategi yang disetujui, diminta revisi, atau ditolak dewan.',
+        'Agen bisa minta rekrut (selalu lewat persetujuan), biaya dicatat per panggilan model dan batas anggaran menghentikan heartbeat lalu mengajukan persetujuan anggaran.',
+        'Feed aktivitas live (desktop Aktivitas live, HP Feed), thread tiket berisi komentar + jejak audit + run heartbeat, bagan organisasi bersambung, dan kendali dari HP.',
+      ]),
+      ChangelogSection('Pembaruan', [
+        'Perintah neovarch update dan tombol Perbarui di Pengaturan › Tentang: instalasi git di-fast-forward lalu dependensi dipasang ulang, dengan rollback otomatis bila gagal (neovarch update --rollback).',
+        'Bukan instalasi git: installer resmi dijalankan untuk rilis terbaru; AppImage/.deb membuka halaman rilis.',
+        'Cek pembaruan desktop dari GitHub Releases: Linux (install.sh) Update sekarang lalu mulai ulang, Windows mengunduh dan menjalankan setup.exe; cek senyap paling sering sekali sehari.',
+      ]),
+      ChangelogSection('Pamerkan', [
+        'Kartu Pamerkan mendapat radar dari pemakaian nyata (coding, riset, PPT, browser, otomasi, token) plus grafik bar, donut, dan tren harian/mingguan.',
+        'Widget bisa disembunyikan (pilihan tersimpan), lebih banyak tema, tata letak, dan latar, serta ekspor gambar. Data hanya dari file lokal PC; tanpa data, kartu tampil kosong, bukan angka palsu.',
+      ]),
+      ChangelogSection('Vault Obsidian', [
+        'Vault jadi vault Obsidian asli (Markdown, [[wikilink]], #tag, folder .obsidian) yang tersambung ke proyek dan sesi agen, dengan graf ala Obsidian bergaris tautan.',
+        'Migrasi aman: cadangan zip dulu, catatan lama tidak diubah, memori agen disalin. Perintah neovarch vault init / sync.',
+        'Ekstra opsional seperti Obsidian dipasang otomatis dari sumber resmi saat instalasi, pembaruan, atau sesuai permintaan (dengan persetujuan); graf bawaan tetap jalan tanpa Obsidian.',
+      ]),
+      ChangelogSection('Tempest v2 & alat agen', [
+        'web_search tanpa konfigurasi dan tanpa API key (rantai fallback + cache 10 menit), web_fetch dengan fallback browser headless, alat baca-saja jalan paralel, aturan grounding dan cek angka terhadap sumber.',
+        'edit_file toleran spasi/indentasi dengan multi-edit, alat grep dan glob, shell menyimpan output saat timeout dan bisa jalan di latar (shell_job).',
+        'apply_patch multi-berkas, repo_map, sub-agen baca-saja paralel (task), hooks di ~/.neovarch/hooks.json, mode /rencana, dan file instruksi CLAUDE.md serta ~/.neovarch/AGENTS.md global.',
+        'Mode Desain (/desain): design system di .neovarch/design yang otomatis dipakai agen saat coding UI, cek token, dan skill desain bawaan berlisensi permisif.',
+      ]),
+      ChangelogSection('Chat & HP', [
+        'Satu gelembung per giliran agen dengan timeline live, jawaban akhir di bawah, dan langkah lama dilipat di balik +N langkah.',
+        'Status header selebar penuh (tidak lagi langkah 9/3…) dan mode fokus saat scroll.',
+        'Diagram mermaid/svg live dengan toggle Pratinjau | Kode, offline, plus layar penuh.',
+        'Pemakaian token dengan satu arti untuk semua penyedia dan tampil sebagai grafik (Hari ini | Sesi | Semua, tren 14 hari, per model).',
+        'Mik: strip status dikte, alur izin dan Speech Services, watchdog. Mode ringan selalu bisa dimatikan. Nama model di composer tidak lagi tampil dua kali.',
+        'Profil: token GitHub yang ditolak tidak lagi memunculkan "pasangkan ulang"; HP menampilkan Masuk GitHub lagi di PC.',
+      ]),
+      ChangelogSection('Kualitas', [
+        '9 tes packaging/updater bawaan upstream yang dikarantina dihapus.',
+      ]),
+    ],
+  ),
+  ChangelogEntry(
     version: '1.4.7',
     date: '2026-10-13',
     summary: 'Tailscale jadi jalur utama HP ↔ PC dengan panduan setup, Wi-Fi di PC Linux dan Windows diperbaiki, Tempest jadi otak bawaan dengan prompt ~52% lebih ramping, Stop benar-benar berhenti, beberapa lampiran dalam satu pesan, antrean pesan, monitor token, dan CLI di terminal.',
