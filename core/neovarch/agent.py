@@ -419,6 +419,8 @@ class Agent:
         self._writes_at_verify = -1
         verify_cmd = tempest.detect_verify(self.ctx.cwd, full=tempest.lean(st)) if st else None
         self._reads: dict[tuple, dict] = {}  # lean turns: read_file results still visible in this turn
+        self._auto: dict | None = None        # lean turns: last automatic test run after an edit
+        self._auto_off = not (st and tempest.lean(st) and verify_cmd)
         obs_dir = cfgmod.neovarch_home() / "obs" / str(self.rec.get("id") or "session")
         messages = self.rec["messages"]
         first_new = len(messages)
@@ -432,6 +434,10 @@ class Agent:
                     note = tempest_progress.session_start_note(self._progress)
                     if note:  # a fresh chat continues an unfinished plan instead of redoing it
                         user_msg["wire_tail"] += "\n\n" + note
+            if tempest.lean(st) and not any(m.get("role") == "assistant" for m in messages):
+                snap = tempest.project_snapshot(self.ctx.cwd, verify_cmd)  # first message of a chat only
+                if snap:
+                    user_msg["wire_tail"] += "\n\n" + snap
             for note in self._tempest_notes(st):  # memory reminder / skill offer / skill repair (cache-safe tail)
                 user_msg["wire_tail"] += "\n\n" + note
             if st.get("adaptive_effort") and self._level in ("ultra", "max", "xhigh"):
@@ -674,8 +680,12 @@ class Agent:
                             final_text = comp.text + tempest_lint.leftover_note(diags)
                     if st and self._changed and verify_cmd and not self.interrupted:
                         self.emit("status.update", {"kind": "verify", "text": "Memverifikasi: " + " ".join(verify_cmd)})
-                        ok, out = await self._cancellable(
-                            tempest.killable(tempest.run_verify, verify_cmd, self.ctx.cwd))
+                        reuse = self._auto_reusable(ledger)
+                        if reuse is not None:  # nothing that could change files ran since the automatic run
+                            ok, out = reuse
+                        else:
+                            ok, out = await self._cancellable(
+                                tempest.killable(tempest.run_verify, verify_cmd, self.ctx.cwd))
                         skipped = ok is None  # no test runner on this PC (e.g. pytest not installed)
                         if not ok and not skipped and self._base_red is None and self._ckpt and self._ckpt_base:
                             # Were the tests red already before this turn? Then a failure that was there
@@ -863,6 +873,8 @@ class Agent:
                     halt = budget.record_tool(prep.name, args, result, bool(ledger.tools[-1]["ok"]))
                     if halt and not error_info:
                         error_info = turn_budget.describe(halt, steps=budget.steps, tool=budget.loop_tool)
+                if not error_info and not self._auto_off and not self.interrupted and not self._plan_mode:
+                    await self._auto_verify(comp.tool_calls, verify_cmd, messages, ledger)
                 if error_info:
                     error = error_info["message"]
                     break
@@ -926,6 +938,64 @@ class Agent:
             **({"attachments": sent} if sent else {}),
         })
         return final_text
+
+    # ---- lean turns: automatic test run after an edit ----------------------------------------
+    AUTO_WRITES = ("write_file", "edit_file", "apply_patch")
+    AUTO_SAFE = ("read_file", "grep", "glob", "web_search", "web_fetch", "skill", "plan_update", "update_plan",
+                 "session_search", "repo_map", "memory")
+    AUTO_MAX_S = 30.0  # a suite slower than this is left to the end-of-turn gate only
+
+    async def _auto_verify(self, calls, verify_cmd: list[str], messages: list[dict], ledger) -> None:
+        """Lean turns: after a model message that changed files, run the project's tests and append the result
+        to that message's last write result. The model reads it with the edit and can answer right away instead
+        of spending a model call on running the tests itself."""
+        if not any(c.name in self.AUTO_WRITES for c in calls):
+            return
+        ids = {c.id for c in calls}
+        done = [m for m in messages if m.get("role") == "tool" and m.get("tool_call_id") in ids
+                and m.get("name") in self.AUTO_WRITES
+                and not str(m.get("content") or "").lstrip().lower().startswith(scaffold.FAIL_PREFIX + ("rejected",))]
+        code = False
+        for c in calls:
+            if c.name == "apply_patch":
+                code = True
+            elif c.name in self.AUTO_WRITES:
+                try:
+                    code = code or bool(scaffold.CODE_EXT.search(str(json.loads(c.arguments or "{}").get("path") or "")))
+                except (ValueError, AttributeError):
+                    pass
+        if not done or not code:
+            return  # nothing written, or only docs/data: the end-of-turn gate decides
+        last = done[-1]
+        t0 = time.monotonic()
+        ok, out = await self._cancellable(tempest.killable(tempest.run_verify, verify_cmd, self.ctx.cwd,
+                                                           int(self.AUTO_MAX_S * 2)))
+        took = time.monotonic() - t0
+        if ok is None or (not ok and str(out).startswith("timed out")):
+            self._auto_off = True  # no runner / too slow: the end-of-turn gate stays as it was
+            return
+        if took > self.AUTO_MAX_S:
+            self._auto_off = True  # this run still counts; later edits wait for the end-of-turn gate
+        now_ids = tempest.failing_ids(out) if not ok else set()
+        if not ok and self._base_red is None and self._ckpt and self._ckpt_base:
+            self._base_red, self._base_fail_ids = await self._cancellable(
+                tempest.killable(self._failed_before, verify_cmd))
+        old_ids = (now_ids & self._base_fail_ids) if self._base_red else set()
+        last["content"] = str(last.get("content") or "") + tempest.auto_verify_note(
+            verify_cmd, ok, out, now_ids - old_ids, old_ids)
+        self.store.save(self.rec)
+        ledger.record("shell", {"command": " ".join(verify_cmd), "harness": True},
+                      f"exit code {0 if ok else 1} ({took:.1f}s)\n" + str(out)[-300:])
+        self._auto = {"at": len(ledger.tools), "ok": ok, "out": out}
+
+    def _auto_reusable(self, ledger) -> tuple | None:
+        """The automatic run's verdict, when no tool since then could have changed a file."""
+        auto = getattr(self, "_auto", None)
+        if not auto:
+            return None
+        if any(t["name"] not in self.AUTO_SAFE for t in ledger.tools[auto["at"]:]):
+            return None
+        return auto["ok"], auto["out"]
 
     # ---- lean turns: read cache ------------------------------------------------------------
     def _read_epoch(self) -> tuple:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import ssl
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable
@@ -180,7 +181,7 @@ async def _stream_chat(base_url, api_key, model, messages, tools, on_text, on_re
         if own:
             await sess.close()
     out.tool_calls = [calls[i] for i in sorted(calls)]
-    return out
+    return recover_text_tool_calls(out)
 
 
 def _from_plain(data: dict, on_text) -> Completion:
@@ -195,4 +196,39 @@ def _from_plain(data: dict, on_text) -> Completion:
         out.tool_calls.append(ToolCall(id=tc.get("id") or f"call_{i}", name=fn.get("name", ""), arguments=fn.get("arguments", "")))
     out.finish_reason = choice.get("finish_reason") or ""
     out.usage = data.get("usage") or {}
+    return recover_text_tool_calls(out)
+
+
+# Some gateways serving DeepSeek V4 now and then fail to parse the model's own tool-call markup and pass it
+# through as plain text ("<｜DSML｜tool_calls><｜DSML｜invoke name=...>"). Without recovery the turn ends with
+# that markup as the "answer". The markup is unambiguous, so it is turned back into real tool calls.
+_BAR = "[|\uff5c]"
+_DSML_BLOCK = re.compile(rf"<{_BAR}DSML{_BAR}tool_calls>.*?(?:</{_BAR}DSML{_BAR}tool_calls>|$)", re.S)
+_DSML_INVOKE = re.compile(rf"<{_BAR}DSML{_BAR}invoke\s+name=\"([^\"]+)\"\s*>(.*?)</{_BAR}DSML{_BAR}invoke>", re.S)
+_DSML_PARAM = re.compile(rf"<{_BAR}DSML{_BAR}parameter\s+name=\"([^\"]+)\"(?:\s+string=\"(true|false)\")?\s*>"
+                         rf"(.*?)</{_BAR}DSML{_BAR}parameter>", re.S)
+
+
+def recover_text_tool_calls(out: Completion) -> Completion:
+    """Tool calls that arrived as raw DSML markup in the text -> real tool calls (text keeps the rest)."""
+    if out.tool_calls or "DSML" not in (out.text or ""):
+        return out
+    calls: list[ToolCall] = []
+    for block in _DSML_BLOCK.findall(out.text):
+        for name, body in _DSML_INVOKE.findall(block):
+            args: dict[str, Any] = {}
+            for pname, is_str, raw in _DSML_PARAM.findall(body):
+                if is_str == "false":
+                    try:
+                        args[pname] = json.loads(raw)
+                        continue
+                    except ValueError:
+                        pass
+                args[pname] = raw
+            calls.append(ToolCall(id=f"dsml_{len(calls)}", name=name.strip(), arguments=json.dumps(args)))
+    if calls:
+        out.tool_calls = calls
+        out.text = _DSML_BLOCK.sub("", out.text).strip()
+        if out.finish_reason in ("", "stop"):
+            out.finish_reason = "tool_calls"
     return out

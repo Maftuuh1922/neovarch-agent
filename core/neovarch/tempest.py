@@ -1033,3 +1033,78 @@ def structured_summary(old: list[dict], state: dict, calls: dict) -> str:
     if paths:
         lines.append("## Output yang dipindah (bisa dibaca ulang)\n" + "\n".join(f"- {p}" for p in paths[-20:]))
     return "\n".join(lines)
+
+
+# ------------------------------------------------------- project snapshot ----
+
+PROJECT_MARKERS = (".git", "pyproject.toml", "setup.py", "setup.cfg", "package.json", "Cargo.toml", "go.mod",
+                   "pom.xml", "build.gradle", "build.gradle.kts", "pubspec.yaml", "Makefile", "tests", "test",
+                   "requirements.txt", "conftest.py", "pytest.ini")
+SNAPSHOT_SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+                 "dist", "build", ".next", ".dart_tool", ".idea", ".vscode", "target", ".gradle", ".tox", "coverage"}
+
+
+def project_snapshot(cwd: Path, verify_cmd: list[str] | None = None, max_files: int = 60,
+                     max_scan: int = 600) -> str:
+    """Lean turns: a short file list of a small project (+ its test command) for the first message of a chat.
+
+    Saves the "what is in this repo / how are tests run" exploration step most coding tasks start with.
+    Only for a directory that looks like a project (a marker file/dir) and only when it is small; a big
+    tree gets its top-level entries instead. Empty string when cwd is not a project (e.g. the home folder)."""
+    cwd = Path(cwd)
+    try:
+        if not cwd.is_dir() or not any((cwd / m).exists() for m in PROJECT_MARKERS):
+            return ""
+    except OSError:
+        return ""
+    files: list[str] = []
+    too_many = False
+    for root, dirs, names in os.walk(cwd):
+        dirs[:] = sorted(d for d in dirs if d not in SNAPSHOT_SKIP and not d.startswith("."))
+        rel = Path(root).relative_to(cwd)
+        if len(rel.parts) > 3:
+            dirs[:] = []
+            continue
+        for n in sorted(names):
+            if n.endswith((".pyc", ".pyo")) or n == ".DS_Store":
+                continue
+            files.append(str(rel / n) if rel.parts else n)
+            if len(files) > max_scan:
+                too_many = True
+                break
+        if too_many:
+            break
+    lines = ["# Proyek di cwd (sekilas, tanpa perlu ls/glob)"]
+    if too_many or len(files) > max_files:
+        try:
+            top = sorted((p.name + ("/" if p.is_dir() else "") for p in cwd.iterdir()
+                          if p.name not in SNAPSHOT_SKIP and not p.name.startswith(".")),
+                         key=lambda n: (not n.endswith("/"), n))  # folders first
+        except OSError:
+            return ""
+        lines.append("Isi teratas (proyek besar; pakai glob/grep untuk detail): " + ", ".join(top[:80]))
+    elif files:
+        lines.append("File: " + ", ".join(files))
+    else:
+        return ""
+    if verify_cmd:
+        shown = (["python"] + verify_cmd[1:]) if verify_cmd[1:3] == ["-m", "pytest"] else verify_cmd
+        lines.append("Perintah tes proyek: " + " ".join(shown) + " (dijalankan otomatis setelah edit; hasilnya "
+                     "menempel di hasil alat edit terakhir)")
+    return "\n".join(lines)
+
+
+def auto_verify_note(cmd: list[str], ok: bool | None, out: str, new_ids: set[str], old_ids: set[str]) -> str:
+    """Lean turns: the test result appended to the last write of a model message (no extra model call)."""
+    shown = (["python"] + cmd[1:]) if cmd[1:3] == ["-m", "pytest"] else cmd
+    head = f"\n\n[tes otomatis setelah edit: {' '.join(shown)}] "
+    tail = [l for l in (out or "").strip().splitlines() if l.strip()][-1:] or [""]
+    if ok:
+        return head + "LULUS — " + tail[0][:200]
+    lines = []
+    if new_ids:
+        lines.append("gagal (baru di turn ini): " + ", ".join(sorted(new_ids)[:12]))
+    if old_ids:
+        lines.append("gagal sejak sebelum turn ini: " + ", ".join(sorted(old_ids)[:12]))
+    return head + "GAGAL — " + tail[0][:200] + ("\n" + "\n".join(lines) if lines else "") + "\n" + \
+        failure_summary(out, 24)
