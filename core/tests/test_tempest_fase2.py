@@ -254,8 +254,11 @@ async def test_agent_offers_skill_after_verified_multistep_task(home, tmp_path, 
 
 
 async def test_agent_auto_skill_and_failed_skill_repair_hint(home, tmp_path, monkeypatch):
+    # lean turns leave the skill-repair text out of the retry prompt (it cost extra skill_manage calls
+    # mid-task); this test covers the non-lean prompt, the after-turn repair runs in both.
     _cfg({"harness_mode": "tempest", "tempest_skill_min_steps": 2, "tempest_skill_learn": "auto",
-          "tempest_memory_nudge": False, "tempest_verify_retries": 1, "tempest_checkpoints": False})
+          "tempest_memory_nudge": False, "tempest_verify_retries": 1, "tempest_checkpoints": False,
+          "tempest_lean": False})
     monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "1")  # same-second rewrites below: no stale bytecode
     _pytest_project(tmp_path)
     seen = []

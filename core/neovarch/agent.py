@@ -150,7 +150,7 @@ def persona_prompt(session_id: str | None, office: dict | None, diet: bool = Fal
 
 
 def system_sections(cfg: dict, cwd: Path, query: str = "", persona: str = "",
-                    stable: bool = False, diet: bool = False) -> list[tuple[str, str]]:
+                    stable: bool = False, diet: bool = False, lean: bool = False) -> list[tuple[str, str]]:
     """The system prompt as ordered (key, text) sections; see :func:`system_prompt`.
 
     Keys: soul, app, method, persona, extra, project, memory, vault, skills, platform, cwd. Tempest cache v2 freezes
@@ -158,7 +158,7 @@ def system_sections(cfg: dict, cwd: Path, query: str = "", persona: str = "",
     compact app text and only the skill names (see tempest_diet.py)."""
     parts: list[tuple[str, str]] = [("soul", cfgmod.soul_text().strip()),
                                     ("app", tempest_diet.APP_COMPACT if diet else APP_KNOWLEDGE),
-                                    ("method", scaffold.WORKING_METHOD)]
+                                    ("method", scaffold.LEAN_METHOD if lean else scaffold.WORKING_METHOD)]
     if persona:
         parts.append(("persona", persona))
     extra = str(cfgmod.get_path(cfg, "agent.system_prompt", "") or "").strip()
@@ -185,7 +185,7 @@ def system_sections(cfg: dict, cwd: Path, query: str = "", persona: str = "",
         parts.append(("vault", "\n\n".join(vault)))
     skills = list_skills()
     if skills:
-        parts.append(("skills", tempest_diet.skills_names(skills) if diet else skills_index(skills)))
+        parts.append(("skills", tempest_diet.skills_names(skills, lean) if diet else skills_index(skills)))
         if query and not stable:  # Tempest moves the per-message hint to prompt_tail
             hint = _skill_hint(query, skills)
             if hint:
@@ -207,13 +207,13 @@ def join_sections(sections) -> str:
 
 
 def system_prompt(cfg: dict, cwd: Path, query: str = "", persona: str = "", stable: bool = False,
-                  diet: bool = False) -> str:
+                  diet: bool = False, lean: bool = False) -> str:
     """The system prompt. ``stable`` (Tempest) leaves out what changes per message or minute
     (vault notes matched to this message, the clock); those go to :func:`prompt_tail`."""
-    return join_sections(system_sections(cfg, cwd, query, persona, stable, diet))
+    return join_sections(system_sections(cfg, cwd, query, persona, stable, diet, lean))
 
 
-def prompt_tail(cfg: dict, query: str, cwd: Path | str | None = None) -> str:
+def prompt_tail(cfg: dict, query: str, cwd: Path | str | None = None, lean: bool = False) -> str:
     """Tempest: the dynamic context for one user message (clock + vault notes matched to it)."""
     out = [f"# Konteks saat ini\nDate: {now_text(cfg)}"]
     try:
@@ -223,7 +223,7 @@ def prompt_tail(cfg: dict, query: str, cwd: Path | str | None = None) -> str:
     except Exception:  # retrieval must never break a turn
         notes = []
     try:
-        hint = _skill_hint(query, list_skills()) if query else ""
+        hint = _skill_hint(query, list_skills(), lean) if query else ""
     except Exception:
         hint = ""
     if hint:
@@ -270,9 +270,9 @@ def _design_prompt(cwd: Path) -> str:
         return ""
 
 
-def _skill_hint(query: str, skills: list[dict]) -> str:
+def _skill_hint(query: str, skills: list[dict], lean: bool = False) -> str:
     from neovarch import skillpack
-    return skillpack.hint_block(query, skills)
+    return skillpack.hint_block(query, skills, lean)
 
 
 def skills_index(skills: list[dict]) -> str:
@@ -417,14 +417,15 @@ class Agent:
         self._base_red = None   # tests already red at turn start? (None = not checked yet)
         self._base_fail_ids: set[str] = set()
         self._writes_at_verify = -1
-        verify_cmd = tempest.detect_verify(self.ctx.cwd) if st else None
+        verify_cmd = tempest.detect_verify(self.ctx.cwd, full=tempest.lean(st)) if st else None
+        self._reads: dict[tuple, dict] = {}  # lean turns: read_file results still visible in this turn
         obs_dir = cfgmod.neovarch_home() / "obs" / str(self.rec.get("id") or "session")
         messages = self.rec["messages"]
         first_new = len(messages)
         user_msg: dict[str, Any] = {"role": "user", "content": user_text, "ts": time.time()}
         self._progress = None
         if st:
-            user_msg["wire_tail"] = prompt_tail(cfg, user_text, self.ctx.cwd)
+            user_msg["wire_tail"] = prompt_tail(cfg, user_text, self.ctx.cwd, tempest.lean(st))
             if st.get("progress"):
                 self._progress = tempest_progress.Progress(self.ctx.cwd, cfgmod.neovarch_home())
                 if not any(m.get("role") == "assistant" for m in messages):
@@ -504,7 +505,7 @@ class Agent:
             # Cache layout v2: the system prompt is frozen for the session; a later change
             # rides on this user message as an appended note (the prefix never changes).
             sections = [[k, v] for k, v in system_sections(cfg, self.ctx.cwd, user_text, persona, stable=True,
-                                                           diet=tempest_diet.enabled(st))]
+                                                           diet=tempest_diet.enabled(st), lean=tempest.lean(st))]
             prefix = self.rec.get("tempest_prefix")
             tail_extra = []
             if not prefix or not prefix.get("frozen"):
@@ -529,7 +530,7 @@ class Agent:
             if kantor:
                 persona += "\n\n" + kantor
             sys_prompt = system_prompt(cfg, self.ctx.cwd, user_text, persona, stable=bool(st),
-                                       diet=tempest_diet.enabled(st))
+                                       diet=tempest_diet.enabled(st), lean=tempest.lean(st))
         window = int(cfgmod.get_path(cfg, "model.context_length", 128000) or 128000)
         breakpoints = tempest.wants_breakpoints(st, endpoint)
         lint_prefix = bool(st and st.get("cache_v2") and not st.get("mask"))
@@ -684,6 +685,15 @@ class Agent:
                                 tempest.killable(self._failed_before, verify_cmd))
                         pre_existing = bool(not ok and not skipped and self._base_red
                                             and tempest.same_failure(tempest.failing_ids(out), self._base_fail_ids))
+                        lean_turn = tempest.lean(st)
+                        now_ids = tempest.failing_ids(out) if (not ok and not skipped) else set()
+                        old_ids = (now_ids & self._base_fail_ids) if self._base_red else set()
+                        new_ids = now_ids - old_ids
+                        if lean_turn and not ok and not skipped and self._base_red and now_ids:
+                            # Full run (no -x): only failures that were not there at the turn start count as this
+                            # turn's doing. Old failures alone cost no extra model call, unless the answer claims
+                            # that every test passes.
+                            pre_existing = not new_ids
                         harness_verified = bool(ok) and not skipped
                         if harness_verified and self._ckpt:
                             await asyncio.to_thread(self._ckpt_mark, "akhir turn: verifikasi lulus", "green")
@@ -697,15 +707,23 @@ class Agent:
                             summary = tempest.failure_summary(out)
                             writes = sum(1 for t in ledger.tools if t["name"] in ("write_file", "edit_file") and t["ok"])
                             stale = pre_existing and writes == self._writes_at_verify  # nothing changed since
+                            if lean_turn and pre_existing and not tempest.claims_all_green(final_text) \
+                                    and tempest.mentions_failures(final_text, now_ids):
+                                stale = True  # old failures only, and the answer already says so: no retry
                             if verify_attempts < st["verify_retries"] and not stale:
                                 verify_attempts += 1
                                 self._writes_at_verify = writes
-                                used = tempest_skills.skills_read(ledger.tools)
+                                if lean_turn:
+                                    content = tempest.lean_verify_prompt(verify_cmd, summary, verify_attempts,
+                                                                         st["verify_retries"], new_ids, old_ids)
+                                else:
+                                    used = tempest_skills.skills_read(ledger.tools)
+                                    content = (tempest.verify_prompt(verify_cmd, summary, verify_attempts,
+                                                                     st["verify_retries"])
+                                               + (tempest.PRE_EXISTING_PROMPT if pre_existing else "")
+                                               + ("\n\n" + tempest_skills.repair_text(used, "") if used else ""))
                                 messages.append({"role": "user", "kind": "verify", "ts": time.time(),
-                                                 "content": tempest.verify_prompt(verify_cmd, summary, verify_attempts,
-                                                                                st["verify_retries"])
-                                                 + (tempest.PRE_EXISTING_PROMPT if pre_existing else "")
-                                                 + ("\n\n" + tempest_skills.repair_text(used, "") if used else "")})
+                                                 "content": content})
                                 self.store.save(self.rec)
                                 continue
                         if not ok and not skipped and pre_existing:
@@ -801,6 +819,11 @@ class Agent:
                     elif st and st.get("memory_dedup") and prep.name in tempest_memory.MEMORY_TOOLS \
                             and tempest_memory.guard_write(prep.name, args, cfgmod.neovarch_home() / "memory")[1]:
                         result = tempest_memory.guard_write(prep.name, args, cfgmod.neovarch_home() / "memory")[1]
+                    elif st and prep.name == "read_file" and self._read_hit(st, args) is not None:
+                        result = self._read_hit(st, args)  # lean: unchanged file already in context
+                        fut = prefetched.pop(call.id, None)
+                        if fut is not None:
+                            fut.cancel()
                     elif st and prep.name in ("write_file", "edit_file"):
                         result = await self._checked_write(prep.name, args)
                     else:
@@ -816,6 +839,8 @@ class Agent:
                         if st and prep.name in tempest_memory.MEMORY_TOOLS and str(args.get("action")) in (
                                 "append", "write", "replace") and not str(result).startswith(("error", "denied")):
                             tempest_memory.note_memory_write(self.rec)
+                    if st and prep.name == "read_file":
+                        result = self._read_seen(st, args, result)
                     if st and prep.name in tempest_ground.WEB_TOOLS and not str(result).startswith(("error", "tidak ditemukan")):
                         self._web_texts.append(str(result))
                     if st:
@@ -901,6 +926,64 @@ class Agent:
             **({"attachments": sent} if sent else {}),
         })
         return final_text
+
+    # ---- lean turns: read cache ------------------------------------------------------------
+    def _read_epoch(self) -> tuple:
+        state = self.rec.get("tempest_compact") or {}
+        return (len(state.get("masked") or {}), int(state.get("summary_upto") or 0))
+
+    def _read_key(self, args: dict) -> tuple | None:
+        try:
+            path = self._resolve_path(str(args.get("path") or ""))
+            return (str(path), int(args.get("offset") or 1), int(args.get("limit") or 2000))
+        except (TypeError, ValueError, OSError):
+            return None
+
+    def _read_hit(self, st: dict, args: dict) -> str | None:
+        """Lean turns: a read_file of a file whose read result from this turn is still on the wire and
+        that has not changed since -> a one-line pointer instead of the same text again."""
+        if not tempest.lean(st) or st.get("mask_mode") == "turn":
+            return None  # per-turn masking hides old results, so the earlier copy may be gone
+        key = self._read_key(args)
+        seen = (getattr(self, "_reads", None) or {}).get(key) if key else None
+        if not seen or seen["epoch"] != self._read_epoch():
+            return None
+        try:
+            stat = Path(key[0]).stat()
+        except OSError:
+            return None
+        if (stat.st_mtime_ns, stat.st_size) != seen["stat"]:
+            return None
+        return (f"(tidak dibaca ulang: {key[0]} belum berubah sejak read_file sebelumnya di turn ini; isinya masih "
+                "ada di atas. Untuk bagian lain pakai offset/limit, atau grep.)")
+
+    def _read_seen(self, st: dict, args: dict, result: str) -> str:
+        """Remember a read; a re-read of a file that changed since gets only the diff when that is much shorter."""
+        if not tempest.lean(st) or st.get("mask_mode") == "turn" or str(result).startswith(("error", "(tidak dibaca")):
+            return result
+        key = self._read_key(args)
+        if key is None:
+            return result
+        reads = getattr(self, "_reads", None)
+        if reads is None:
+            reads = self._reads = {}
+        try:
+            path = Path(key[0])
+            stat = path.stat()
+            text = path.read_text(encoding="utf-8") if path.is_file() and stat.st_size <= 400_000 else None
+        except (OSError, UnicodeDecodeError):
+            return result
+        prev = reads.get(key)
+        reads[key] = {"stat": (stat.st_mtime_ns, stat.st_size), "epoch": self._read_epoch(), "text": text}
+        if prev and prev["epoch"] == self._read_epoch() and prev.get("text") is not None and text is not None \
+                and key[1] == 1:
+            import difflib
+            diff = "\n".join(difflib.unified_diff(prev["text"].splitlines(), text.splitlines(),
+                                                  "sebelumnya", "sekarang", n=2, lineterm=""))
+            if diff and len(diff) < 0.5 * len(result):
+                return (f"(file berubah sejak read_file sebelumnya di turn ini; hanya perubahannya, unified diff, "
+                        f"nomor baris di header @@:)\n{diff}")
+        return result
 
     def _vault_record(self, cfg: dict, files_changed: list[str]) -> None:
         """Keep this chat, its project and the files it changed as linked notes in the Obsidian

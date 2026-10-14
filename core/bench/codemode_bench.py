@@ -105,6 +105,8 @@ async def _run(task_id: str, arm: str) -> dict:
     cfg["approvals"] = {"mode": "off"}
     cfg.setdefault("agent", {}).update({"harness_mode": "tempest", "tempest_codemode": arm == "codemode",
                                         "tempest_skill_learn": "off", "tempest_memory_nudge": False})
+    if os.environ.get("CMB_LEAN") in ("0", "1"):  # A/B of Tempest lean turns (agent.tempest_lean)
+        cfg["agent"]["tempest_lean"] = os.environ["CMB_LEAN"] == "1"
     cfgmod.save_config(cfg)
 
     script = [[ToolCall(id=f"c{i}_{j}", name=n, arguments=json.dumps(a)) for j, (n, a) in enumerate(step)]
