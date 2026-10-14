@@ -344,6 +344,8 @@ class _FeedLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     final office = showOffice && data.officeShot != null;
     final stats = showStats && !data.stats.isEmpty;
+    // the radar takes the contribution strip's place on the small 1:1 card
+    final radar = showRadar && data.radar != null && !data.radar!.isEmpty;
     final side = stats
         ? _StatsGrid(stats: data.stats, c: c, columns: data.stats.tileCount > 4 ? 3 : 2, compact: true)
         : (data.heatmap != null ? BragHeat(heatmap: data.heatmap!, c: c, height: 64) : const SizedBox.shrink());
@@ -356,9 +358,9 @@ class _FeedLayout extends StatelessWidget {
       const SizedBox(height: 10),
       if (office)
         _OfficeShot(data: data, c: c, height: 84)
-      else if (stats && data.heatmap != null)
+      else if (stats && data.heatmap != null && !radar)
         BragHeat(heatmap: data.heatmap!, c: c, height: 48),
-      if (showRadar && data.radar != null && !data.radar!.isEmpty)
+      if (radar)
         Expanded(child: Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: BragRadarChart(radar: data.radar!, c: c)))
       else
         const Spacer(),
