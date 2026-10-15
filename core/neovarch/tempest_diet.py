@@ -187,8 +187,12 @@ def resolve(args: dict, deferred: dict[str, dict]) -> tuple[str | None, str | No
     return name, json.dumps(_parse_args(args.get("arguments")), ensure_ascii=False), None
 
 
-def skills_names(skills: list[dict]) -> str:
+def skills_names(skills: list[dict], lean: bool = False) -> str:
     names = ", ".join(s["name"] for s in skills)
+    if lean:
+        return ("# Skills\nSkill terpasang: " + names + ".\n"
+                "Skill berisi prosedur untuk pekerjaan khusus; baca dengan alat `skill` (name) bila tugas butuh "
+                "prosedur itu. `skill` tanpa name menampilkan deskripsi semua skill.")
     return ("# Skills\nSkill terpasang: " + names + ".\n"
             "Saat tugas cocok dengan sebuah skill, panggil alat `skill` dengan `name`-nya SEBELUM mulai, lalu ikuti. "
             "Skill yang cocok untuk pesan ini disebut di akhir pesan pengguna; `skill` tanpa name menampilkan "

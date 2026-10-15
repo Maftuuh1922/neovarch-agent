@@ -118,6 +118,52 @@ def tests_pass(repo: Path, target: str = "tests") -> bool:
     return r.returncode == 0
 
 
+# Failures the fresh ``shop`` repo already has (tax truncates, take() off-by-one). A task that does not
+# ask to fix them must not be failed for leaving them alone.
+PRE_EXISTING_FAILURES = {"tests/test_tax.py::test_add_tax_rounds", "tests/test_inventory.py::test_take_too_many"}
+
+
+def pytest_outcomes(repo: Path, target: str = "tests", extra: str = "") -> dict[str, str]:
+    """test id -> PASSED / FAILED / ERROR, from ``pytest -rA``."""
+    r = subprocess.run(f"{PYTEST} -rA {extra} {target}", shell=True, cwd=repo, capture_output=True, text=True,
+                       timeout=120)
+    out: dict[str, str] = {}
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] in ("PASSED", "FAILED", "ERROR"):
+            out[parts[1]] = parts[0]
+    return out
+
+
+def _check_low_stock_test(repo: Path, final: str) -> bool:
+    """A test exercising Inventory.low() with its default limit was added (any file under tests/), it passes,
+    and the rest of the suite has no failure beyond the ones the repo started with."""
+    calls_default = any(".low()" in f.read_text(encoding="utf-8", errors="replace")
+                        for f in (repo / "tests").rglob("test_*.py"))
+    if not calls_default:
+        return False
+    low = pytest_outcomes(repo, "tests", "-k low")
+    if not low or any(v != "PASSED" for v in low.values()):
+        return False
+    failed = {k for k, v in pytest_outcomes(repo).items() if v != "PASSED"}
+    return failed <= PRE_EXISTING_FAILURES
+
+
+def _check_config_usage(repo: Path, final: str) -> bool:
+    """Every constant named with where it is used, and CURRENCY reported as unused, in any wording/format."""
+    import re
+    text = final or ""
+    low = text.lower()
+    unused = (r"\b(tidak|belum|tak|gak|nggak|not|never|no)\b[^.\n|]{0,30}?"
+              r"(pakai|guna|import|impor|dirujuk|referen|ditemukan|used|found)|\bunused\b")
+    # the sentence/line/table row that talks about CURRENCY must say it is unused
+    chunks = [c for c in re.split(r"\n|(?<=[.;])\s", text) if "CURRENCY" in c]
+    currency_unused = any(re.search(unused, c.lower()) for c in chunks)
+    users = all(f in low for f in ("tax.py", "cart.py", "pricing.py"))
+    named = all(n in text for n in ("TAX_RATE", "MAX_ITEMS", "DISCOUNT_CODES", "CURRENCY"))
+    return currency_unused and users and named
+
+
 Call = tuple[str, dict]
 
 
@@ -290,7 +336,7 @@ for n, r in zip(names, res):
 """)],
         final="TAX_RATE -> shop/tax.py; CURRENCY -> tidak dipakai; MAX_ITEMS -> shop/cart.py; DISCOUNT_CODES -> "
               "shop/pricing.py.",
-        check=lambda repo, final: "CURRENCY -> tidak dipakai" in final and "shop/tax.py" in final,
+        check=_check_config_usage,
     ),
     Task(
         id="add-feature-low-stock-test",
@@ -315,7 +361,7 @@ def test_low_default():
 print(tools.shell(command={PYTEST!r} + ' tests/test_low.py').strip().splitlines()[-1])
 """)],
         final="tests/test_low.py ditambahkan (stok 2 masuk daftar low, 9 tidak); tes hijau.",
-        check=lambda repo, final: (repo / "tests/test_low.py").exists() and tests_pass(repo, "tests/test_low.py"),
+        check=_check_low_stock_test,
     ),
     Task(
         id="qna-failing-tests", kind="qna",

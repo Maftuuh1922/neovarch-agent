@@ -121,12 +121,21 @@ def match(text: str, skills: list[dict[str, Any]] | None = None, limit: int = 3)
     return scored[:limit]
 
 
-def hint_block(text: str, skills: list[dict[str, Any]]) -> str:
-    """The prompt section that names the matching skills for this message."""
+def hint_block(text: str, skills: list[dict[str, Any]], lean: bool = False) -> str:
+    """The prompt section that names the matching skills for this message.
+
+    ``lean`` (Tempest lean turns): the skills are offered, not ordered. A keyword match ("tes", "bug")
+    used to cost every small coding task one extra model call to read a long process skill."""
     hits = match(text, skills)
     if not hits:
         return ""
     lines = [f"- `{h['name']}` ({h['label']}) - cocok karena: {h['reason']}" for h in hits]
+    if lean:
+        return ("# Skill terkait (opsional) / Related skills (optional)\n"
+                "Baca dengan alat `skill` hanya bila tugas ini butuh prosedur khusus yang belum jelas bagimu "
+                "(mis. desain, dokumen, riset, rilis). Perbaikan kode, rename, menambah tes atau pertanyaan "
+                "tentang kode: langsung kerjakan. / Read one only if the task needs a procedure you lack.\n"
+                + "\n".join(lines))
     return ("# Skill yang cocok untuk pesan ini / Skills matching this message\n"
             "Sebelum mengerjakan, panggil alat `skill` dengan `name` skill yang paling cocok di bawah, baca isinya, "
             "lalu ikuti langkahnya. Jika ternyata tidak relevan, abaikan.\n"

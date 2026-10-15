@@ -83,6 +83,18 @@ Prompt diet (``tempest_prompt_diet``):
    descriptions to the per-message skill hint and the ``skill`` tool; only core tool schemas are sent
    and the rest sit behind one ``extra_tool`` (describe -> schema as a tool result, run -> unwrapped
    into the real tool). The tools array stays byte-stable per session (tempest_diet.py).
+
+Lean turns (``tempest_lean``, default on) - the same work in fewer model calls:
+
+16. a working method that asks for big batched steps (all independent reads / edits of a step in one
+   response, plan_update only for long tasks and never alone, no re-reads, verify once then answer,
+   exact answer format), and matching skills offered instead of ordered (``skillpack.hint_block``);
+17. read cache - a read_file of an unchanged file whose earlier result is still on the wire returns a
+   one-line pointer; a re-read after a change returns only the unified diff when that is much shorter;
+18. zero-turn gate for old failures - the verify gate runs the full suite (no ``-x``), so failures that
+   were already there at the turn start are told apart from new ones; old failures that the answer
+   already names cost no retry, the retry prompt names new vs old failures and asks for a batched fix
+   instead of a written reflection, and it no longer asks for a skill patch mid-task.
 """
 
 from __future__ import annotations
@@ -143,6 +155,8 @@ FEATURE_DEFAULTS: dict[str, Any] = {
     "ground_check": True,          # numbers in a web answer must appear in the fetched text (tempest_ground.py)
     # Codemode: one sandboxed Python program calls many tools in one model call (codemode.py)
     "codemode": True,              # bench/codemode_bench.py: fewer model calls + tokens on the fixed task set
+    # Lean turns: fewer model calls per task (batching method, read cache, zero-turn gates for old failures)
+    "lean": True,
 }
 
 HEAD_LINES = 30
@@ -468,15 +482,25 @@ def pytest_available(python: str) -> bool:
     return _PYTEST_OK[python]
 
 
-def detect_verify(cwd: Path) -> list[str] | None:
-    """A test command for the project at cwd, or None."""
+def lean(st: dict | None) -> bool:
+    """Tempest lean turns on (``agent.tempest_lean``, default on inside Tempest)?"""
+    return bool(st and st.get("lean"))
+
+
+def detect_verify(cwd: Path, full: bool = False) -> list[str] | None:
+    """A test command for the project at cwd, or None.
+
+    ``full`` (lean turns) runs the whole pytest suite instead of stopping at the first failure, so the
+    gate can tell failures this turn caused from ones that were already there (with ``-x`` the first
+    failure hides the rest, and fixing one old bug made the next old one look new)."""
     cwd = Path(cwd)
+    stop = [] if full else ["-x"]
     if (cwd / "pytest.ini").exists() or (cwd / "tests").is_dir() or (cwd / "conftest.py").exists() \
             or any(cwd.glob("test_*.py")):
-        return [_python(), "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider"]
+        return [_python(), "-m", "pytest", "-q", *stop, "-p", "no:cacheprovider"]
     pyproject = cwd / "pyproject.toml"
     if pyproject.exists() and "pytest" in pyproject.read_text(encoding="utf-8", errors="replace"):
-        return [_python(), "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider"]
+        return [_python(), "-m", "pytest", "-q", *stop, "-p", "no:cacheprovider"]
     pkg = cwd / "package.json"
     if pkg.exists():
         try:
@@ -624,6 +648,42 @@ def verify_prompt(cmd: list[str], summary: str, attempt: int, retries: int) -> s
             f"Perintah: {' '.join(cmd)}\n{summary}\n\n"
             "Sebelum menjawab selesai: tulis refleksi singkat (maks 5 baris: penyebab, apa yang dicoba beda), "
             "lalu perbaiki dan pastikan tesnya lulus.")
+
+
+def lean_verify_prompt(cmd: list[str], summary: str, attempt: int, retries: int, new_ids: set[str],
+                       old_ids: set[str]) -> str:
+    """Lean turns: name the failures this turn caused, ask for the fix in one batched step (no essay)."""
+    head = f"[verifikasi otomatis gagal — percobaan {attempt}/{retries}]\nPerintah: {' '.join(cmd)}\n"
+    if new_ids:
+        head += "Gagal karena perubahan di turn ini: " + ", ".join(sorted(new_ids)[:12]) + "\n"
+    if old_ids:
+        head += "Sudah gagal sebelum turn ini (abaikan kecuali memang diminta): " + ", ".join(sorted(old_ids)[:12]) + "\n"
+    if old_ids and not new_ids:  # only failures from before the turn: fix if asked, else just say so
+        return head + summary + PRE_EXISTING_PROMPT
+    return (head + summary + "\n\nPerbaiki langsung (tanpa refleksi panjang): semua edit yang dibutuhkan dalam satu "
+            "respons, lalu jalankan tes yang gagal itu. Hijau = jawab singkat.")
+
+
+def mentions_failures(text: str, ids: set[str]) -> bool:
+    """The answer tells the user that tests still fail (names one of them, or says some fail)."""
+    text = text or ""
+    names = {i.split("::")[-1].split("[")[0] for i in ids} | {i.split("::")[0].rsplit("/", 1)[-1] for i in ids}
+    if any(n and n in text for n in names):
+        return True
+    return bool(_STILL_RED.search(text))
+
+
+_STILL_RED = re.compile(r"\b(masih|sudah|tetap)\s+(gagal|merah)|\bgagal\s+sebelum|\bpre-?existing\b|\bstill\s+fail"
+                        r"|\balready\s+fail", re.IGNORECASE)
+
+
+def claims_all_green(text: str) -> bool:
+    """The answer says every test passes ("semua tes lulus", "all tests pass", "tes hijau")."""
+    return bool(_ALL_GREEN.search(text or ""))
+
+
+_ALL_GREEN = re.compile(r"(semua|seluruh)\s+tes\w*\s+(sudah\s+|kini\s+|sekarang\s+)?(lulus|hijau|pass)"
+                        r"|\ball\s+(the\s+)?tests\s+(now\s+)?pass|\btests?\s+(are\s+)?(all\s+)?green\b", re.IGNORECASE)
 
 
 def escalation_note(cmd: list[str], summary: str, retries: int) -> str:
@@ -973,3 +1033,78 @@ def structured_summary(old: list[dict], state: dict, calls: dict) -> str:
     if paths:
         lines.append("## Output yang dipindah (bisa dibaca ulang)\n" + "\n".join(f"- {p}" for p in paths[-20:]))
     return "\n".join(lines)
+
+
+# ------------------------------------------------------- project snapshot ----
+
+PROJECT_MARKERS = (".git", "pyproject.toml", "setup.py", "setup.cfg", "package.json", "Cargo.toml", "go.mod",
+                   "pom.xml", "build.gradle", "build.gradle.kts", "pubspec.yaml", "Makefile", "tests", "test",
+                   "requirements.txt", "conftest.py", "pytest.ini")
+SNAPSHOT_SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+                 "dist", "build", ".next", ".dart_tool", ".idea", ".vscode", "target", ".gradle", ".tox", "coverage"}
+
+
+def project_snapshot(cwd: Path, verify_cmd: list[str] | None = None, max_files: int = 60,
+                     max_scan: int = 600) -> str:
+    """Lean turns: a short file list of a small project (+ its test command) for the first message of a chat.
+
+    Saves the "what is in this repo / how are tests run" exploration step most coding tasks start with.
+    Only for a directory that looks like a project (a marker file/dir) and only when it is small; a big
+    tree gets its top-level entries instead. Empty string when cwd is not a project (e.g. the home folder)."""
+    cwd = Path(cwd)
+    try:
+        if not cwd.is_dir() or not any((cwd / m).exists() for m in PROJECT_MARKERS):
+            return ""
+    except OSError:
+        return ""
+    files: list[str] = []
+    too_many = False
+    for root, dirs, names in os.walk(cwd):
+        dirs[:] = sorted(d for d in dirs if d not in SNAPSHOT_SKIP and not d.startswith("."))
+        rel = Path(root).relative_to(cwd)
+        if len(rel.parts) > 3:
+            dirs[:] = []
+            continue
+        for n in sorted(names):
+            if n.endswith((".pyc", ".pyo")) or n == ".DS_Store":
+                continue
+            files.append(str(rel / n) if rel.parts else n)
+            if len(files) > max_scan:
+                too_many = True
+                break
+        if too_many:
+            break
+    lines = ["# Proyek di cwd (sekilas, tanpa perlu ls/glob)"]
+    if too_many or len(files) > max_files:
+        try:
+            top = sorted((p.name + ("/" if p.is_dir() else "") for p in cwd.iterdir()
+                          if p.name not in SNAPSHOT_SKIP and not p.name.startswith(".")),
+                         key=lambda n: (not n.endswith("/"), n))  # folders first
+        except OSError:
+            return ""
+        lines.append("Isi teratas (proyek besar; pakai glob/grep untuk detail): " + ", ".join(top[:80]))
+    elif files:
+        lines.append("File: " + ", ".join(files))
+    else:
+        return ""
+    if verify_cmd:
+        shown = (["python"] + verify_cmd[1:]) if verify_cmd[1:3] == ["-m", "pytest"] else verify_cmd
+        lines.append("Perintah tes proyek: " + " ".join(shown) + " (dijalankan otomatis setelah edit; hasilnya "
+                     "menempel di hasil alat edit terakhir)")
+    return "\n".join(lines)
+
+
+def auto_verify_note(cmd: list[str], ok: bool | None, out: str, new_ids: set[str], old_ids: set[str]) -> str:
+    """Lean turns: the test result appended to the last write of a model message (no extra model call)."""
+    shown = (["python"] + cmd[1:]) if cmd[1:3] == ["-m", "pytest"] else cmd
+    head = f"\n\n[tes otomatis setelah edit: {' '.join(shown)}] "
+    tail = [l for l in (out or "").strip().splitlines() if l.strip()][-1:] or [""]
+    if ok:
+        return head + "LULUS — " + tail[0][:200]
+    lines = []
+    if new_ids:
+        lines.append("gagal (baru di turn ini): " + ", ".join(sorted(new_ids)[:12]))
+    if old_ids:
+        lines.append("gagal sejak sebelum turn ini: " + ", ".join(sorted(old_ids)[:12]))
+    return head + "GAGAL — " + tail[0][:200] + ("\n" + "\n".join(lines) if lines else "") + "\n" + \
+        failure_summary(out, 24)
