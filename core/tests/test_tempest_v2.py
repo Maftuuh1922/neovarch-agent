@@ -248,12 +248,14 @@ async def test_agent_adapts_effort_per_step(home, tmp_path, monkeypatch):
 # ------------------------------------------------------------ parallel reads -----
 
 async def test_read_only_calls_of_one_message_run_in_parallel(home, tmp_path, monkeypatch):
-    state = {"now": 0, "max": 0}
+    state = {"now": 0, "max": 0, "spans": []}
 
     async def slow_fetch(args, ctx):
         state["now"] += 1
         state["max"] = max(state["max"], state["now"])
+        t_start = time.monotonic()
         await asyncio.sleep(0.2)
+        state["spans"].append((t_start, time.monotonic()))
         state["now"] -= 1
         return f"page {args['url']}"
 
@@ -271,10 +273,13 @@ async def test_read_only_calls_of_one_message_run_in_parallel(home, tmp_path, mo
     store = SessionStore()
     rec = store.create(cwd=str(tmp_path))
     agent = Agent(rec, store, ToolContext(cwd=tmp_path, approve=None), lambda k, p: None)
-    t0 = time.monotonic()
     await agent.run_turn("buka 3 halaman")
-    took = time.monotonic() - t0
-    assert state["max"] == 3 and took < 0.5
+    # Measure the tool window itself, not the whole turn: the turn also pays one-time,
+    # machine-dependent setup (first-run skill-pack install into a fresh home, session
+    # writes), which made a whole-turn wall-clock bound flaky on a loaded CI box.
+    # Three 0.2 s fetches run one after another would need >= 0.6 s.
+    window = max(e for _, e in state["spans"]) - min(s for s, _ in state["spans"])
+    assert state["max"] == 3 and len(state["spans"]) == 3 and window < 0.45
     tool_msgs = [m for m in rec["messages"] if m.get("role") == "tool"]
     assert [m["content"] for m in tool_msgs] == [f"page https://x{i}.id" for i in range(3)]  # order kept
 
