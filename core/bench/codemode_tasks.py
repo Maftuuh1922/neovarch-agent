@@ -154,7 +154,8 @@ def _check_config_usage(repo: Path, final: str) -> bool:
     import re
     text = final or ""
     low = text.lower()
-    unused = r"(tidak|belum|tak|gak|nggak|not|never)\s*(\*|_)*\s*(di)?(pakai|dipakai|digunakan|terpakai|dirujuk|used|referenced)|unused|tidak ada (yang )?(memakai|menggunakan|referensi)"
+    unused = (r"\b(tidak|belum|tak|gak|nggak|not|never|no)\b[^.\n|]{0,30}?"
+              r"(pakai|guna|import|impor|dirujuk|referen|ditemukan|used|found)|\bunused\b")
     # the sentence/line/table row that talks about CURRENCY must say it is unused
     chunks = [c for c in re.split(r"\n|(?<=[.;])\s", text) if "CURRENCY" in c]
     currency_unused = any(re.search(unused, c.lower()) for c in chunks)
