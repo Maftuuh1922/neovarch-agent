@@ -9,6 +9,7 @@
   <a href="https://maftuuh1922.github.io/neorachAgent_lp/docs/">Docs</a> ·
   <a href="https://github.com/Maftuuh1922/neovrach_Agent/releases/latest">Download</a> ·
   <a href="docs/remote-protocol.md">Remote protocol</a> ·
+  <a href="docs/paper/neovarch-agent.pdf">Paper</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 

@@ -1,0 +1,12 @@
+agent,task,kind,model,pass,model_calls,prompt_tokens,completion_tokens,cached_tokens,calls_missing_usage,http_errors,cost_usd,wall_s,error
+hermes,hunt-csv,code,deepseek-v4-flash-0731,True,7,64928,3336,24576,0,0,0.00785,343.94,
+pi,hunt-csv,code,deepseek-v4-flash-0731,True,20,168025,10529,90112,0,0,0.020534,392.29,
+neovarch,hunt-csv,code,deepseek-v4-flash-0731,True,7,56699,5134,12544,0,0,0.007111,173.15,
+codex,hunt-csv,code,deepseek-v4-flash-0731,True,12,139252,8344,92416,0,0,0.016974,404.9,
+hermes,hunt-atomic-place,code,deepseek-v4-flash-0731,True,16,310084,17502,174336,0,0,0.037672,603.21,
+codex,hunt-atomic-place,code,deepseek-v4-flash-0731,False,5,54494,11653,25088,0,0,0.007607,900.05,timeout 900s
+neovarch,hunt-atomic-place,code,deepseek-v4-flash-0731,True,6,58376,15663,29184,0,0,0.008514,628.14,
+pi,hunt-atomic-place,code,deepseek-v4-flash-0731,True,14,176483,18012,88320,0,0,0.022367,428.03,
+hermes,refactor-unify-revenue,code,deepseek-v4-flash-0731,True,15,249977,7572,140544,0,0,0.029618,325.73,
+neovarch,refactor-unify-revenue,code,deepseek-v4-flash-0731,True,11,141884,16363,79360,0,0,0.018198,357.03,
+pi,refactor-unify-revenue,code,deepseek-v4-flash-0731,True,14,168167,9988,90624,1,0,0.020488,416.51,
