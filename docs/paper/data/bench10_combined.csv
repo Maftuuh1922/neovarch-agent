@@ -1,0 +1,6 @@
+arm,pass,runs,model_calls,prompt_tokens,equiv_usd,wall_s,failed
+Neovarch lean (codemode),20,20,62,327051,0.0394,473,-
+Neovarch lean (parallel),20,20,69,350721,0.0423,440,-
+Hermes Agent,20,20,95,677284,0.0804,1322,-
+Codex CLI,18,20,116,1025132,0.1216,905,fix-tax-rounding (g1); fix-tax-rounding (g2)
+Pi,19,20,120,384648,0.0478,994,rename-line-total (g1)
