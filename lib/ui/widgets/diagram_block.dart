@@ -98,6 +98,9 @@ class DiagramBlock extends StatefulWidget {
   @visibleForTesting
   static DiagramPreviewBuilder? debugPreviewBuilder;
 
+  /// A renderer is available: the WebView, or the one tests swapped in.
+  static bool get canPreview => debugPreviewBuilder != null || webViewAvailable;
+
   static bool get webViewAvailable =>
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS) &&

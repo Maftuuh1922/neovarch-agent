@@ -6,7 +6,6 @@
 // "Menggambar…" placeholder while the fence streams, tap for full screen and a
 // menu to view the code, save a PNG to the gallery or share the SVG.
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -63,7 +62,7 @@ class _VisualBlockState extends State<VisualBlock> {
   }
 
   void _check() {
-    if (!widget.streaming && DiagramBlock.debugPreviewBuilder == null && !DiagramBlock.webViewAvailable) {
+    if (!widget.streaming && !DiagramBlock.canPreview) {
       _error = 'pratinjau tidak tersedia di perangkat ini';
     }
   }
