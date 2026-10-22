@@ -24,7 +24,7 @@ EXPECTED = {
     # Mode Desain: nexu-io/open-design + pbakaus/impeccable (Apache-2.0), ui-ux-pro-max + taste-skill (MIT)
     "desain", "ui-ux-pro-max", "taste", "impeccable",
     # original
-    "disiplin-koding", "design-to-code",
+    "disiplin-koding", "design-to-code", "visual-inline",
     "riset-akademik", "tulis-akademik", "review-sejawat", "revisi-akademik", "finalisasi-akademik",
 }
 

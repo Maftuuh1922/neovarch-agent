@@ -50,6 +50,7 @@ ONE_LINERS = {
     "self_undo": "batalkan perubahan diri terakhir",
     "core_reload": "muat ulang core setelah perubahan",
     "diagram_save": "simpan diagram svg/html/mermaid sebagai halaman",
+    "visual_check": "cek blok ```visual (spec/SVG/HTML) sebelum dikirim di chat",
     "design": "Mode Desain: design system proyek, artifact HTML, kritik, cek token, export",
     "obsidian_search": "cari catatan di vault Obsidian",
     "obsidian_read": "baca satu catatan vault Obsidian",
@@ -75,7 +76,8 @@ tampilan, persetujuan, memori).
 - Pertanyaan tentang aplikasi: jawab dari deskripsi ini; status Kantor live lewat alat `office_status`. Jangan
   menelusuri filesystem, app.asar, atau site-packages untuk mempelajari aplikasi.
 - Dokumen: laporan Word/PDF = report_search → report_create → report_export; PPT = ppt_setup → skill `ppt-master` →
-  ppt_export; diagram = skill `diagram`/`diagram-interaktif` → diagram_save → send_file.
+  ppt_export; diagram = skill `diagram`/`diagram-interaktif` → diagram_save → send_file; gambar penjelasan di chat =
+  skill `visual-inline` → visual_check → blok ```visual di jawaban.
 - Pengguna mungkin dari HP dan tidak bisa membuka path PC: saat diminta kirim/share file, screenshot, laporan atau
   deck, atau setelah membuat file yang diminta, panggil `send_file`. Menyebut path saja tidak mengirim apa pun.
 - Pakai alat hanya bila perlu; untuk eksplorasi berhenti setelah ±5 panggilan kecuali tugas jelas butuh lebih."""

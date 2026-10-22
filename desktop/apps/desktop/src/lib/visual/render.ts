@@ -20,6 +20,8 @@ interface Box {
 }
 
 interface Ctx {
+  /** Width (px) the box should fit in, when the host knows it (phone column, chat pane). */
+  avail?: number
   depth: number
   id: string
   markers: Map<string, string>
@@ -892,7 +894,7 @@ function formatValue(value: number, spec: Json): string {
   return `${value < 0 ? '−' : ''}${str(spec.prefix)}${int.replace(/\B(?=(\d{3})+(?!\d))/g, sep)}${fracTrim ? dec + fracTrim : ''}${str(spec.unit)}`
 }
 
-function renderBar(spec: Json): Box {
+function renderBar(spec: Json, ctx: Ctx): Box {
   const items = arr(spec.data ?? spec.bars ?? spec.items).map((item, i) => {
     const o = obj(item)
 
@@ -949,10 +951,13 @@ function renderBar(spec: Json): Box {
     return { body: `<line x1="0" x2="${r(w)}" y1="${r(zeroY)}" y2="${r(zeroY)}" class="nv-axis"/>${parts.join('')}`, h: top + plotH + labelH + 6, w }
   }
 
-  const labelLines = items.map(i => wrapText(i.label, 12.5, 150, 2, i.highlight))
-  const labelW = Math.min(150, Math.max(...labelLines.flat().map(l => textWidth(l, 12.5, true)))) + 4
+  const narrow = ctx.avail !== undefined && ctx.avail < 460
+  const labelMax = narrow ? 104 : 150
+  const labelLines = items.map(i => wrapText(i.label, 12.5, labelMax, 2, i.highlight))
+  const labelW = Math.min(labelMax, Math.max(...labelLines.flat().map(l => textWidth(l, 12.5, true)))) + 4
   const valueW = Math.max(...valueText.map(v => textWidth(v, 12, true))) + 10
-  const plotW = num(spec.width) ?? 300
+  const fitW = ctx.avail !== undefined ? ctx.avail - (labelW + 12) - valueW - 4 : 300
+  const plotW = num(spec.width) ?? Math.max(110, Math.min(300, fitW))
   const negRoom = minV < 0 ? Math.max(...valueText.map(v => textWidth(v, 12))) + 8 : 0
   const x0 = labelW + 12 + negRoom
   const zeroX = x0 + (-minV / span) * plotW
@@ -991,7 +996,7 @@ function renderBar(spec: Json): Box {
 
 // --------------------------------------------------------------- timeline ---
 
-function renderTimeline(spec: Json): Box {
+function renderTimeline(spec: Json, ctx: Ctx): Box {
   const events = arr(spec.events ?? spec.items ?? spec.steps).map(item => {
     const o = typeof item === 'string' ? { label: item } : obj(item)
 
@@ -1009,7 +1014,9 @@ function renderTimeline(spec: Json): Box {
   }
 
   const forced = str(spec.direction ?? spec.orientation).toLowerCase()
-  const horizontal = forced ? /^(horizontal|right|row)$/.test(forced) : events.length <= 5
+  // Mendatar only when every event gets a readable slot in the space we have.
+  const fits = ctx.avail === undefined || events.length * 132 <= ctx.avail
+  const horizontal = forced ? /^(horizontal|right|row)$/.test(forced) : events.length <= 5 && fits
   const parts: string[] = []
 
   const dot = (x: number, y: number, e: (typeof events)[number]) => {
@@ -1054,7 +1061,7 @@ function renderTimeline(spec: Json): Box {
   const dateW = Math.min(120, Math.max(...events.map(e => textWidth(e.date, 12, true)))) + 4
   const axisX = dateW + 18
   const textX = axisX + 18
-  const textW = 320
+  const textW = ctx.avail !== undefined ? Math.max(140, Math.min(320, ctx.avail - textX - 4)) : 320
   const dots: string[] = []
   let y = 8
 
@@ -1091,9 +1098,14 @@ function renderCompare(spec: Json, ctx: Ctx): Box {
     throw new Error('compare: panels is empty')
   }
 
+  const count = Math.min(4, panels.length)
+  const gap = ctx.avail !== undefined && ctx.avail < 520 ? 10 : 16
+  const inset = ctx.avail !== undefined && ctx.avail < 520 ? 12 : 18
+  const innerAvail = ctx.avail !== undefined ? Math.max(140, (ctx.avail - gap * (Math.min(count, 2) - 1)) / Math.min(count, 2) - inset * 2) : undefined
+
   const rendered = panels.slice(0, 4).map(p => {
     const o = obj(p)
-    const box = renderBox(obj(o.visual ?? o.spec), { ...ctx, depth: ctx.depth + 1 })
+    const box = renderBox(obj(o.visual ?? o.spec), { ...ctx, avail: innerAvail, depth: ctx.depth + 1 })
     const verdict = str(o.verdict).toLowerCase()
     const s = Math.min(1, 230 / box.h, 300 / box.w)
 
@@ -1108,16 +1120,22 @@ function renderCompare(spec: Json, ctx: Ctx): Box {
     }
   })
 
-  const perRow = rendered.length === 4 || rendered.reduce((sum, p) => sum + Math.max(p.w, 170) + 64, 0) > 940 ? 2 : rendered.length
-  const gap = 16
-  const inset = 18
+  const minPanel = ctx.avail !== undefined && ctx.avail < 520 ? 150 : 200
+  const rowWidth = (n: number) => rendered.slice(0, n).reduce((sum, p) => sum + Math.max(minPanel, p.w + inset * 2), 0) + gap * (n - 1)
+  const limit = ctx.avail ?? 940
+  let perRow = rendered.length === 4 || rowWidth(rendered.length) > limit ? 2 : rendered.length
+
+  // On a narrow column, stack the panels when side by side would shrink them below ~85% (text under ~10px).
+  if (ctx.avail !== undefined && perRow > 1 && ctx.avail / rowWidth(perRow) < 0.85) {
+    perRow = 1
+  }
   const parts: string[] = []
   let y = 0
   let maxW = 0
 
   for (let start = 0; start < rendered.length; start += perRow) {
     const row = rendered.slice(start, start + perRow)
-    const panelW = Math.max(200, ...row.map(p => p.w + inset * 2))
+    const panelW = Math.max(minPanel, ...row.map(p => p.w + inset * 2))
     const innerH = Math.max(...row.map(p => p.h))
     const titleH = row.some(p => p.title) ? 26 : 0
     // Wrap with the glyph included so the first line's width is right.
@@ -1198,9 +1216,9 @@ function renderBox(spec: Json, ctx: Ctx): Box {
     case 'flow':
       return renderFlow(spec, ctx)
     case 'bar':
-      return renderBar(spec)
+      return renderBar(spec, ctx)
     case 'timeline':
-      return renderTimeline(spec)
+      return renderTimeline(spec, ctx)
     case 'compare':
       return renderCompare(spec, ctx)
     default:
@@ -1232,10 +1250,11 @@ export const SVG_STYLE =
   '.nv-lbg{fill:var(--nv-bg)}' +
   '.nv-panel{fill:var(--nv-panel);stroke:var(--nv-stroke);stroke-width:1}'
 
-export function renderSpec(spec: Json, seed = ''): RenderedSvg {
-  const ctx: Ctx = { depth: 0, id: hashId(seed || JSON.stringify(spec)), markers: new Map() }
-  const box = renderBox(spec, ctx)
+export function renderSpec(spec: Json, seed = '', opts: { width?: number } = {}): RenderedSvg {
   const pad = 8
+  const avail = opts.width && opts.width > 0 ? Math.max(200, opts.width - pad * 2) : undefined
+  const ctx: Ctx = { avail, depth: 0, id: hashId(seed || JSON.stringify(spec)), markers: new Map() }
+  const box = renderBox(spec, ctx)
   const w = Math.ceil(box.w + pad * 2)
   const h = Math.ceil(box.h + pad * 2)
   const label = str(spec.title) || str(spec.type)

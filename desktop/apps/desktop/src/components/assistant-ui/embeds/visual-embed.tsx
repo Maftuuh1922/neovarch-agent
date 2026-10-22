@@ -1,6 +1,6 @@
 'use client'
 
-import { type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useState } from 'react'
 
 import {
   DropdownMenu,
@@ -82,13 +82,13 @@ function useVisualTheme(): VisualTheme {
   }, [dark, epoch])
 }
 
-function useWidth<T extends HTMLElement>(): [RefObject<T | null>, number] {
-  const ref = useRef<T | null>(null)
+// Callback ref, so the observer attaches when the body first mounts, which is
+// after the fence stops streaming, not on the component's first render.
+function useWidth<T extends HTMLElement>(): [(el: T | null) => void, number] {
+  const [el, setEl] = useState<T | null>(null)
   const [width, setWidth] = useState(0)
 
   useEffect(() => {
-    const el = ref.current
-
     if (!el) {
       return
     }
@@ -103,9 +103,9 @@ function useWidth<T extends HTMLElement>(): [RefObject<T | null>, number] {
     ro.observe(el)
 
     return () => ro.disconnect()
-  }, [])
+  }, [el])
 
-  return [ref, width]
+  return [setEl, width]
 }
 
 function fileName(title: string | undefined, ext: string): string {
@@ -174,17 +174,21 @@ export default function VisualRenderer({ code, streaming }: RichFenceProps) {
   const [full, setFull] = useState(false)
   const [notice, setNotice] = useState('')
 
+  // Lay the spec out for the space the card body really has (minus the 14px
+  // side padding of .nv-root). Bucketed so a resize doesn't re-render per pixel.
+  const layoutWidth = width ? Math.max(200, Math.floor((width - 28) / 24) * 24) : 0
+
   const result = useMemo((): { error?: string; visual?: PreparedVisual } => {
     if (streaming) {
       return {}
     }
 
     try {
-      return { visual: prepareVisual(code) }
+      return { visual: prepareVisual(code, layoutWidth ? { width: layoutWidth } : {}) }
     } catch (error) {
       return { error: (error as Error).message || 'error' }
     }
-  }, [code, streaming])
+  }, [code, streaming, layoutWidth])
 
   const visual = result.visual
   const maxInline = typeof window === 'undefined' ? 900 : Math.round(window.innerHeight * 0.7)

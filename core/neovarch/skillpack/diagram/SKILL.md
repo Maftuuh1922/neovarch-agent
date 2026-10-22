@@ -7,6 +7,8 @@ description: Buat diagram rapi (arsitektur, flowchart, sequence, ER, timeline, o
 Gunakan saat pengguna minta diagram, bagan, flowchart, skema, peta alur, arsitektur sistem, ERD, timeline,
 org chart, atau "gambarin alurnya". Use when the user asks for any diagram or chart of a structure or flow.
 
+Untuk penjelasan singkat langsung di obrolan (tanpa file), pakai skill `visual-inline` (blok ```visual).
+
 ## Alur kerja (semua model)
 1. Tentukan jenis diagram yang paling cocok (arsitektur, flowchart, sequence, state, ER, timeline, swimlane,
    pohon/org chart, quadrant, Gantt, Venn, piramida). Jika ragu, tanya satu pertanyaan singkat.

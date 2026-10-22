@@ -64,7 +64,12 @@ function ensureViewBox(markup: string, size: { height: number; width: number }):
   })
 }
 
-export function prepareVisual(code: string): PreparedVisual {
+/**
+ * `width` = the space the card body has (px, without the card padding). Specs use
+ * it to pick a layout that stays readable (timeline vertical on a phone, compare
+ * panels stacked when side by side would be too small, bars that fit).
+ */
+export function prepareVisual(code: string, opts: { width?: number } = {}): PreparedVisual {
   if (code.length > MAX_VISUAL_CHARS) {
     throw new VisualError('too large')
   }
@@ -75,7 +80,7 @@ export function prepareVisual(code: string): PreparedVisual {
     let out
 
     try {
-      out = renderSpec(parsed.spec!, code)
+      out = renderSpec(parsed.spec!, code, { width: opts.width })
     } catch (error) {
       throw new VisualError((error as Error).message)
     }

@@ -10,6 +10,7 @@ folder itself or under `upstream/` next to a Neovarch-written `SKILL.md` wrapper
 | `frontend-ui-engineering` | Rekayasa UI | addyosmani/agent-skills | MIT | Copyright (c) 2025 Addy Osmani |
 | `desain` | Mode Desain | nexu-io/open-design (workflow, `directions.json` adapted from apps/daemon/src/prompts/directions.ts, curated subset of 22 `design-systems/`, 12 `design-templates/`, 9 `craft/` rules; commit f29b1d6) + Neovarch wrapper `SKILL.md` | Apache-2.0 | Copyright the OpenDesign authors (nexu-io/open-design) |
 | `design-to-code` | Desain ke Kode | Neovarch (orisinal) | MIT | Copyright (c) NeovarchLabs |
+| `visual-inline` | Visual Inline | Neovarch (orisinal) | MIT | Copyright (c) NeovarchLabs |
 | `ui-ux-pro-max` | UI/UX Pro Max | nextlevelbuilder/ui-ux-pro-max-skill (`.claude/skills/ui-ux-pro-max`, commit 7246805) | MIT | Copyright (c) 2024 Next Level Builder |
 | `taste` | Taste (anti-template) | Leonxlnx/taste-skill (`skills/taste-skill`, `skills/redesign-skill`, commit d237dd3) | MIT | Copyright (c) 2026 Leonxlnx |
 | `impeccable` | Impeccable (audit UX) | pbakaus/impeccable (`.claude/skills/impeccable` SKILL.md + reference/, commit 245ad82) | Apache-2.0 | Copyright pbakaus/impeccable contributors; see `impeccable/NOTICE.md` |

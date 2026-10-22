@@ -121,7 +121,13 @@
         var t = p.theme || {};
         var vt = { dark: !!t.dark, bg: t.bg, fg: t.fg, muted: t.muted || t.line, stroke: t.stroke || t.line,
           surface: t.surface || t.bg, line: t.line };
-        var v = NeovarchVisual.prepareVisual(String(p.code));
+        // Inline: lay the spec out for the card's real width (timeline turns
+        // vertical, compare panels stack): #out's content box minus
+        // the 2px .nv-root side padding. p.width (if sent) = that content width.
+        // Full screen keeps the wide layout and lets the user pan/zoom.
+        var cs = getComputedStyle(out);
+        var avail = p.full ? 0 : (Number(p.width) || (out.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)) || 0);
+        var v = NeovarchVisual.prepareVisual(String(p.code), avail > 0 ? { width: Math.max(200, avail - 4) } : {});
         window.__nvVisual = { v: v, theme: vt };
         var host = document.createElement('div');
         host.className = 'nv-host';
