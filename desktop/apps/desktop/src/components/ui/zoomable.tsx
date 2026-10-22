@@ -19,6 +19,9 @@ interface ZoomableProps {
   /** Accessible label for the expand affordance. */
   label?: string
   className?: string
+  /** Controlled open state (optional): lets a menu item open the viewer too. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
 /**
@@ -27,8 +30,22 @@ interface ZoomableProps {
  * (see useZoomPan) and optionally copied. Content-agnostic — wrap a diagram,
  * image, or any node.
  */
-export function Zoomable({ children, overlay, onCopy, label = 'Open full view', className }: ZoomableProps) {
-  const [open, setOpen] = useState(false)
+export function Zoomable({
+  children,
+  overlay,
+  onCopy,
+  label = 'Open full view',
+  className,
+  open: openProp,
+  onOpenChange
+}: ZoomableProps) {
+  const [openState, setOpenState] = useState(false)
+  const open = openProp ?? openState
+
+  const setOpen = (next: boolean) => {
+    setOpenState(next)
+    onOpenChange?.(next)
+  }
 
   return (
     <>

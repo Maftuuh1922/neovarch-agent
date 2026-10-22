@@ -1,0 +1,30 @@
+{
+  "type": "compare",
+  "title": "Star vs graf kamu",
+  "caption": "Graf bintang: satu pusat terhubung ke semua simpul lain, dan daun tidak saling terhubung.",
+  "panels": [
+    {
+      "title": "Star",
+      "verdict": "good",
+      "caption": "Star: A terhubung ke semua simpul, daun tidak saling terhubung",
+      "visual": {
+        "type": "graph",
+        "layout": "star",
+        "nodes": [{"id": "A", "highlight": true}, "B", "C", "D", "E"],
+        "edges": [["A", "B"], ["A", "C"], ["A", "D"], ["A", "E"]]
+      }
+    },
+    {
+      "title": "Graf kamu",
+      "verdict": "bad",
+      "caption": "Bukan star: B–C menghubungkan dua daun, E tidak ke A",
+      "visual": {
+        "type": "graph",
+        "layout": "star",
+        "hub": "A",
+        "nodes": [{"id": "A", "highlight": true}, "B", "C", "D", "E"],
+        "edges": [["A", "B"], ["A", "C"], ["A", "D"], {"from": "B", "to": "C", "color": "red"}, {"from": "D", "to": "E", "color": "red"}]
+      }
+    }
+  ]
+}

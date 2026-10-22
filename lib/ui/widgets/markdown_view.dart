@@ -13,6 +13,7 @@ import 'package:highlight/languages/all.dart' show allLanguages;
 import '../../theme/app_theme.dart';
 import '../../remote/ui/glass/liquid_glass.dart' show GlassCode, GlassForeground;
 import 'diagram_block.dart';
+import 'visual_block.dart';
 import 'markdown_table_normalize.dart';
 
 typedef LinkTap = void Function(String url);
@@ -55,6 +56,9 @@ class MarkdownView extends StatelessWidget {
         // the card shows Kode and flips to Pratinjau once it closes; no key,
         // so the same card carries over from streaming to complete.
         final kind = diagramKindFor(b.lang, b.text);
+        if (kind == DiagramKind.visual) {
+          return VisualBlock(code: b.text, scale: scale, streaming: !b.closed);
+        }
         if (kind != null) {
           return DiagramBlock(code: b.text, kind: kind, scale: scale, streaming: !b.closed);
         }

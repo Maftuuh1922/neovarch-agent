@@ -12,10 +12,12 @@ import { esSharedMetrics } from './es_shared_metrics'
 import { introEs } from './intro-es'
 import { nvPamerkanEs } from './nv-pamerkan'
 import { nvPullEs } from './nv-pull'
+import { nvVisualEs } from './nv-visual'
 
 export const esOverrides = {
   nvPamerkan: nvPamerkanEs,
   nvPull: nvPullEs,
+  nvVisual: nvVisualEs,
   sharedMetrics: esSharedMetrics,
   intro: introEs,
   connectors: {

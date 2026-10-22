@@ -1,0 +1,7 @@
+visual.js bundles the Neovarch ```visual renderer (desktop/apps/desktop/src/lib/visual,
+same license as Neovarch Agent) and:
+
+DOMPurify 3.4.13 - https://github.com/cure53/DOMPurify
+Copyright 2025 Dr.-Ing. Mario Heiderich, Cure53
+Licensed under the Apache License 2.0 or the Mozilla Public License 2.0 (dual license);
+Neovarch uses it under the Apache License 2.0: https://www.apache.org/licenses/LICENSE-2.0

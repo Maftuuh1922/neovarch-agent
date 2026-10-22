@@ -197,4 +197,18 @@ const enStrings = <String, String>{
   'Mikrofon sedang dipakai (mis. aplikasi lain atau "Hey Neo"). Coba lagi sebentar lagi.': 'The microphone is in use (another app or "Hey Neo"). Try again in a moment.',
   'Bahasa ini belum tersedia di pengenal suara HP. Tekan lama tombol mik untuk ganti ID/EN.': 'This language is not available in the phone\'s speech recognizer. Long-press the mic to switch ID/EN.',
   'Pengenal suara tidak menjawab. Coba lagi.': 'Speech recognition did not respond. Try again.',
+  // ---- ```visual cards in chat (v1.4.9) -------------------------------------------------
+  'Visual': 'Visual',
+  'Menggambar…': 'Drawing…',
+  'Layar penuh': 'Full screen',
+  'Opsi visual': 'Visual options',
+  'Lihat kode': 'View code',
+  'Lihat gambar': 'View picture',
+  'Simpan PNG': 'Save PNG',
+  'Bagikan SVG': 'Share SVG',
+  'Salin kode': 'Copy code',
+  'Kode disalin': 'Code copied',
+  'Visual gagal digambar — menampilkan kode': 'Could not draw this visual — showing the code',
+  'Gambar gagal disimpan': 'Could not save the image',
+  'Tersimpan di galeri (Pictures/Neovarch)': 'Saved to the gallery (Pictures/Neovarch)',
 };

@@ -3,6 +3,7 @@ import { defineFieldCopy } from '@/app/settings/field-copy'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { nvPamerkanRu } from './nv-pamerkan'
 import { nvPullRu } from './nv-pull'
+import { nvVisualRu } from './nv-visual'
 import { ruAuxTasks } from './ru_aux_tasks'
 import { ruModelMenu } from './ru_model_menu'
 import { ruNotices } from './ru_notices'
@@ -35,6 +36,7 @@ const RU_NOUN = (count: number | string, one: string, few: string, many: string)
 export const ruOverrides = {
   nvPamerkan: nvPamerkanRu,
   nvPull: nvPullRu,
+  nvVisual: nvVisualRu,
   sharedMetrics: ruSharedMetrics,
   sessionImport: {
     title: 'Продолжить из другого приложения',

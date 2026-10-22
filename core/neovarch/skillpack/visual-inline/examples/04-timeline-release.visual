@@ -1,0 +1,11 @@
+{
+  "type": "timeline",
+  "title": "Rencana rilis",
+  "caption": "Titik biru = tonggak berikutnya.",
+  "events": [
+    {"date": "1 Nov", "label": "Beta tertutup", "note": "20 penguji"},
+    {"date": "15 Nov", "label": "Perbaikan bug besar"},
+    {"date": "1 Des", "label": "Rilis publik", "highlight": true, "note": "desktop + HP"},
+    {"date": "Jan", "label": "Fitur tim"}
+  ]
+}

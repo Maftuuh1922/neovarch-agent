@@ -3478,6 +3478,22 @@ export interface Translations extends NoticeTranslations {
     }
   }
 
+  /** ```visual cards in chat: inline vector diagrams the agent draws (embeds/visual-embed.tsx). */
+  nvVisual: {
+    label: string
+    drawing: string
+    fullscreen: string
+    options: string
+    viewCode: string
+    viewPicture: string
+    savePng: string
+    saveSvg: string
+    copyImage: string
+    copyCode: string
+    failed: string
+    saveFailed: string
+  }
+
   /** Settings ▸ Tentang ▸ "Perbarui": git pull update (core/neovarch/pull_update.py) with a release fallback. */
   nvPull: {
     title: string

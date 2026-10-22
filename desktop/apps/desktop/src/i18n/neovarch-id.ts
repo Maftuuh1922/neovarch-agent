@@ -10,10 +10,12 @@
 import type { TranslationOverrides } from './define-locale'
 import { nvPamerkanId } from './nv-pamerkan'
 import { nvPullId } from './nv-pull'
+import { nvVisualId } from './nv-visual'
 
 export const NEOVARCH_ID = {
   "nvPamerkan": nvPamerkanId,
   "nvPull": nvPullId,
+  "nvVisual": nvVisualId,
   "common": {
     "apply": "Terapkan",
     "back": "Kembali",
