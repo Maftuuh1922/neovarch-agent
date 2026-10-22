@@ -46,6 +46,7 @@ from neovarch.store import Kanban, SessionStore, summarize
 from neovarch.office import Office
 from neovarch.company import CompanyError
 from neovarch.company_runtime import CompanyRuntime
+from neovarch.crew import CREW_HTTP, CREW_RPC_CODES, CrewError, CrewRuntime
 from neovarch import uploads as upmod
 from neovarch import msg_queue
 from neovarch import cron as cronmod
@@ -446,6 +447,7 @@ class Gateway:
         self.router = router9.Router9(on_status=lambda st: self.broadcast_event("router.status", None, st),
                                       on_models=lambda _ids: self._models_stale())
         self.company = CompanyRuntime(self)
+        self.crew = CrewRuntime(self)
         from neovarch import sync as syncmod
         # The phone's LAN core and this one share ~/.neovarch/sessions: announce the other's writes too.
         self.session_watch = syncmod.SessionWatcher(
@@ -694,6 +696,12 @@ class Gateway:
                 self.company.observe(kind, sid, payload)
             except Exception:  # cost capture must never break event delivery
                 traceback.print_exc()
+            crew = self.__dict__.get("crew")
+            if crew is not None and kind != "crew.update":
+                try:
+                    crew.observe(kind, sid, payload)
+                except Exception:
+                    traceback.print_exc()
         social = self.__dict__.get("social")
         if social is not None:
             social.observe(kind, sid, payload)
@@ -1091,6 +1099,11 @@ class Gateway:
                 return self.set_agent_model(str(p.get("agent_id") or ""), p.get("model"), p.get("provider"))
             except modelsmod.ModelError as exc:
                 raise RpcError(-32602, str(exc)) from None
+        if method.startswith("crew."):
+            try:
+                return await self.crew.call(method, p)
+            except CrewError as exc:
+                raise RpcError(CREW_RPC_CODES.get(exc.code, -32602), str(exc)) from None
         if method.startswith("company."):
             try:
                 return await self.company.call(method, p)
@@ -1491,6 +1504,7 @@ def build_app(gw: Gateway) -> web.Application:
     async def _stop_cron(_app):
         await gw.scheduler.stop()
         await gw.company.stop()
+        await gw.crew.stop()
         await gw.session_watch.stop()
         await gw.social.stop()
         await gw.router.close()
@@ -2381,6 +2395,23 @@ def build_app(gw: Gateway) -> web.Application:
             return web.json_response({"error": str(exc), "code": exc.code, **exc.data},
                                      status=COMPANY_HTTP.get(exc.code, 400))
 
+    async def crew_get(_):
+        return web.json_response({**(await gw.crew.call("crew.list", {})),
+                                  **(await gw.crew.call("crew.templates", {}))})
+
+    async def crew_post(request):
+        try:
+            body = await request.json() if request.can_read_body else {}
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        try:
+            return web.json_response(await gw.crew.call("crew." + request.match_info["method"],
+                                                        body if isinstance(body, dict) else {}))
+        except CrewError as exc:
+            return web.json_response({"error": str(exc), "code": exc.code}, status=CREW_HTTP.get(exc.code, 400))
+
+    r.add_get("/api/crew", crew_get)
+    r.add_post("/api/crew/{method:[a-z_.]+}", crew_post)
     r.add_get("/api/company", company_get)
     r.add_post("/api/company/{method:[a-z_.]+}", company_post)
     r.add_get("/api/office/events", office_events)

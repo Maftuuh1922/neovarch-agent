@@ -42,6 +42,7 @@ CORE_TOOLS = ("shell", "read_file", "write_file", "edit_file", "grep", "glob", "
 ONE_LINERS = {
     "manage": "atur Kantor/pengaturan/model/skill/memori/jadwal/perangkat/self-repair (domain+action)",
     "kantor": "jalankan Kantor (org, agency, rekrut, tugas) - hanya bila diminta",
+    "crew": "susun Crew (tim agen) untuk satu tujuan; pengguna menyetujui di menu Crew",
     "office_status": "status live Kantor: agen, tugas, Kanban, model aktif",
     "settings_update": "ubah pengaturan/persona/alat sendiri (ada log, bisa /undo)",
     "skill_manage": "buat/ubah/hapus skill sendiri (versi, bisa /undo)",
