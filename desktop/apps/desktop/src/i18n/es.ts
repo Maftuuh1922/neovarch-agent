@@ -10,11 +10,13 @@ import { esOnboarding } from './es_onboarding'
 import { esProjects } from './es_projects'
 import { esSharedMetrics } from './es_shared_metrics'
 import { introEs } from './intro-es'
+import { nvCrewEs } from './nv-crew'
 import { nvPamerkanEs } from './nv-pamerkan'
 import { nvPullEs } from './nv-pull'
 import { nvVisualEs } from './nv-visual'
 
 export const esOverrides = {
+  nvCrew: nvCrewEs,
   nvPamerkan: nvPamerkanEs,
   nvPull: nvPullEs,
   nvVisual: nvVisualEs,

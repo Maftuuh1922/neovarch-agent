@@ -10,11 +10,13 @@ import { arConnectors } from './ar_connectors'
 import { arDiagnostics } from './ar_diagnostics'
 import { arSettings } from './ar_settings'
 import { defineLocale, type TranslationOverrides } from './define-locale'
+import { nvCrewAr } from './nv-crew'
 import { nvPamerkanAr } from './nv-pamerkan'
 import { nvPullAr } from './nv-pull'
 import { nvVisualAr } from './nv-visual'
 
 export const arOverrides = {
+  nvCrew: nvCrewAr,
   nvPamerkan: nvPamerkanAr,
   nvPull: nvPullAr,
   nvVisual: nvVisualAr,

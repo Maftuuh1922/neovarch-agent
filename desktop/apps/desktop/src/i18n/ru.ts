@@ -1,6 +1,7 @@
 import { defineFieldCopy } from '@/app/settings/field-copy'
 
 import { defineLocale, type TranslationOverrides } from './define-locale'
+import { nvCrewRu } from './nv-crew'
 import { nvPamerkanRu } from './nv-pamerkan'
 import { nvPullRu } from './nv-pull'
 import { nvVisualRu } from './nv-visual'
@@ -34,6 +35,7 @@ const RU_NOUN = (count: number | string, one: string, few: string, many: string)
 }
 
 export const ruOverrides = {
+  nvCrew: nvCrewRu,
   nvPamerkan: nvPamerkanRu,
   nvPull: nvPullRu,
   nvVisual: nvVisualRu,

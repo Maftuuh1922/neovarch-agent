@@ -3478,6 +3478,62 @@ export interface Translations extends NoticeTranslations {
     }
   }
 
+  /** Crew page: a small team of agents the main agent designs for one goal (components/neovarch/crew.tsx). */
+  nvCrew: {
+    title: string
+    kicker: string
+    sub: string
+    tabs: { crew: string; history: string; advanced: string }
+    intro: { title: string; step1: string; step2: string; step3: string; start: string; skip: string }
+    goalLabel: string
+    goalPlaceholder: string
+    propose: string
+    proposing: string
+    templatesLabel: string
+    templates: { riset: string; konten: string; coding: string; riset_laporan: string }
+    designedByAgent: string
+    designedByTemplate: string
+    members: string
+    tasks: string
+    flow: string
+    flows: { sequential: string; hierarchical: string }
+    manager: string
+    sideEffects: string
+    sideEffectsConsent: string
+    approve: string
+    edit: string
+    discard: string
+    stop: string
+    runAgain: string
+    result: string
+    freeOnly: string
+    progress: string
+    status: { idle: string; working: string; reviewing: string; waiting: string; done: string; error: string }
+    crewStatus: { proposed: string; running: string; done: string; failed: string; cancelled: string }
+    tools: { web: string; files: string; write: string; shell: string }
+    noTools: string
+    historyEmpty: string
+    advancedEmpty: string
+    role: string
+    goal: string
+    name: string
+    model: string
+    modelDefault: string
+    task: string
+    assignee: string
+    addMember: string
+    addTask: string
+    remove: string
+    save: string
+    saved: string
+    legacy: string
+    legacyHint: string
+    allow: string
+    deny: string
+    delete: string
+    open: string
+  }
+
   /** ```visual cards in chat: inline vector diagrams the agent draws (embeds/visual-embed.tsx). */
   nvVisual: {
     label: string

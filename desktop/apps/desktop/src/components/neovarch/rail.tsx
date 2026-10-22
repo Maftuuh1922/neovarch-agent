@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router'
 
 import { ARTIFACTS_ROUTE, CAPABILITIES_ROUTE, CRON_ROUTE, navigateToWorkspacePage } from '@/app/routes'
 import { openNeovarchKanban } from '@/components/neovarch/home'
+import { CREW_ROUTE } from '@/components/neovarch/crew-store'
 import { OFFICE_ROUTE } from '@/components/neovarch/office-store'
 import { $socialAvatar, $socialStatus, SOCIAL_ROUTE } from '@/components/neovarch/social-store'
 import { VAULT_ROUTE } from '@/components/neovarch/vault'
@@ -43,7 +44,7 @@ export const NV_COPY = {
   kanban: 'Tugas (Kanban)',
   artifacts: 'Artefak',
   cron: 'Jadwal',
-  office: 'Kantor',
+  office: 'Crew',
   vault: 'Vault Obsidian',
   social: NV_SOCIAL_ID.rail as string,
   pairPhone: 'Pasangkan HP',
@@ -60,7 +61,7 @@ export const NV_COPY_EN: typeof NV_COPY = {
   kanban: 'Tasks (Kanban)',
   artifacts: 'Artifacts',
   cron: 'Schedule',
-  office: 'Office',
+  office: 'Crew',
   vault: 'Obsidian vault',
   social: NV_SOCIAL_EN.rail,
   pairPhone: 'Pair phone',
@@ -141,11 +142,11 @@ export function NeovarchRail() {
 
   const middle: RailItem[] = [
     {
-      active: path.startsWith(OFFICE_ROUTE),
+      active: path.startsWith(CREW_ROUTE) || path.startsWith(OFFICE_ROUTE),
       icon: <Users className={icon} />,
       id: 'office',
       label: NV.office,
-      onSelect: () => navigate(OFFICE_ROUTE)
+      onSelect: () => navigate(CREW_ROUTE)
     },
     {
       active: path.startsWith(SOCIAL_ROUTE),

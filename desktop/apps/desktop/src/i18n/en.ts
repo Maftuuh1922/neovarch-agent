@@ -12,6 +12,7 @@ import { enOnboarding } from './en_onboarding'
 import { enProjects } from './en_projects'
 import { enSharedMetrics } from './en_shared_metrics'
 import { enUninstallSection } from './en_uninstall_section'
+import { nvCrewEn } from './nv-crew'
 import { nvPamerkanEn } from './nv-pamerkan'
 import { nvPullEn } from './nv-pull'
 import { nvVisualEn } from './nv-visual'
@@ -3984,6 +3985,7 @@ export const en: Translations = {
     versionDetailsUncommittedChanges: 'uncommitted changes'
   },
 
+  nvCrew: nvCrewEn,
   nvPamerkan: nvPamerkanEn,
   nvPull: nvPullEn,
   nvVisual: nvVisualEn,

@@ -10,11 +10,13 @@ import { deProjects } from './de_projects'
 import { deSharedMetrics } from './de_shared_metrics'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introDe } from './intro-de'
+import { nvCrewDe } from './nv-crew'
 import { nvPamerkanDe } from './nv-pamerkan'
 import { nvPullDe } from './nv-pull'
 import { nvVisualDe } from './nv-visual'
 
 export const deOverrides = {
+  nvCrew: nvCrewDe,
   nvPamerkan: nvPamerkanDe,
   nvPull: nvPullDe,
   nvVisual: nvVisualDe,
