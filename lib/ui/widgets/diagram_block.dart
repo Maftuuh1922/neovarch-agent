@@ -20,7 +20,7 @@ import '../../theme/app_theme.dart';
 import '../../remote/ui/glass/liquid_glass.dart' show GlassCode, GlassForeground;
 import 'markdown_view.dart' show CodeBlock;
 
-enum DiagramKind { mermaid, svg, html }
+enum DiagramKind { mermaid, svg, html, visual }
 
 /// Which diagram (if any) a fenced block or file holds. [lang] is the fence
 /// info string or a file extension.
@@ -28,6 +28,8 @@ DiagramKind? diagramKindFor(String? lang, String code) {
   final l = (lang ?? '').trim().toLowerCase().split(RegExp(r'\s+')).first;
   if (l == 'mermaid' || l == 'mmd') return DiagramKind.mermaid;
   if (l == 'svg') return DiagramKind.svg;
+  // ```visual: declarative spec / SVG / HTML+CSS card (see visual_block.dart).
+  if (l == 'visual') return DiagramKind.visual;
   if (l.isEmpty || l == 'xml' || l == 'html') {
     if (looksLikeSvg(code)) return DiagramKind.svg;
   }
@@ -57,10 +59,17 @@ bool looksLikeSvg(String code) {
 
 /// Outcome of one render, reported by the preview.
 class DiagramRenderResult {
-  const DiagramRenderResult.ok(this.height) : error = null;
-  const DiagramRenderResult.failed(this.error) : height = null;
+  const DiagramRenderResult.ok(this.height, {this.title, this.caption}) : error = null;
+  const DiagramRenderResult.failed(this.error)
+      : height = null,
+        title = null,
+        caption = null;
   final double? height;
   final String? error;
+
+  /// ```visual cards report their title and caption back for the native header/footer.
+  final String? title;
+  final String? caption;
   bool get ok => error == null;
 }
 
@@ -89,15 +98,19 @@ class DiagramBlock extends StatefulWidget {
   @visibleForTesting
   static DiagramPreviewBuilder? debugPreviewBuilder;
 
+  /// A renderer is available: the WebView, or the one tests swapped in.
+  static bool get canPreview => debugPreviewBuilder != null || webViewAvailable;
+
   static bool get webViewAvailable =>
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS) &&
       WebViewPlatform.instance != null;
 
-  static Widget preview(BuildContext context, String code, DiagramKind kind, bool fullscreen, ValueChanged<DiagramRenderResult> onResult) {
+  static Widget preview(BuildContext context, String code, DiagramKind kind, bool fullscreen, ValueChanged<DiagramRenderResult> onResult,
+      {DiagramExporter? exporter}) {
     final b = debugPreviewBuilder;
     if (b != null) return b(context, code, kind, fullscreen, onResult);
-    return DiagramWebView(code: code, kind: kind, fullscreen: fullscreen, onResult: onResult);
+    return DiagramWebView(code: code, kind: kind, fullscreen: fullscreen, onResult: onResult, exporter: exporter);
   }
 
   @override
@@ -159,7 +172,14 @@ class _DiagramBlockState extends State<DiagramBlock> {
     }
   }
 
-  String get _label => widget.label ?? switch (widget.kind) { DiagramKind.mermaid => 'mermaid', DiagramKind.svg => 'svg', DiagramKind.html => 'html' };
+  String get _label =>
+      widget.label ??
+      switch (widget.kind) {
+        DiagramKind.mermaid => 'mermaid',
+        DiagramKind.svg => 'svg',
+        DiagramKind.html => 'html',
+        DiagramKind.visual => 'visual',
+      };
 
   void _openFullscreen() {
     Navigator.of(context).push(MaterialPageRoute<void>(
@@ -378,13 +398,29 @@ class _DiagramFullscreenState extends State<DiagramFullscreen> {
   }
 }
 
+/// Lets the owner of a [DiagramWebView] ask the page for an export of the
+/// current ```visual card: `svg` (standalone SVG text) or `png` (a data: URL).
+class DiagramExporter {
+  Future<String> Function(String format)? _run;
+
+  bool get ready => _run != null;
+
+  Future<String> export(String format) {
+    final run = _run;
+    if (run == null) return Future.error(StateError('pratinjau belum siap'));
+    return run(format);
+  }
+}
+
 /// The WebView renderer (Android / iOS).
 class DiagramWebView extends StatefulWidget {
-  const DiagramWebView({super.key, required this.code, required this.kind, required this.fullscreen, required this.onResult});
+  const DiagramWebView(
+      {super.key, required this.code, required this.kind, required this.fullscreen, required this.onResult, this.exporter});
   final String code;
   final DiagramKind kind;
   final bool fullscreen;
   final ValueChanged<DiagramRenderResult> onResult;
+  final DiagramExporter? exporter;
 
   static const hostAsset = 'assets/diagram/host.html';
 
@@ -398,6 +434,8 @@ class _DiagramWebViewState extends State<DiagramWebView> {
   bool _done = false;
   Timer? _timeout;
   Map<String, Object?>? _theme;
+  final _exports = <int, Completer<String>>{};
+  int _exportSeq = 0;
 
   @override
   void initState() {
@@ -420,6 +458,7 @@ class _DiagramWebViewState extends State<DiagramWebView> {
       if (widget.fullscreen) c.enableZoom(true);
       c.loadFlutterAsset(DiagramWebView.hostAsset);
       _c = c;
+      widget.exporter?._run = _export;
       _timeout = Timer(DiagramBlock.loadTimeout, () => _finish(const DiagramRenderResult.failed('waktu habis memuat')));
     } catch (e) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _finish(DiagramRenderResult.failed('$e')));
@@ -444,7 +483,23 @@ class _DiagramWebViewState extends State<DiagramWebView> {
   @override
   void dispose() {
     _timeout?.cancel();
+    if (widget.exporter?._run == _export) widget.exporter?._run = null;
+    for (final c in _exports.values) {
+      if (!c.isCompleted) c.completeError(StateError('ditutup'));
+    }
     super.dispose();
+  }
+
+  Future<String> _export(String format) {
+    final c = _c;
+    if (c == null || !_ready) return Future.error(StateError('pratinjau belum siap'));
+    final id = ++_exportSeq;
+    final done = Completer<String>();
+    _exports[id] = done;
+    c.runJavaScript('nvExport($id, ${jsonEncode(format)})').catchError((Object e) {
+      if (!done.isCompleted) done.completeError(e);
+    });
+    return done.future.timeout(const Duration(seconds: 8), onTimeout: () => throw TimeoutException('waktu habis'));
   }
 
   void _finish(DiagramRenderResult r) {
@@ -461,11 +516,24 @@ class _DiagramWebViewState extends State<DiagramWebView> {
     } catch (_) {
       return;
     }
+    if (m['export'] is num) {
+      final done = _exports.remove((m['export'] as num).toInt());
+      if (done == null || done.isCompleted) return;
+      final data = m['data'];
+      if (data is String) {
+        done.complete(data);
+      } else {
+        done.completeError(StateError('${m['error'] ?? 'gagal'}'));
+      }
+      return;
+    }
     if (m['ready'] == true) {
       _ready = true;
       _render();
     } else if (m['ok'] == true) {
-      _finish(DiagramRenderResult.ok((m['h'] as num?)?.toDouble()));
+      _finish(DiagramRenderResult.ok((m['h'] as num?)?.toDouble(),
+          title: (m['title'] as String?)?.trim().isEmpty ?? true ? null : m['title'] as String,
+          caption: (m['caption'] as String?)?.trim().isEmpty ?? true ? null : m['caption'] as String));
     } else if (m['ok'] == false) {
       _finish(DiagramRenderResult.failed('${m['error'] ?? 'gagal'}'));
     }
@@ -499,6 +567,9 @@ class _DiagramWebViewState extends State<DiagramWebView> {
   }
 }
 
+/// Theme map handed to the bundled page (also used by [VisualBlock]).
+Map<String, Object?> diagramThemeFor(BuildContext context) => _themeFor(context);
+
 String _hex(Color c) => '#${(c.toARGB32() & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
 
 Map<String, Object?> _themeFor(BuildContext context) {
@@ -513,5 +584,9 @@ Map<String, Object?> _themeFor(BuildContext context) {
     'line': _hex(context.hc.mutedForeground),
     'node': _hex(Color.alphaBlend(accent.withValues(alpha: 0.14), bg)),
     'node2': _hex(Color.alphaBlend(fg.withValues(alpha: 0.07), bg)),
+    // ```visual cards (shared renderer): text, hairlines and node fill.
+    'muted': _hex(context.hc.mutedForeground),
+    'stroke': _hex(Color.alphaBlend(fg.withValues(alpha: 0.16), bg)),
+    'surface': _hex(Color.alphaBlend(fg.withValues(alpha: 0.04), bg)),
   };
 }

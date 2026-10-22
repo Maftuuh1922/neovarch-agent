@@ -1,0 +1,18 @@
+{
+  "type": "flow",
+  "title": "Alur login dengan 2FA",
+  "caption": "Kotak biru = langkah yang baru ditambahkan; panah balik = coba lagi.",
+  "steps": [
+    {"id": "start", "label": "Buka aplikasi", "shape": "start"},
+    {"id": "form", "label": "Isi email + kata sandi"},
+    {"id": "ok", "label": "Kata sandi benar?", "shape": "decision"},
+    {"id": "otp", "label": "Masukkan kode 2FA", "highlight": true, "note": "berlaku 30 detik"},
+    {"id": "home", "label": "Masuk ke beranda", "shape": "end", "color": "green"}
+  ],
+  "edges": [
+    ["start", "form"], ["form", "ok"],
+    {"from": "ok", "to": "otp", "label": "ya"},
+    {"from": "ok", "to": "form", "label": "tidak"},
+    ["otp", "home"]
+  ]
+}

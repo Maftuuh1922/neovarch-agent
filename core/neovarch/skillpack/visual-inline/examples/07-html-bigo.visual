@@ -1,0 +1,16 @@
+title: Kompleksitas pencarian
+caption: HTML+CSS juga boleh untuk kartu tabel sederhana.
+---
+<div class="grid">
+  <div class="cell head">Struktur</div><div class="cell head">Cari</div><div class="cell head">Sisip</div>
+  <div class="cell">Array</div><div class="cell bad">O(n)</div><div class="cell">O(1)</div>
+  <div class="cell">Hash map</div><div class="cell good">O(1)</div><div class="cell good">O(1)</div>
+  <div class="cell">Pohon seimbang</div><div class="cell">O(log n)</div><div class="cell">O(log n)</div>
+</div>
+<style>
+.grid{display:grid;grid-template-columns:1.4fr 1fr 1fr;border:1px solid var(--nv-stroke);border-radius:10px;overflow:hidden;max-width:460px;margin:0 auto}
+.cell{padding:8px 12px;border-top:1px solid var(--nv-stroke);font-size:13px}
+.head{border-top:0;font-weight:650;color:var(--nv-muted);background:var(--nv-panel)}
+.good{color:var(--nv-green);font-weight:650}
+.bad{color:var(--nv-red);font-weight:650}
+</style>

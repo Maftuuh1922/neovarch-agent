@@ -2,6 +2,7 @@ import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introZhHant } from './intro-zh-hant'
 import { nvPamerkanZhHant } from './nv-pamerkan'
 import { nvPullZhHant } from './nv-pull'
+import { nvVisualZhHant } from './nv-visual'
 import { zhHantArtifacts } from './zh-hant_artifacts'
 import { zhHantAssistant } from './zh-hant_assistant'
 import { zhHantBoot } from './zh-hant_boot'
@@ -17,6 +18,7 @@ import { zhHantSettings } from './zh-hant_settings'
 export const zhHantOverrides = {
   nvPamerkan: nvPamerkanZhHant,
   nvPull: nvPullZhHant,
+  nvVisual: nvVisualZhHant,
   skillDeepLink: {
     installTitle: (name: string) => `安裝「${name}」？`,
     installDescription: '此技能將於新的工作階段中可用。請僅安裝可信來源的內容。',

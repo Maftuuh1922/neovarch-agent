@@ -55,7 +55,8 @@ const NON_ARTIFACT_LANGUAGES = new Set([
   'shell-session',
   'stdout',
   'text',
-  'txt'
+  'txt',
+  'visual'
 ])
 
 function countLines(text: string): number {

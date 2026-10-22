@@ -1,0 +1,13 @@
+{
+  "type": "graph",
+  "title": "Mencari 7 di pohon biner",
+  "caption": "Jalur pencarian ditandai biru: 8 → 3 → 6 → 7 (4 langkah, bukan 9).",
+  "layout": "tree",
+  "directed": true,
+  "highlightEdges": true,
+  "nodes": [
+    {"id": "8", "highlight": true}, {"id": "3", "highlight": true}, "10", "1",
+    {"id": "6", "highlight": true}, "14", "4", {"id": "7", "highlight": true, "sub": "ketemu"}, "13"
+  ],
+  "edges": [["8", "3"], ["8", "10"], ["3", "1"], ["3", "6"], ["10", "14"], ["6", "4"], ["6", "7"], ["14", "13"]]
+}

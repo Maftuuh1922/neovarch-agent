@@ -540,6 +540,11 @@ def _open_on_desktop(path: Path) -> bool:
         return False
 
 
+async def tool_visual_check(args: dict, ctx: ToolContext) -> str:
+    from neovarch.visuals import check_visual, format_report
+    return format_report(check_visual(str(args.get("code") or "")))
+
+
 async def tool_diagram_save(args: dict, ctx: ToolContext) -> str:
     paths = save_diagram(str(args.get("name") or "diagram"), str(args.get("format") or ""),
                          str(args.get("content") or ""))
@@ -1021,6 +1026,12 @@ TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
         "parameters": {"type": "object", "properties": {
             "name": {"type": "string"}, "format": {"type": "string", "enum": ["svg", "html", "mermaid"]},
             "content": {"type": "string"}, "open": {"type": "boolean"}}, "required": ["format", "content"]}}),
+    "visual_check": (tool_visual_check, {
+        "description": "Check an inline ```visual block (declarative graph/flow/bar/timeline/compare JSON spec, raw SVG "
+                       "or HTML+CSS) before sending it in the answer: reports errors the chat renderer would hit "
+                       "(unknown type, edges to missing nodes, missing viewBox, scripts/external urls) and layout "
+                       "advice. code = the block content (with or without the ```visual fence). See skill visual-inline.",
+        "parameters": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]}}),
     "obsidian_search": (tool_obsidian_search, {
         "description": "Search the user's Obsidian vault (memory) by words in the text, note filename and tags "
                        "(#tag). Only works when an Obsidian vault is configured.",

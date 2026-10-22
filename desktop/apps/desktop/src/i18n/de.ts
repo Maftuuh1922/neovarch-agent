@@ -12,10 +12,12 @@ import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introDe } from './intro-de'
 import { nvPamerkanDe } from './nv-pamerkan'
 import { nvPullDe } from './nv-pull'
+import { nvVisualDe } from './nv-visual'
 
 export const deOverrides = {
   nvPamerkan: nvPamerkanDe,
   nvPull: nvPullDe,
+  nvVisual: nvVisualDe,
   sharedMetrics: deSharedMetrics,
   intro: introDe,
   connectors: {

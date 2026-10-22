@@ -14,6 +14,7 @@ import { enSharedMetrics } from './en_shared_metrics'
 import { enUninstallSection } from './en_uninstall_section'
 import { nvPamerkanEn } from './nv-pamerkan'
 import { nvPullEn } from './nv-pull'
+import { nvVisualEn } from './nv-visual'
 import type { Translations } from './types'
 
 export const en: Translations = {
@@ -3985,6 +3986,7 @@ export const en: Translations = {
 
   nvPamerkan: nvPamerkanEn,
   nvPull: nvPullEn,
+  nvVisual: nvVisualEn,
 
   nvUpdate: {
     title: 'Neovarch updates',

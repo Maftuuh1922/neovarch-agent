@@ -11,15 +11,18 @@
   body.full #out { min-height: 100vh; align-items: center; }
   body.full #out > svg { max-width: none; width: auto; }
   #out > iframe { border: 0; width: 100%; min-height: 100vh; background: #fff; }
+  #out > .nv-host { width: 100%; display: block; }
 </style>
 <!-- Bundled (offline) mermaid; see assets/diagram/MERMAID_LICENSE.txt -->
 <script src="mermaid.min.js"></script>
+<!-- Neovarch ```visual renderer (same code as the desktop), offline; see VISUAL_THIRD_PARTY.txt -->
+<script src="visual.js"></script>
 </head>
 <body>
 <div id="out"></div>
 <script>
   // Neovarch diagram host. Flutter loads this page from the app bundle, then
-  // calls nvRender({kind, code, theme, full}). Results go back over the
+  // calls nvRender({kind, code, theme, full}) (kind: mermaid | svg | html | visual). Results go back over the
   // `NV` JavaScript channel as JSON: {ready} | {ok, w, h} | {ok:false, error}.
   function post(o) { try { NV.postMessage(JSON.stringify(o)); } catch (e) {} }
 
@@ -48,10 +51,11 @@
   }
 
   function report(full) {
-    var el = document.querySelector('#out > svg, #out > iframe');
+    var el = document.querySelector('#out > svg, #out > iframe, #out > .nv-host');
     if (!el) { post({ ok: false, error: 'tidak ada hasil' }); return; }
     var r = el.getBoundingClientRect();
-    post({ ok: true, w: Math.ceil(r.width), h: Math.ceil(r.height + 20) });
+    var meta = window.__nvMeta || {};
+    post({ ok: true, w: Math.ceil(r.width), h: Math.ceil(r.height + 20), title: meta.title, caption: meta.caption });
   }
 
   function themeVars(t) {
@@ -97,6 +101,7 @@
       document.body.classList.toggle('full', !!p.full);
       var out = document.getElementById('out');
       out.innerHTML = '';
+      window.__nvMeta = null;
       if (p.kind === 'mermaid') {
         if (!window.mermaid) throw new Error('mermaid tidak termuat');
         mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base',
@@ -109,6 +114,29 @@
           // mermaid leaves its scratch/error nodes in <body> on failure.
           ['d' + id, id].forEach(function (x) { var n = document.getElementById(x); if (n && !out.contains(n)) n.remove(); });
         }
+      } else if (p.kind === 'visual') {
+        // ```visual: the shared renderer parses + sanitises (DOMPurify) and the
+        // card lives in a shadow root, so its CSS can't leak into this page.
+        if (!window.NeovarchVisual) throw new Error('renderer visual tidak termuat');
+        var t = p.theme || {};
+        var vt = { dark: !!t.dark, bg: t.bg, fg: t.fg, muted: t.muted || t.line, stroke: t.stroke || t.line,
+          surface: t.surface || t.bg, line: t.line };
+        // Inline: lay the spec out for the card's real width (timeline turns
+        // vertical, compare panels stack): #out's content box minus
+        // the 2px .nv-root side padding. p.width (if sent) = that content width.
+        // Full screen keeps the wide layout and lets the user pan/zoom.
+        var cs = getComputedStyle(out);
+        var avail = p.full ? 0 : (Number(p.width) || (out.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)) || 0);
+        var v = NeovarchVisual.prepareVisual(String(p.code), avail > 0 ? { width: Math.max(200, avail - 4) } : {});
+        window.__nvVisual = { v: v, theme: vt };
+        var host = document.createElement('div');
+        host.className = 'nv-host';
+        out.appendChild(host);
+        var root = host.attachShadow({ mode: 'open' });
+        var extra = ':host{display:block}.nv-root{padding:4px 2px}' +
+          (p.full && v.kind === 'svg' ? '.nv-root.nv-svg>svg{max-width:none;width:' + Math.round((v.width || 400) * 1.6) + 'px}' : '');
+        root.innerHTML = '<style>' + NeovarchVisual.cardCss(vt, ':host') + extra + '</style><div class="nv-root nv-' + v.kind + '">' + v.markup + '</div>';
+        window.__nvMeta = { title: v.title || '', caption: v.caption || '' };
       } else if (p.kind === 'html') {
         var f = document.createElement('iframe');
         f.setAttribute('sandbox', 'allow-scripts');
@@ -121,6 +149,29 @@
     } catch (e) {
       post({ ok: false, error: String((e && (e.message || e.str)) || e) });
     }
+  }
+  // "Simpan PNG / Bagikan SVG" for ```visual cards: a standalone SVG (title,
+  // caption, concrete colours) or a 2x PNG drawn from it. Result goes back as
+  // {export: id, data} (PNG as a data: URL) or {export: id, error}.
+  function nvExport(id, format) {
+    try {
+      var cur = window.__nvVisual;
+      if (!cur) throw new Error('belum ada visual');
+      var w = Math.max(320, Math.min(document.body.clientWidth || 360, 900));
+      var h = cur.v.kind === 'html' ? NeovarchVisual.measureHtml(cur.v, cur.theme, w) : undefined;
+      var out = NeovarchVisual.exportSvg(cur.v, cur.theme, { htmlWidth: w, htmlHeight: h });
+      if (format === 'svg') { post({ export: id, data: out.svg }); return; }
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var c = document.createElement('canvas'); c.width = out.width * 2; c.height = out.height * 2;
+          var g = c.getContext('2d'); g.scale(2, 2); g.drawImage(img, 0, 0, out.width, out.height);
+          post({ export: id, data: c.toDataURL('image/png') });
+        } catch (e) { post({ export: id, error: String(e.message || e) }); }
+      };
+      img.onerror = function () { post({ export: id, error: 'gambar gagal dibuat' }); };
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(out.svg);
+    } catch (e) { post({ export: id, error: String(e.message || e) }); }
   }
   window.addEventListener('error', function (e) {
     if (!document.querySelector('#out > *')) post({ ok: false, error: String(e.message || 'error') });

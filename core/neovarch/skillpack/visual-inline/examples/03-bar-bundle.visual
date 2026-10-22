@@ -1,0 +1,12 @@
+{
+  "type": "bar",
+  "title": "Ukuran bundel JS setelah optimasi",
+  "caption": "Lebih pendek lebih baik. Versi baru (biru) 41% lebih kecil dari v1.",
+  "unit": " KB",
+  "data": [
+    {"label": "v1 (awal)", "value": 812},
+    {"label": "v2 + tree-shaking", "value": 604},
+    {"label": "v3 + lazy load", "value": 521},
+    {"label": "v4 (sekarang)", "value": 478, "highlight": true, "note": "pisah chunk mermaid"}
+  ]
+}
