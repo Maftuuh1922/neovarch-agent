@@ -47,6 +47,7 @@ async def test_transcribe_with_faster_whisper(home, monkeypatch):
         seen["ext"] = os.path.splitext(path)[1]
         seen["bytes"] = open(path, "rb").read()[:4]
         seen["model"] = s["model"]
+        seen["language"] = s["language"]
         return "halo neovarch buka repo", "id"
 
     monkeypatch.setattr(stt, "_has_faster_whisper", lambda: True)
@@ -55,10 +56,11 @@ async def test_transcribe_with_faster_whisper(home, monkeypatch):
     try:
         # phone shape: raw base64 + mime (m4a from Android MediaRecorder)
         b64 = base64.b64encode(b"\0\0\0\x18ftypM4A " + b"\0" * 200).decode()
-        body = await (await c.post("/api/audio/transcribe?token=tok", json={"audio_base64": b64, "mime_type": "audio/mp4"})).json()
+        body = await (await c.post("/api/audio/transcribe?token=tok", json={"audio_base64": b64, "mime_type": "audio/mp4",
+                                                                                  "language": "id"})).json()
         assert body == {"ok": True, "available": True, "transcript": "halo neovarch buka repo", "engine": "faster-whisper",
                         "model": "base", "language": "id"}
-        assert seen["ext"] == ".m4a" and seen["model"] == "base"
+        assert seen["ext"] == ".m4a" and seen["model"] == "base" and seen["language"] == "id"
         # desktop shape: data URL
         body = await (await c.post("/api/audio/transcribe?token=tok", json={"data_url": AUDIO})).json()
         assert body["ok"] is True and seen["ext"] == ".webm" and seen["bytes"] == b"\x1aE\xdf\xa3"

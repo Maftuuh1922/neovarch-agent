@@ -2764,8 +2764,10 @@ def build_app(gw: Gateway) -> web.Application:
         from neovarch import stt
         body = await _json(request)
         try:
-            data, mime = stt.decode_audio(body if isinstance(body, dict) else {})
-            return web.json_response(await asyncio.to_thread(stt.transcribe_bytes, data, mime))
+            body = body if isinstance(body, dict) else {}
+            data, mime = stt.decode_audio(body)
+            lang = body.get("language") if isinstance(body.get("language"), str) else None
+            return web.json_response(await asyncio.to_thread(stt.transcribe_bytes, data, mime, None, lang))
         except stt.SttError as e:
             out = {"ok": False, "available": e.code not in ("stt_unavailable",), "transcript": "",
                    "code": e.code, "error": str(e)}

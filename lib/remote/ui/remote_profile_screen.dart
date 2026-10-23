@@ -27,6 +27,7 @@ import 'language_panel.dart';
 import '../l10n/strings.dart';
 import 'profile_header_slot.dart';
 import 'token_usage_panel.dart';
+import 'dictation_settings_panel.dart';
 import 'wake_word_panel.dart';
 import '../wake_word.dart' show WakeWordController;
 import 'remote_social_screen.dart' show SocialSection;
@@ -63,6 +64,13 @@ class RemoteProfileScreen extends StatelessWidget {
             title: 'Model AI',
             subtitle: 'Model default agen di PC',
             children: [ModelSettingsPanel()],
+          ),
+          const ProfileGroup(
+            id: 'dictation',
+            icon: CupertinoIcons.mic_fill,
+            title: 'Dikte suara',
+            subtitle: 'Mik di HP, STT lokal gratis di PC',
+            children: [DictationSettingsPanel()],
           ),
           if (WakeWordController.supported)
             const ProfileGroup(

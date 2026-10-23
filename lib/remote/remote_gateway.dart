@@ -996,6 +996,28 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, CrewApi, PcBackg
     }
   }
 
+  /// Local free STT on the PC (1.4.9): a phone recording → its transcript.
+  /// The PC answers `{ok, transcript}` or `{ok: false, code, error}`
+  /// (`stt_unavailable` = no faster-whisper / whisper.cpp there yet).
+  Future<Map<String, dynamic>> transcribeAudio(Uint8List audio, String mimeType, {String? language}) async {
+    final (status, bytes, _) = await _send('POST', '/api/audio/transcribe',
+        headers: const {'Content-Type': 'application/json'},
+        body: utf8.encode(jsonEncode({'audio_base64': base64Encode(audio), 'mime_type': mimeType, if (language != null) 'language': language})),
+        timeout: const Duration(seconds: 150));
+    final text = utf8.decode(bytes, allowMalformed: true);
+    if (status == 404) return {'ok': false, 'code': 'stt_unavailable', 'error': 'Neovarch PC belum mendukung transkripsi — perbarui aplikasi PC'};
+    if (isSessionExpiredResponse(status, text)) throw const SessionExpired();
+    if (status < 200 || status >= 300) return {'ok': false, 'code': 'http_$status', 'error': restErrorDetail(text) ?? 'HTTP $status'};
+    final m = text.isEmpty ? null : jsonDecode(text);
+    return m is Map ? m.cast<String, dynamic>() : {'ok': false, 'code': 'bad_answer', 'error': 'jawaban PC tidak terbaca'};
+  }
+
+  /// `GET /api/audio/stt/status`: {available, engine, model, install_hint}.
+  Future<Map<String, dynamic>> sttStatus() async {
+    final m = await _json('GET', '/api/audio/stt/status');
+    return m is Map ? m.cast<String, dynamic>() : const {};
+  }
+
   Future<dynamic> _json(String method, String path, {Map<String, dynamic>? body, Map<String, String>? query}) async {
     final (status, bytes, _) = await _send(method, path,
         query: query,

@@ -19,6 +19,7 @@ import '../../ui/widgets/common.dart';
 import '../agent_identity.dart';
 import '../composer.dart';
 import '../home_widget.dart' show remoteLaunchAction;
+import '../pc_dictation.dart';
 import '../l10n/strings.dart';
 import '../remote_controller.dart';
 import '../remote_gateway.dart';
@@ -397,6 +398,8 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
   }
 
   /// Mic: Android SpeechRecognizer (speech_to_text), Indonesian or English;
+  /// without one the system dialog, then a recording sent to the PC's local
+  /// STT (faster-whisper / whisper.cpp, 1.4.9), then offline Vosk (English).
   /// without one (many Xiaomi phones) the system speech dialog, then the
   /// offline Vosk model (English). Partial words show in the dictation strip
   /// and the field; the final text lands in the field (appended to what was
@@ -411,15 +414,21 @@ class _RemoteChatScreenState extends ConsumerState<RemoteChatScreen> {
       return;
     }
     _beforeDictation = _input.text;
+    final settings = ref.read(settingsProvider);
+    // Record-then-send to the PC's local STT (fallback, or always when chosen).
+    VoiceService.pcTranscriber = pcTranscriberFor(ref.read(remoteProvider).gateway);
     try {
       await v.startDictation(
-        locale: ref.read(settingsProvider).sttLocale,
+        locale: settings.sttLocale,
+        route: settings.dictationEngine,
         rationale: () async => mounted && await micRationale(context),
         onText: (t, done) {
           if (!mounted) return;
           final next = insertTranscript(_beforeDictation, t);
           _input.text = next;
           _input.selection = TextSelection.collapsed(offset: next.length);
+          // Only with the explicit "Kirim otomatis" setting (off by default).
+          if (done && settings.dictationAutoSend && next.trim().isNotEmpty) _send();
         },
       );
     } catch (_) {

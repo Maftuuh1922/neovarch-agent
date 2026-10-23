@@ -188,9 +188,15 @@ def _whisper_cpp(path: str, s: dict) -> tuple[str, str | None]:
         return " ".join(run.stdout.split()).strip(), None if lang == "auto" else lang
 
 
-def transcribe_bytes(data: bytes, mime: str, cfg: dict | None = None) -> dict[str, Any]:
-    """Blocking; call it from a worker thread. Raises SttError with a typed code."""
+def transcribe_bytes(data: bytes, mime: str, cfg: dict | None = None, language: str | None = None) -> dict[str, Any]:
+    """Blocking; call it from a worker thread. Raises SttError with a typed code.
+
+    ``language`` (the phone's dictation language, "id"/"en") is a hint used only when
+    ``stt.language`` is ``auto``."""
     s = settings(cfg)
+    hint = (language or "").strip().lower()
+    if s["language"] in ("", "auto") and hint.isalpha() and 2 <= len(hint) <= 3:
+        s["language"] = hint
     eng = pick_engine(s)
     if eng is None:
         raise SttError("stt_unavailable", STT_OFF if s["engine"] == "off" else STT_UNAVAILABLE)

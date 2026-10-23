@@ -45,7 +45,9 @@ class DictationStrip extends StatelessWidget {
   Widget _active(BuildContext context, DictationStatus s) {
     final label = switch (s.phase) {
       DictationPhase.starting => tr('Menyiapkan mikrofon…'),
+      DictationPhase.processing when s.toPc => tr('Mentranskripsi di PC…'),
       DictationPhase.processing => tr('Memproses…'),
+      _ when s.toPc => tr('Merekam · ketuk mik lagi untuk kirim ke PC'),
       _ => tr('Mendengarkan…'),
     };
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [

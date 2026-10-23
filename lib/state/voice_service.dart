@@ -124,6 +124,46 @@ class _ChannelFallback implements SpeechFallback {
   }
 }
 
+/// Record-then-send (1.4.9): plain audio recording for the PC's local STT
+/// (MainActivity.kt `recordStart` / `recordStop`; a fake in tests).
+abstract class AudioRecorder {
+  /// False when the microphone could not be opened.
+  Future<bool> start();
+  /// The recording (m4a / AAC on Android), or null when nothing was recorded.
+  Future<Uint8List?> stop();
+  Future<void> cancel();
+  String get mimeType;
+}
+
+class _NativeRecorder implements AudioRecorder {
+  @override
+  String get mimeType => 'audio/mp4';
+  @override
+  Future<bool> start() async => await deviceCall<bool>('recordStart') ?? false;
+  @override
+  Future<Uint8List?> stop() => deviceCall<Uint8List>('recordStop');
+  @override
+  Future<void> cancel() async {
+    await deviceCall<bool>('recordCancel');
+  }
+}
+
+/// Sends a recording to the PC (`/api/audio/transcribe`) and returns the
+/// transcript; throws [PcTranscriptionError] with the PC's readable message.
+typedef PcTranscriber = Future<String> Function(Uint8List audio, String mimeType, String locale);
+
+class PcTranscriptionError implements Exception {
+  const PcTranscriptionError(this.message, {this.code = ''});
+  final String message;
+  final String code;
+  @override
+  String toString() => message;
+}
+
+/// Dictation route: `auto` = the phone's recogniser first (then the system
+/// dialog, the PC, offline Vosk); `pc` = always record and transcribe on the PC.
+const dictationEngines = ['auto', 'pc'];
+
 /// RECORD_AUDIO for dictation (MainActivity.kt `micPermission` / `requestMic`;
 /// a fake in tests).
 abstract class MicPermissions {
@@ -186,6 +226,16 @@ const recognizerMicDeniedText = 'Izin mikrofon Neovarch sudah aktif, tapi layana
     'tidak punya izin mikrofon. Buka Speech Services → Izin → Mikrofon → Izinkan, '
     'atau tekan lama tombol mik untuk dikte English offline.';
 
+/// The PC's answer when its local STT is missing or failed, in Indonesian.
+String pcSttErrorText(PcTranscriptionError e) {
+  if (e.code == 'stt_unavailable') {
+    return 'Mesin STT lokal belum terpasang di PC. Di PC jalankan: pip install faster-whisper (gratis, model "small"), '
+        'lalu mulai ulang Neovarch. Atau pasang "Speech Services by Google" di HP.';
+  }
+  final m = e.message.split(' / ').first.trim();
+  return 'Transkripsi di PC gagal: ${m.isEmpty ? e.code : m}';
+}
+
 /// SpeechRecognizer `ERROR_INSUFFICIENT_PERMISSIONS` (speech_to_text: `error_permission`).
 bool sttPermissionError(String code) => code == 'error_permission' || code == 'error_insufficient_permissions';
 
@@ -232,6 +282,21 @@ class VoiceService extends ChangeNotifier {
   /// Tests: the Android fallbacks (RecognizerIntent / Vosk).
   @visibleForTesting
   static SpeechFallback? debugFallback;
+  /// Tests: the recorder behind record-then-send.
+  @visibleForTesting
+  static AudioRecorder? debugRecorder;
+  /// Set while the phone is connected to a PC: transcribes a recording there
+  /// (the remote gateway). null = no PC fallback.
+  static PcTranscriber? pcTranscriber;
+  AudioRecorder? _recorderImpl;
+  AudioRecorder? get _rec {
+    if (debugRecorder != null) return debugRecorder;
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android || debugEngine != null) return null;
+    return _recorderImpl ??= _NativeRecorder();
+  }
+
+  bool get _pcReady => pcTranscriber != null && _rec != null;
+
   /// How long the recogniser may take to start before dictation gives up.
   static Duration initTimeout = const Duration(seconds: 12);
   /// No callback at all (result, status, level) for this long while
@@ -274,7 +339,7 @@ class VoiceService extends ChangeNotifier {
   bool get listening => status.active;
 
   /// Which recogniser the current / last dictation used:
-  /// `recognizer`, `intent`, `vosk` (diagnostics, tests).
+  /// `recognizer`, `intent`, `vosk`, `pc` (diagnostics, tests).
   String? engine;
 
   // current dictation
@@ -288,6 +353,7 @@ class VoiceService extends ChangeNotifier {
   bool _stopRequested = false;
   String _partial = '';
   String _locale = 'id_ID';
+  String _route = 'auto';
   DictationStatus? _initFailure;
   Timer? _watchdog;
   Timer? _hardCap;
@@ -349,7 +415,9 @@ class VoiceService extends ChangeNotifier {
 
   Future<void> _stopEngine() async {
     try {
-      if (engine == 'vosk') {
+      if (engine == 'pc') {
+        await _rec?.cancel();
+      } else if (engine == 'vosk') {
         await _fb?.voskStop();
       } else if (engine == 'recognizer') {
         await _e.stop();
@@ -554,6 +622,7 @@ class VoiceService extends ChangeNotifier {
     required void Function(String text, bool isFinal) onText,
     void Function(String error)? onError,
     Future<bool> Function()? rationale,
+    String route = 'auto',
   }) async {
     final g = ++_gen;
     _cancelTimers();
@@ -569,6 +638,7 @@ class VoiceService extends ChangeNotifier {
     _userText = onText;
     _onError = onError;
     _set(DictationStatus.starting);
+    _route = route;
     try {
       await _startDictation(g, rationale);
     } catch (e) {
@@ -578,7 +648,7 @@ class VoiceService extends ChangeNotifier {
   }
 
   Future<void> _startDictation(int g, Future<bool> Function()? rationale) async {
-    if (!canDictate && debugEngine == null && debugFallback == null) {
+    if (!canDictate && debugEngine == null && debugFallback == null && debugRecorder == null) {
       _fail(DictationStatus.errorText(DictationIssue.failed, 'Dikte suara belum tersedia di platform ini.'));
       return;
     }
@@ -595,6 +665,10 @@ class VoiceService extends ChangeNotifier {
     }
     if (perm != MicPermission.granted) {
       _fail(DictationStatus.error(perm == MicPermission.permanent ? DictationIssue.permissionPermanent : DictationIssue.permissionDenied));
+      return;
+    }
+    if (_route == 'pc' && _pcReady) {
+      await _startPc();
       return;
     }
     var useRecognizer = true;
@@ -637,6 +711,11 @@ class VoiceService extends ChangeNotifier {
       failure = _initFailure;
     }
     if (g != _gen) return;
+    if (fb == null && _pcReady) {
+      _fellBack = true;
+      await _startPc();
+      return;
+    }
     if (fb == null) {
       _fail(failure ?? (useRecognizer ? DictationStatus.error(DictationIssue.noRecognizer) : DictationStatus.errorText(DictationIssue.noRecognizer, noSpeechServiceText)));
       return;
@@ -672,6 +751,10 @@ class VoiceService extends ChangeNotifier {
         if (g != _gen) return;
       }
     }
+    if (_pcReady) {
+      await _startPc();
+      return;
+    }
     final english = _locale.toLowerCase().startsWith('en');
     if (english && caps['vosk'] == true) {
       engine = 'vosk';
@@ -694,6 +777,76 @@ class VoiceService extends ChangeNotifier {
     _fail(_recognizerDenied
         ? DictationStatus.errorText(DictationIssue.recognizerMicDenied, recognizerMicDeniedText)
         : DictationStatus.errorText(DictationIssue.noRecognizer, english ? voskModelMissingText : noSpeechServiceText));
+  }
+
+  /// Record on the phone; [stopDictation] sends it to the PC's local STT.
+  Future<void> _startPc() async {
+    final g = _gen;
+    final rec = _rec!;
+    engine = 'pc';
+    await _holdWakeMicNow();
+    if (g != _gen) return;
+    bool ok;
+    try {
+      ok = await rec.start();
+    } catch (_) {
+      ok = false;
+    }
+    if (g != _gen) return;
+    if (!ok) {
+      _fail(DictationStatus.error(DictationIssue.audio));
+      return;
+    }
+    _set(DictationStatus.listening(toPc: true));
+    // No words stream in while recording: only the length cap applies.
+    _cancelTimers();
+    _hardCap = Timer(listenFor, () {
+      if (g == _gen && status.phase == DictationPhase.listening && engine == 'pc') unawaited(_finishPc(g));
+    });
+    unawaited(_pollPcLevel(g));
+  }
+
+  Future<void> _pollPcLevel(int g) async {
+    final rec = _rec;
+    if (rec is! _NativeRecorder) return;
+    while (g == _gen && status.phase == DictationPhase.listening && engine == 'pc') {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      try {
+        final amp = await deviceCall<int>('recordLevel') ?? 0;
+        if (g != _gen || status.phase != DictationPhase.listening) return;
+        final l = (amp / 12000).clamp(0.0, 1.0).toDouble();
+        if ((l - status.level).abs() >= 0.05) _set(status.copyWith(level: l));
+      } catch (_) {
+        return;
+      }
+    }
+  }
+
+  Future<void> _finishPc(int g) async {
+    final rec = _rec;
+    final send = pcTranscriber;
+    _cancelTimers();
+    _set(DictationStatus.processing(toPc: true));
+    Uint8List? audio;
+    try {
+      audio = await rec?.stop();
+    } catch (_) {}
+    _holdWakeMic(false);
+    if (g != _gen) return;
+    if (audio == null || audio.length < 200 || send == null) {
+      _fail(DictationStatus.error(DictationIssue.noSpeech));
+      return;
+    }
+    try {
+      final text = await send(audio, rec!.mimeType, _locale);
+      if (g != _gen) return;
+      _stopRequested = false;
+      _deliver(text);
+    } on PcTranscriptionError catch (e) {
+      if (g == _gen) _fail(DictationStatus.errorText(DictationIssue.failed, pcSttErrorText(e)));
+    } catch (e) {
+      if (g == _gen) _fail(DictationStatus.errorText(DictationIssue.failed, 'Transkripsi di PC gagal: $e'));
+    }
   }
 
   static DictationIssue _issueOf(Object e) {
@@ -723,6 +876,10 @@ class VoiceService extends ChangeNotifier {
     }
     _stopRequested = true;
     final g = _gen;
+    if (engine == 'pc') {
+      if (status.phase == DictationPhase.listening) await _finishPc(g);
+      return;
+    }
     final heard = _partial.trim().isNotEmpty;
     if (status.phase == DictationPhase.starting || engine == 'intent' || !heard) {
       // nothing to wait for

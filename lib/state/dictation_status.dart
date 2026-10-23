@@ -83,14 +83,15 @@ enum MicPermission { granted, denied, permanent }
 
 @immutable
 class DictationStatus {
-  const DictationStatus._(this.phase, {this.partial = '', this.level = 0, this.issue, this.message});
+  const DictationStatus._(this.phase, {this.partial = '', this.level = 0, this.issue, this.message, this.toPc = false});
 
   static const idle = DictationStatus._(DictationPhase.idle);
   static const starting = DictationStatus._(DictationPhase.starting);
 
-  factory DictationStatus.listening({String partial = '', double level = 0}) =>
-      DictationStatus._(DictationPhase.listening, partial: partial, level: level.clamp(0.0, 1.0).toDouble());
-  factory DictationStatus.processing({String partial = ''}) => DictationStatus._(DictationPhase.processing, partial: partial);
+  factory DictationStatus.listening({String partial = '', double level = 0, bool toPc = false}) =>
+      DictationStatus._(DictationPhase.listening, partial: partial, level: level.clamp(0.0, 1.0).toDouble(), toPc: toPc);
+  factory DictationStatus.processing({String partial = '', bool toPc = false}) =>
+      DictationStatus._(DictationPhase.processing, partial: partial, toPc: toPc);
   factory DictationStatus.error(DictationIssue issue, {String? detail}) =>
       DictationStatus._(DictationPhase.error, issue: issue, message: dictationMessage(issue, detail: detail));
 
@@ -99,6 +100,9 @@ class DictationStatus {
       DictationStatus._(DictationPhase.error, issue: issue, message: message);
 
   final DictationPhase phase;
+
+  /// Record-then-send: the audio is transcribed by the PC's local STT.
+  final bool toPc;
 
   /// Words heard so far (listening / processing).
   final String partial;
@@ -116,14 +120,15 @@ class DictationStatus {
   DictationAction get action => issue == null ? DictationAction.none : dictationActionFor(issue!);
 
   DictationStatus copyWith({String? partial, double? level}) =>
-      DictationStatus._(phase, partial: partial ?? this.partial, level: (level ?? this.level).clamp(0.0, 1.0).toDouble(), issue: issue, message: message);
+      DictationStatus._(phase,
+          partial: partial ?? this.partial, level: (level ?? this.level).clamp(0.0, 1.0).toDouble(), issue: issue, message: message, toPc: toPc);
 
   @override
   bool operator ==(Object other) =>
-      other is DictationStatus && other.phase == phase && other.partial == partial && other.level == level && other.issue == issue && other.message == message;
+      other is DictationStatus && other.phase == phase && other.partial == partial && other.level == level && other.issue == issue && other.message == message && other.toPc == toPc;
 
   @override
-  int get hashCode => Object.hash(phase, partial, level, issue, message);
+  int get hashCode => Object.hash(phase, partial, level, issue, message, toPc);
 
   @override
   String toString() => 'DictationStatus($phase${issue != null ? ', $issue' : ''}${partial.isNotEmpty ? ', "$partial"' : ''})';

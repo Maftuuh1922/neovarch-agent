@@ -48,6 +48,10 @@ class SettingsController extends ChangeNotifier {
   // voice
   bool readAloud = false;
   String sttLocale = 'id_ID';
+  /// Dictation route (1.4.9): `auto` (phone recogniser, PC as fallback) or `pc`.
+  String dictationEngine = 'auto';
+  /// Send the dictated text right away (off: it lands in the field to review).
+  bool dictationAutoSend = false;
   double ttsRate = 0.5;
 
   // behaviour
@@ -107,6 +111,8 @@ class SettingsController extends ChangeNotifier {
     showReasoning = p.getBool('showReasoning') ?? true;
     readAloud = p.getBool('readAloud') ?? false;
     sttLocale = p.getString('sttLocale') ?? 'id_ID';
+    dictationEngine = p.getString('dictationEngine') ?? 'auto';
+    dictationAutoSend = p.getBool('dictationAutoSend') ?? false;
     ttsRate = p.getDouble('ttsRate') ?? 0.5;
     onboarded = p.getBool('onboarded') ?? false;
     introSeen = p.getBool('introSeen') ?? false;
@@ -146,6 +152,8 @@ class SettingsController extends ChangeNotifier {
     p.setBool('showReasoning', showReasoning);
     p.setBool('readAloud', readAloud);
     p.setString('sttLocale', sttLocale);
+    p.setString('dictationEngine', dictationEngine);
+    p.setBool('dictationAutoSend', dictationAutoSend);
     p.setDouble('ttsRate', ttsRate);
     p.setBool('onboarded', onboarded);
     p.setBool('introSeen', introSeen);

@@ -144,6 +144,47 @@ class MainActivity : FlutterActivity() {
             .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Bicara sekarang…")
             .apply { if (!lang.isNullOrEmpty()) putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, lang.replace('_', '-')) }
 
+    private var recorder: android.media.MediaRecorder? = null
+    private var recordFile: java.io.File? = null
+
+    /** Starts a mono 16 kHz AAC recording into the cache; false when the mic can't open. */
+    private fun recordStart(): Boolean {
+        recordStop()
+        if (!granted(Manifest.permission.RECORD_AUDIO)) return false
+        val f = java.io.File(cacheDir, "nv-dictation.m4a")
+        return try {
+            @Suppress("DEPRECATION")
+            val r = if (Build.VERSION.SDK_INT >= 31) android.media.MediaRecorder(this) else android.media.MediaRecorder()
+            r.setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION)
+            r.setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+            r.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+            r.setAudioChannels(1)
+            r.setAudioSamplingRate(16000)
+            r.setAudioEncodingBitRate(32000)
+            r.setOutputFile(f.absolutePath)
+            r.prepare()
+            r.start()
+            recorder = r
+            recordFile = f
+            true
+        } catch (e: Exception) {
+            recorder = null
+            false
+        }
+    }
+
+    /** Stops the recording; the m4a bytes (null when nothing was recorded). */
+    private fun recordStop(): ByteArray? {
+        val r = recorder ?: return null
+        recorder = null
+        var ok = true
+        try { r.stop() } catch (e: Exception) { ok = false }
+        try { r.release() } catch (e: Exception) {}
+        val f = recordFile ?: return null
+        recordFile = null
+        return try { if (ok && f.exists()) f.readBytes() else null } catch (e: Exception) { null } finally { f.delete() }
+    }
+
     private fun speechCaps(): Map<String, Any> {
         val d = NvWakeService.modelDir(this)
         val intentOk = try {
@@ -256,6 +297,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         voskStop()
+        recordStop()
         super.onDestroy()
     }
 
@@ -434,6 +476,12 @@ class MainActivity : FlutterActivity() {
             }
             "voskDictate" -> voskStart(result)
             "voskStop" -> { voskStop(); result.success(true) }
+            // Record-then-send (1.4.9): plain AAC/m4a for the PC's local STT
+            // (/api/audio/transcribe) when the phone has no working recogniser.
+            "recordStart" -> result.success(recordStart())
+            "recordStop" -> result.success(recordStop())
+            "recordCancel" -> { recordStop(); result.success(true) }
+            "recordLevel" -> result.success(try { recorder?.maxAmplitude ?: 0 } catch (e: Exception) { 0 })
             "wakeTest" -> { NvWakeService.startTest(this); result.success(NvWakeService.status(this)) }
             "wakeHoldMic" -> result.success(NvWakeService.holdMic(call.argument<Boolean>("hold") == true))
             "wakeBackground" -> result.success(openBackgroundSettings(call.argument<String>("kind") ?: "autostart"))
