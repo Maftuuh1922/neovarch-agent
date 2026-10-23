@@ -9,7 +9,7 @@ import { sanitizeHtml, sanitizeSvg } from './sanitize'
 import { esc, wrapText } from './text'
 import { themeCss, themeVars, type VisualTheme } from './theme'
 
-export { looksLikeVisualBody, mermaidFamily, mermaidPartialTitle, mermaidToVisual, type MermaidConversion } from './mermaid'
+export { looksLikeVisualBody, type MermaidConversion, mermaidFamily, mermaidPartialTitle, mermaidToVisual } from './mermaid'
 export { partialTitle, VisualError } from './parse'
 export { renderSpec, SPEC_TYPES } from './render'
 export { DEFAULT_THEME_DARK, DEFAULT_THEME_LIGHT, themeCss, type VisualTheme } from './theme'

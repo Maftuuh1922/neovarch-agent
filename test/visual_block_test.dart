@@ -103,4 +103,110 @@ void main() {
     expect(find.byKey(const ValueKey('visual-failed')), findsOneWidget);
     expect(find.byType(CodeBlock), findsOneWidget);
   });
+
+  group('old ```mermaid / ```diagram blocks in the visual style', () {
+    const flow = '''Alur:
+
+```mermaid
+---
+title: Alur login
+---
+flowchart TD
+  A([Mulai]) --> B{Benar?}
+  B -->|Ya| C[Masuk]
+```
+''';
+
+    test('which fences convert', () {
+      expect(mermaidDrawsAsVisual('flowchart TD\n A-->B'), isTrue);
+      expect(mermaidDrawsAsVisual('%%{init: {}}%%\nsequenceDiagram\n A->>B: x'), isTrue);
+      expect(mermaidDrawsAsVisual('---\ntitle: x\n---\ntimeline\n 2026 : a'), isTrue);
+      expect(mermaidDrawsAsVisual('classDiagram\n A <|-- B'), isFalse);
+      expect(mermaidDrawsAsVisual('erDiagram\n A ||--o{ B : x'), isFalse);
+      expect(diagramKindFor('diagram', 'flowchart TD\n A-->B'), DiagramKind.mermaid);
+      expect(diagramKindFor('diagram', '{"type": "bar"}'), DiagramKind.visual);
+      expect(diagramKindFor('diagram', 'title: x\n---\n<svg viewBox="0 0 1 1"></svg>'), DiagramKind.visual);
+      expect(mermaidPartialTitle('---\ntitle: Alur login\n---\nflowchart TD'), 'Alur login');
+      expect(mermaidPartialTitle('sequenceDiagram\n  title Login\n A->>B: x'), 'Login');
+      expect(mermaidPartialTitle('pie title "Bahasa"\n "a" : 1'), 'Bahasa');
+      expect(mermaidPartialTitle('flowchart TD\n A-->B'), isNull);
+    });
+
+    testWidgets('a convertible mermaid fence becomes a visual card (mermaidVisual)', (t) async {
+      DiagramKind? seen;
+      DiagramBlock.debugPreviewBuilder = (c, code, kind, full, onResult) {
+        seen = kind;
+        WidgetsBinding.instance.addPostFrameCallback((_) => onResult(const DiagramRenderResult.ok(200, title: 'Alur login')));
+        return const SizedBox(key: ValueKey('fake-preview'));
+      };
+      await t.pumpWidget(_host(flow));
+      await t.pumpAndSettle();
+      expect(find.byType(VisualBlock), findsOneWidget);
+      expect(seen, DiagramKind.mermaidVisual);
+      expect(find.byKey(const ValueKey('visual-card')), findsOneWidget);
+      expect(find.text('Alur login'), findsOneWidget);
+      expect(find.text('Pratinjau'), findsNothing);
+    });
+
+    testWidgets('streaming mermaid shows the drawing placeholder with its title', (t) async {
+      DiagramBlock.debugPreviewBuilder = (c, code, kind, full, onResult) => const SizedBox();
+      await t.pumpWidget(_host('Alur:\n\n```mermaid\n---\ntitle: Alur login\n---\nflowchart TD\n  A --> '));
+      await t.pump();
+      expect(find.byKey(const ValueKey('visual-drawing')), findsOneWidget);
+      expect(find.text('Alur login'), findsOneWidget);
+    });
+
+    testWidgets('untitled mermaid gets the "Diagram" heading', (t) async {
+      DiagramBlock.debugPreviewBuilder = (c, code, kind, full, onResult) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => onResult(const DiagramRenderResult.ok(120)));
+        return const SizedBox();
+      };
+      await t.pumpWidget(_host('```mermaid\nflowchart LR\n  A --> B\n```\n'));
+      await t.pumpAndSettle();
+      expect(find.text('Diagram'), findsOneWidget);
+    });
+
+    testWidgets('syntax the converter rejects falls back to the classic mermaid block', (t) async {
+      final kinds = <DiagramKind>[];
+      DiagramBlock.debugPreviewBuilder = (c, code, kind, full, onResult) {
+        kinds.add(kind);
+        WidgetsBinding.instance.addPostFrameCallback((_) => onResult(kind == DiagramKind.mermaidVisual
+            ? const DiagramRenderResult.failed('unsupported mermaid')
+            : const DiagramRenderResult.ok(140)));
+        return Text('RENDERED ${kind.name}');
+      };
+      await t.pumpWidget(_host('```mermaid\nflowchart TD\n  subgraph X\n  A --> B\n  end\n```\n'));
+      await t.pumpAndSettle();
+      expect(kinds.first, DiagramKind.mermaidVisual);
+      expect(find.text('RENDERED mermaid'), findsOneWidget);
+      expect(find.text('Pratinjau'), findsOneWidget);
+      expect(find.byKey(const ValueKey('visual-card')), findsNothing);
+    });
+
+    testWidgets('without a WebView it shows the classic block with its code', (t) async {
+      await t.pumpWidget(_host(flow));
+      await t.pumpAndSettle();
+      expect(find.byType(DiagramBlock), findsOneWidget);
+      expect(find.text('gagal dirender — menampilkan kode'), findsOneWidget);
+    });
+
+    testWidgets('the menu switches to the original mermaid style and back', (t) async {
+      DiagramBlock.debugPreviewBuilder = (c, code, kind, full, onResult) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => onResult(const DiagramRenderResult.ok(140)));
+        return Text('RENDERED ${kind.name}');
+      };
+      await t.pumpWidget(_host(flow));
+      await t.pumpAndSettle();
+      await t.tap(find.byKey(const ValueKey('visual-menu')));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Gaya Mermaid asli'));
+      await t.pumpAndSettle();
+      expect(find.byKey(const ValueKey('visual-classic')), findsOneWidget);
+      expect(find.text('RENDERED mermaid'), findsOneWidget);
+      await t.tap(find.byKey(const ValueKey('visual-new-style')));
+      await t.pumpAndSettle();
+      expect(find.byKey(const ValueKey('visual-card')), findsOneWidget);
+      expect(find.text('RENDERED mermaidVisual'), findsOneWidget);
+    });
+  });
 }

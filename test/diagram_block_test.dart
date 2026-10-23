@@ -24,11 +24,14 @@ Widget _host(String md) => MaterialApp(
       home: Scaffold(body: SingleChildScrollView(child: MarkdownView(md))),
     );
 
+// A diagram type without a ```visual equivalent keeps the classic block
+// (flowcharts, sequences, timelines … now draw as visual cards, see
+// visual_block_test.dart).
 const _mermaid = '''Struktur:
 
 ```mermaid
-flowchart TD
-  A[Pemilik] --> B[Neovarch Agent]
+classDiagram
+  Pemilik <|-- Agent
 ```
 
 selesai''';
@@ -66,17 +69,17 @@ void main() {
     expect(find.text('Pratinjau'), findsOneWidget);
     expect(find.text('Kode'), findsOneWidget);
     expect(find.text('RENDERED mermaid'), findsOneWidget);
-    expect(find.textContaining('flowchart TD'), findsNothing);
+    expect(find.textContaining('classDiagram'), findsNothing);
     expect(find.byKey(const ValueKey('diagram-failed')), findsNothing);
 
     await t.tap(find.text('Kode'));
     await t.pumpAndSettle();
-    expect(find.textContaining('flowchart TD'), findsOneWidget);
+    expect(find.textContaining('classDiagram'), findsOneWidget);
     expect(find.byTooltip('Salin kode'), findsOneWidget);
 
     await t.tap(find.text('Pratinjau'));
     await t.pumpAndSettle();
-    expect(find.textContaining('flowchart TD'), findsNothing);
+    expect(find.textContaining('classDiagram'), findsNothing);
   });
 
   testWidgets('render error falls back to Kode with a note', (t) async {
@@ -88,14 +91,14 @@ void main() {
     await t.pumpAndSettle();
     expect(find.byKey(const ValueKey('diagram-failed')), findsOneWidget);
     expect(find.text('gagal dirender — menampilkan kode'), findsOneWidget);
-    expect(find.textContaining('flowchart TD'), findsOneWidget);
+    expect(find.textContaining('classDiagram'), findsOneWidget);
   });
 
   testWidgets('without a WebView (desktop/test host) it shows the code with the note', (t) async {
     await t.pumpWidget(_host(_mermaid));
     await t.pumpAndSettle();
     expect(find.text('gagal dirender — menampilkan kode'), findsOneWidget);
-    expect(find.textContaining('flowchart TD'), findsOneWidget);
+    expect(find.textContaining('classDiagram'), findsOneWidget);
   });
 
   testWidgets('while streaming it shows Kode, then flips to Pratinjau when the fence closes', (t) async {
@@ -105,27 +108,27 @@ void main() {
       WidgetsBinding.instance.addPostFrameCallback((_) => onResult(const DiagramRenderResult.ok(120)));
       return const Text('RENDERED');
     };
-    await t.pumpWidget(_host('Lihat:\n\n```mermaid\nflowchart TD'));
+    await t.pumpWidget(_host('Lihat:\n\n```mermaid\nclassDiagram'));
     await t.pumpAndSettle();
     expect(find.text('Pratinjau'), findsOneWidget);
     expect(find.byKey(const ValueKey('diagram-streaming')), findsOneWidget);
     expect(find.text('RENDERED'), findsNothing);
-    expect(find.textContaining('flowchart TD'), findsOneWidget);
+    expect(find.textContaining('classDiagram'), findsOneWidget);
     // Pratinjau is disabled until the block is complete.
     await t.tap(find.text('Pratinjau'));
     await t.pumpAndSettle();
     expect(find.text('RENDERED'), findsNothing);
 
-    await t.pumpWidget(_host('Lihat:\n\n```mermaid\nflowchart TD\n  A --> B'));
+    await t.pumpWidget(_host('Lihat:\n\n```mermaid\nclassDiagram\n  A <|-- B'));
     await t.pumpAndSettle();
-    expect(find.textContaining('A --> B'), findsOneWidget);
+    expect(find.textContaining('A <|-- B'), findsOneWidget);
     expect(renders, 0);
 
-    await t.pumpWidget(_host('Lihat:\n\n```mermaid\nflowchart TD\n  A --> B\n```\n\nSelesai'));
+    await t.pumpWidget(_host('Lihat:\n\n```mermaid\nclassDiagram\n  A <|-- B\n```\n\nSelesai'));
     await t.pumpAndSettle();
     expect(find.byKey(const ValueKey('diagram-streaming')), findsNothing);
     expect(find.text('RENDERED'), findsOneWidget);
-    expect(find.textContaining('A --> B'), findsNothing);
+    expect(find.textContaining('A <|-- B'), findsNothing);
     expect(renders, greaterThan(0));
   });
 

@@ -23,8 +23,8 @@ import {
   measureHtml,
   mermaidPartialTitle,
   partialTitle,
-  prepareMermaid,
   type PreparedVisual,
+  prepareMermaid,
   prepareVisual,
   svgCardHeight,
   type VisualTheme

@@ -268,6 +268,7 @@ function readGroup(s: string, pos: number, nodes: Map<string, FlowNode>): { end:
 
     if (s[i] === '&') {
       i += 1
+
       continue
     }
 
@@ -300,6 +301,7 @@ function parseFlowchart(lines: string[], title?: string): MermaidConversion {
 
     if (at) {
       title = title ?? cleanLabel(at[1])
+
       continue
     }
 
@@ -307,6 +309,7 @@ function parseFlowchart(lines: string[], title?: string): MermaidConversion {
 
     if (ad) {
       caption = cleanLabel(ad[1])
+
       continue
     }
 
@@ -315,6 +318,7 @@ function parseFlowchart(lines: string[], title?: string): MermaidConversion {
 
     if (cls) {
       cls[1].split(',').forEach(id => highlighted.add(id.trim()))
+
       continue
     }
 
@@ -563,12 +567,14 @@ function parseTimeline(lines: string[], title?: string): MermaidConversion {
 
     if ((m = /^title\s+(.+)$/i.exec(st))) {
       title = cleanLabel(m[1])
+
       continue
     }
 
     if ((m = /^section\s+(.+)$/i.exec(st))) {
       section = cleanLabel(m[1])
       sectionUsed = false
+
       continue
     }
 
@@ -586,6 +592,7 @@ function parseTimeline(lines: string[], title?: string): MermaidConversion {
       }
 
       last.note = [last.note, ...parts.slice(1).map(cleanLabel).filter(Boolean)].filter(Boolean).join(' · ')
+
       continue
     }
 
@@ -754,18 +761,26 @@ export function mermaidToVisual(code: string): MermaidConversion | null {
   try {
     switch (family) {
       case 'flowchart':
+
       case 'flowchart-elk':
+
       case 'graph':
         return parseFlowchart(lines, title)
+
       case 'sequencediagram':
         return parseSequence(lines, title)
+
       case 'timeline':
         return parseTimeline(lines, title)
+
       case 'pie':
         return parsePie(lines, title)
+
       case 'statediagram':
+
       case 'statediagram-v2':
         return parseState(lines, title)
+
       default:
         return null
     }
