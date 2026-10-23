@@ -1255,6 +1255,15 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
       } else {
         x0 = cx(a) - Math.min(col / 2 - 6, 70)
         x1 = cx(b) + Math.min(col / 2 - 6, 70)
+        // A note over one lifeline grows toward its text (up to ~two columns) so it isn't
+        // squeezed into a few clipped lines; it stays inside the diagram.
+        const want = Math.min(textWidth(str(m.note), 11.5) + 28, Math.max(col * 2 - 12, 240), w0 - 4)
+
+        if (x1 - x0 < want) {
+          const mid = (x0 + x1) / 2
+          x0 = Math.max(2, Math.min(mid - want / 2, w0 - 2 - want))
+          x1 = x0 + want
+        }
       }
 
       const lines = wrapText(str(m.note), 11.5, x1 - x0 - 16, 4)

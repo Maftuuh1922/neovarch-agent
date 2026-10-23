@@ -21,7 +21,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:neovarch_agent/remote/appearance.dart';
-import 'package:neovarch_agent/remote/ui/remote_app.dart' show PaletteScope, themeFor;
+import 'package:neovarch_agent/remote/ui/remote_app.dart' show PaletteScope;
 import 'package:neovarch_agent/theme/neovarch_mobile_theme.dart';
 import 'package:neovarch_agent/ui/widgets/diagram_block.dart';
 import 'package:neovarch_agent/ui/widgets/markdown_view.dart';
@@ -99,7 +99,9 @@ void main() {
     key: const ValueKey('shot'),
     child: MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: themeFor(look),
+      // Built fresh: themeFor() caches by revision, and every new controller
+      // starts at revision 0, so the light run would reuse the dark theme.
+      theme: buildNeovarchMobileTheme(),
       builder: (context, c) => PaletteScope(revision: look.revision, child: c!),
       home: Scaffold(
         backgroundColor: NV.bg,
