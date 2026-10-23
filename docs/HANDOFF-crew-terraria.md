@@ -1,6 +1,8 @@
 # Handoff: Crew bergaya game pixel (Terraria-like) — branch `nva-crew-terraria`
 
-Base: `main` @ eccd9eb. Pengguna merasa ruang pixel Crew dari PR #63 terlalu polos ("gak kayak game pixel Terraria").
+Base: `main` @ eccd9eb. Antrean v1.4.9 sesudahnya: [HANDOFF-v1.4.9.md](HANDOFF-v1.4.9.md).
+
+Base info: Pengguna merasa ruang pixel Crew dari PR #63 terlalu polos ("gak kayak game pixel Terraria").
 Tujuan: ulang ruang Crew jadi adegan game pixel side-view di desktop (Electron/React) dan HP (Flutter).
 
 ## Status
