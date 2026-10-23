@@ -596,14 +596,10 @@ function parseTimeline(lines: string[], title?: string): MermaidConversion {
       continue
     }
 
-    const date = cleanLabel(parts[0])
     const items = parts.slice(1).map(cleanLabel).filter(Boolean)
     const notes = items.slice(1)
-
-    // The first period of a mermaid section carries the section name as its note.
-    if (section && !sectionUsed) {
-      notes.unshift(section)
-    }
+    // The first period of a mermaid section carries the section name in its date ("2026 · Agustus").
+    const date = section && !sectionUsed ? `${section} · ${cleanLabel(parts[0])}` : cleanLabel(parts[0])
 
     sectionUsed = true
     events.push(

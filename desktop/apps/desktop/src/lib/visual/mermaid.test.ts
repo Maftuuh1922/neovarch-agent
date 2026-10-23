@@ -104,11 +104,11 @@ describe('mermaidToVisual', () => {
     expect(spec.title).toBe('Rilis Neovarch')
     const events = spec.events as Json[]
     expect(events.map(e => [e.date, e.label])).toEqual([
-      ['Agustus', 'v1.4.6'],
+      ['2026 · Agustus', 'v1.4.6'],
       ['September', 'v1.4.7'],
       ['Oktober', 'v1.4.8']
     ])
-    expect(events[0].note).toBe('2026')
+    expect(events[0].note).toBeUndefined()
     expect(events[1].note).toBe('Relay · Wi-Fi lokal')
   })
 

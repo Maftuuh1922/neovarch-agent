@@ -1157,7 +1157,9 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
 
   const headH = Math.max(...parts.map(p => p.lines.length)) * 16 + 16
   const out: string[] = []
+  // Group frames: panel + divider lines go under the lifelines, their labels on top (on a background chip).
   const frames: string[] = []
+  const frameLabels: string[] = []
   const groups: SeqGroup[] = []
   let y = headH + 20
   let maxX = w0
@@ -1165,26 +1167,38 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
   const auto = truthy(spec.autonumber)
   const idx = (id: unknown) => byId.get(str(id)) ?? 0
 
+  const chip = (lines: string[], x: number, y: number, size: number, anchor: 'start' | 'middle') => {
+    const w = Math.max(...lines.map(l => textWidth(l, size))) + 8
+    const h = lines.length * 15 + 2
+    const x0 = anchor === 'start' ? x - 4 : x - w / 2
+
+    return `<rect x="${r(x0)}" y="${r(y - 1)}" width="${r(w)}" height="${r(h)}" rx="3" class="nv-lbg"/>`
+  }
+
   const frame = (g: SeqGroup, y1: number) => {
     const inset = 3 + g.depth * 6
     const x0 = inset
     const x1 = w0 - inset
     const tagW = textWidth(g.kind, 11, true) + 14
-
-    return (
+    frames.push(
       `<rect x="${r(x0)}" y="${r(g.y0)}" width="${r(x1 - x0)}" height="${r(y1 - g.y0)}" rx="8" class="nv-panel"/>` +
-      `<path d="M${r(x0)},${r(g.y0 + 20)} H${r(x0 + tagW)} L${r(x0 + tagW + 6)},${r(g.y0 + 14)} V${r(g.y0)}" class="nv-edge" style="stroke:var(--nv-stroke);stroke-width:1"/>` +
-      textBlock([g.kind], x0 + 7, g.y0 + 10, { anchor: 'start', className: 'nv-t nv-b', size: 11 }) +
-      (g.label
-        ? textBlock(wrapText(`[${g.label}]`, 11.5, x1 - x0 - tagW - 24, 1), x0 + tagW + 14, g.y0 + 10, { anchor: 'start', className: 'nv-m', size: 11.5 })
-        : '') +
-      g.elses
-        .map(
-          e =>
-            `<line x1="${r(x0)}" x2="${r(x1)}" y1="${r(e.y + 4)}" y2="${r(e.y + 4)}" class="nv-axis" style="stroke-dasharray:5 4"/>` +
-            (e.label ? textBlock(wrapText(`[${e.label}]`, 11.5, x1 - x0 - 20, 1), x0 + 10, e.y + 15, { anchor: 'start', className: 'nv-m', size: 11.5 }) : '')
-        )
-        .join('')
+        g.elses
+          .map(e => `<line x1="${r(x0)}" x2="${r(x1)}" y1="${r(e.y + 4)}" y2="${r(e.y + 4)}" class="nv-axis" style="stroke-dasharray:5 4"/>`)
+          .join('')
+    )
+    const tagLines = [g.kind]
+    const label = g.label ? wrapText(`[${g.label}]`, 11.5, x1 - x0 - tagW - 24, 1) : []
+    const elseParts = g.elses.map(e => {
+      const lines = e.label ? wrapText(`[${e.label}]`, 11.5, x1 - x0 - 20, 1) : []
+
+      return lines.length ? chip(lines, x0 + 10, e.y + 8, 11.5, 'start') + textBlock(lines, x0 + 10, e.y + 15, { anchor: 'start', className: 'nv-m', size: 11.5 }) : ''
+    })
+    frameLabels.push(
+      `<path d="M${r(x0 + 1)},${r(g.y0 + 8)} V${r(g.y0 + 20)} H${r(x0 + tagW)} L${r(x0 + tagW + 6)},${r(g.y0 + 14)} V${r(g.y0 + 1)} H${r(x0 + 8)} Z" class="nv-lbg"/>` +
+        `<path d="M${r(x0)},${r(g.y0 + 20)} H${r(x0 + tagW)} L${r(x0 + tagW + 6)},${r(g.y0 + 14)} V${r(g.y0)}" class="nv-edge" style="stroke:var(--nv-stroke);stroke-width:1"/>` +
+        textBlock(tagLines, x0 + 7, g.y0 + 10, { anchor: 'start', className: 'nv-t nv-b', size: 11 }) +
+        (label.length ? chip(label, x0 + tagW + 14, g.y0 + 3, 11.5, 'start') + textBlock(label, x0 + tagW + 14, g.y0 + 10, { anchor: 'start', className: 'nv-m', size: 11.5 }) : '') +
+        elseParts.join('')
     )
   }
 
@@ -1210,7 +1224,7 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
       const g = groups.pop()
 
       if (g) {
-        frames.push(frame(g, y + 2))
+        frame(g, y + 2)
         y += 14
       }
 
@@ -1242,7 +1256,8 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
       const lines = wrapText(str(m.note), 11.5, x1 - x0 - 16, 4)
       const h = lines.length * 15 + 12
       out.push(
-        `<rect x="${r(x0)}" y="${r(y)}" width="${r(x1 - x0)}" height="${r(h)}" rx="6" style="fill:var(--nv-amber);fill-opacity:.12;stroke:var(--nv-amber);stroke-opacity:.55;stroke-width:1"/>` +
+        `<rect x="${r(x0)}" y="${r(y)}" width="${r(x1 - x0)}" height="${r(h)}" rx="6" class="nv-lbg"/>` +
+          `<rect x="${r(x0)}" y="${r(y)}" width="${r(x1 - x0)}" height="${r(h)}" rx="6" style="fill:var(--nv-amber);fill-opacity:.12;stroke:var(--nv-amber);stroke-opacity:.55;stroke-width:1"/>` +
           textBlock(lines, (x0 + x1) / 2, y + h / 2, { className: 'nv-t', lineHeight: 15, size: 11.5 })
       )
       maxX = Math.max(maxX, x1 + 2)
@@ -1277,7 +1292,8 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
       )
 
       if (lines.length) {
-        out.push(textBlock(lines, textX, y + 12, { anchor: 'start', className: cls, lineHeight: 15, size: 12 }))
+        const top = y + 12 - ((lines.length - 1) * 15) / 2 - 8
+        out.push(chip(lines, textX, top, 12, 'start') + textBlock(lines, textX, y + 12, { anchor: 'start', className: cls, lineHeight: 15, size: 12 }))
         maxX = Math.max(maxX, textX + Math.max(...lines.map(l => textWidth(l, 12, hl))) + 4)
       }
 
@@ -1292,7 +1308,7 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
     const dir = x2 > x1 ? 1 : -1
 
     if (lines.length) {
-      out.push(textBlock(lines, (x1 + x2) / 2, y, { baseline: 'top', className: cls, lineHeight: 15, size: 12 }))
+      out.push(chip(lines, (x1 + x2) / 2, y + 1, 12, 'middle') + textBlock(lines, (x1 + x2) / 2, y, { baseline: 'top', className: cls, lineHeight: 15, size: 12 }))
     }
 
     out.push(`<path class="nv-edge" style="${style}" d="M${r(x1 + (tail ? dir * 3 : 0))},${r(ly)} L${r(x2 - dir * 3)},${r(ly)}"${head}${tail}/>`)
@@ -1309,7 +1325,7 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
 
   // Unclosed groups (truncated source): close them at the bottom.
   while (groups.length) {
-    frames.push(frame(groups.pop()!, y))
+    frame(groups.pop()!, y)
     y += 8
   }
 
@@ -1332,7 +1348,11 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
     )
   })
 
-  return { body: frames.join('') + lifelines.join('') + heads.join('') + out.join(''), h: bottom + 2, w: Math.max(w0, maxX) }
+  return {
+    body: frames.join('') + lifelines.join('') + heads.join('') + out.join('') + frameLabels.join(''),
+    h: bottom + 2,
+    w: Math.max(w0, maxX)
+  }
 }
 
 // ---------------------------------------------------------------- compare ---
