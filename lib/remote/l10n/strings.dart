@@ -256,6 +256,7 @@ const enStrings = <String, String>{
   'Dipimpin manajer': 'Led by a manager',
   'Berurutan': 'One after another',
   'Manajer': 'Manager',
+  'Gedung crew: tiap anggota di mejanya': 'Crew building: each member at their desk',
   '{name} minta izin': '{name} asks for permission',
   'Anggota': 'Members',
   'Tanpa alat': 'No tools',

@@ -251,13 +251,23 @@ void main() {
     expect(find.text('Semua tes lulus'), findsOneWidget);
   });
 
-  test('pixel sprite matches the desktop map and animates only while working', () {
-    expect(crewSprite.every((r) => r.length == 12), isTrue);
+  test('pixel frames match the desktop generator and poses/layout mirror it', () {
+    for (final set in crewFrames.values) {
+      expect(set.every((f) => f.length == 21 && f.every((r) => r.length == 12)), isTrue);
+    }
     expect(crewPalettes, hasLength(10));
-    expect(crewSpriteRows('working', 0), isNot(crewSpriteRows('working', 1)));
-    expect(crewSpriteRows('done', 0), crewSpriteRows('done', 1));
-    expect(crewSpriteRows('idle', 1)[4], isNot(contains('e')));
-    expect(crewSpriteRows('working', 0), hasLength(13));
+    expect(crewFrameRows('type', 0), isNot(crewFrameRows('type', 2)));
+    expect(crewFrameRows('walk', 0), isNot(crewFrameRows('walk', 2)));
+    expect(crewFrameRows('idle', 23)[4], isNot(contains('e')));
+    expect(crewFrameRows('idle', 0)[4], contains('e'));
+    expect([crewPose('working', 'running'), crewPose('reviewing'), crewPose('waiting'), crewPose('done'), crewPose('error'), crewPose('idle', 'running'), crewPose('idle'), crewPose('working', 'proposed')],
+        ['type', 'walk', 'wait', 'cheer', 'slump', 'walk', 'idle', 'think']);
+    final phone = crewLayout(360, 3);
+    expect((phone.scale, phone.width, phone.cols, phone.floors), (3, 120, 2, 2));
+    final desk = crewLayout(644, 5);
+    expect((desk.scale, desk.cols, desk.floors), (3, 4, 2));
+    expect(crewLayout(1200, 4).scale, 4);
+    expect(enStrings.containsKey('Gedung crew: tiap anggota di mejanya'), isTrue);
   });
 
   test('models parse the core payload; English strings exist', () {

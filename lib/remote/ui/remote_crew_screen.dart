@@ -32,43 +32,77 @@ String crewErrorText(Object e) {
   return s.replaceFirst(RegExp(r'^(RpcError|Exception)[^:]*:\s*'), '');
 }
 
-/// Pixel seats for every member, two per row on a phone.
+/// The pixel building (every member in a desk bay acting out their status) and a roster under it.
 class CrewRoomGrid extends StatelessWidget {
   const CrewRoomGrid({super.key, required this.crew});
   final Crew crew;
+
+  String? _bubble(CrewMember m) {
+    if (crew.status == 'proposed') return m.role;
+    if (m.status == 'working') {
+      if (m.activity.isNotEmpty) return m.activity;
+      for (final t in crew.tasks) {
+        if (t.status == 'running' && t.memberId == m.id) return t.title;
+      }
+      return null;
+    }
+    if (m.status == 'waiting') return m.approval?.command ?? tr(crewMemberStatusLabel['waiting'] ?? 'waiting');
+    if (m.status == 'done' || m.status == 'error') return tr(crewMemberStatusLabel[m.status] ?? m.status);
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) => Container(
         key: const ValueKey('crew-room'),
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(color: NV.raised, borderRadius: NV.card, border: Border.all(color: NV.border)),
         child: LayoutBuilder(builder: (context, c) {
-          final w = (c.maxWidth - 10) / 2;
-          return Wrap(spacing: 10, runSpacing: 10, children: [
-            for (final m in crew.members)
-              Container(
-                key: ValueKey('crew-seat-${m.id}'),
-                width: w,
-                padding: const EdgeInsets.fromLTRB(6, 8, 6, 8),
-                decoration: BoxDecoration(
-                  color: NV.surface,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                      color: m.status == 'working' ? NV.red : m.status == 'waiting' ? const Color(0xFFF2B134) : NV.border),
+          final w = (c.maxWidth - 8) / 2;
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Center(
+                child: CrewScene(
+                  crewStatus: crew.status,
+                  accent: NV.red,
+                  label: tr('Gedung crew: tiap anggota di mejanya'),
+                  members: [
+                    for (final m in crew.members)
+                      CrewSceneMember(id: m.id, name: m.name, avatar: m.avatar, status: m.status, bubble: _bubble(m), manager: crew.manager == m.id),
+                  ],
                 ),
-                child: Column(children: [
-                  CrewStation(avatar: m.avatar, status: m.status, width: w * 0.78, chair: NV.border, accent: NV.red),
-                  const SizedBox(height: 4),
-                  Text(m.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: NV.text, fontWeight: FontWeight.w600, fontSize: 13.5)),
-                  Text(m.role, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: NV.muted, fontSize: 12)),
-                  Text(
-                    tr(crewMemberStatusLabel[m.status] ?? m.status) + (m.activity.isEmpty ? '' : ' · ${m.activity}'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: m.status == 'working' ? NV.redInk : NV.muted, fontSize: 11.5),
-                  ),
-                  if (crew.manager == m.id) Padding(padding: const EdgeInsets.only(top: 3), child: NvPill(tr('Manajer'), color: NV.red)),
-                ]),
               ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              for (final m in crew.members)
+                Container(
+                  key: ValueKey('crew-seat-${m.id}'),
+                  width: w,
+                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                  decoration: BoxDecoration(
+                    color: NV.surface,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: m.status == 'working' ? NV.red : m.status == 'waiting' ? const Color(0xFFF2B134) : NV.border),
+                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      Flexible(
+                          child: Text(m.name,
+                              maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: NV.text, fontWeight: FontWeight.w600, fontSize: 13.5))),
+                      if (crew.manager == m.id) Padding(padding: const EdgeInsets.only(left: 4), child: NvPill(tr('Manajer'), color: NV.red)),
+                    ]),
+                    Text(m.role, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: NV.muted, fontSize: 12)),
+                    Text(
+                      tr(crewMemberStatusLabel[m.status] ?? m.status) + (m.activity.isEmpty ? '' : ' · ${m.activity}'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: m.status == 'working' ? NV.redInk : NV.muted, fontSize: 11.5),
+                    ),
+                  ]),
+                ),
+            ]),
           ]);
         }),
       );
