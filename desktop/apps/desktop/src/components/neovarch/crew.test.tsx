@@ -14,7 +14,7 @@ vi.mock('@/store/gateway', async () => {
 const { emitGatewayEvent } = await import('@/contrib/events')
 const { $crew, $crews, CREW_INTRO_KEY } = await import('./crew-store')
 const { NeovarchCrewPage, CREW_TABS } = await import('./crew')
-const { CREW_PALETTES, CREW_SPRITE, spritePixels, CrewStation } = await import('./crew-pixel')
+const { CREW_FRAMES, CREW_PALETTES, crewLayout, crewPose, CrewScene, CrewStation, spritePixels } = await import('./crew-pixel')
 
 const { nvCrewAr, nvCrewDe, nvCrewEn, nvCrewEs, nvCrewFr, nvCrewId, nvCrewJa, nvCrewRu, nvCrewZh, nvCrewZhHant } =
   await import('@/i18n/nv-crew')
@@ -175,7 +175,7 @@ describe('Crew page', () => {
     )
     expect(document.querySelector('[data-member="m2"]')?.getAttribute('data-status')).toBe('waiting')
     expect(document.querySelector('.nv-crew-station[data-status="reviewing"]')).toBeTruthy()
-    expect(screen.getByText('npm test')).toBeTruthy()
+    expect(screen.getAllByText('npm test').length).toBe(2) // approval card + speech bubble
     expect(screen.getByText('Stop')).toBeTruthy()
     fireEvent.click(screen.getByText('Allow'))
     await waitFor(() =>
@@ -220,24 +220,65 @@ describe('Crew page', () => {
 })
 
 describe('pixel sprite', () => {
-  it('draws a 12×13 bust with ten palettes and animates by status', () => {
-    expect(CREW_SPRITE.every(r => r.length === 12)).toBe(true)
+  it('draws 12×21 side-view frames with ten palettes and animates by pose', () => {
+    for (const set of Object.values(CREW_FRAMES)) {
+      expect(set.length).toBeGreaterThan(0)
+      expect(set.every(f => f.length === 21 && f.every(r => r.length === 12))).toBe(true)
+    }
+
     expect(CREW_PALETTES).toHaveLength(10)
-    const a = spritePixels(0, 'working', 0)
-    const b = spritePixels(0, 'working', 1)
-    expect(a).not.toEqual(b)                                  // typing frames differ
-    expect(spritePixels(3, 'idle', 1).some(p => p.c === '#1a1010')).toBe(false) // blink: eyes closed
-    expect(spritePixels(13, 'done', 0)).toEqual(spritePixels(3, 'done', 0))
-    expect(Math.max(...a.map(p => p.y))).toBe(12)
+    expect(spritePixels(0, 'type', 0)).not.toEqual(spritePixels(0, 'type', 2)) // typing frames differ
+    expect(spritePixels(0, 'walk', 0)).not.toEqual(spritePixels(0, 'walk', 2))
+    expect(spritePixels(3, 'idle', 23).some(p => p.c === '#1a1010')).toBe(false) // blink: eyes closed
+    expect(spritePixels(3, 'idle', 0).some(p => p.c === '#1a1010')).toBe(true)
+    expect(spritePixels(13, 'cheer', 0)).toEqual(spritePixels(3, 'cheer', 0))
+    expect(Math.max(...spritePixels(0, 'idle', 0).map(p => p.y))).toBe(20)
   })
 
-  it('renders status bubbles', () => {
+  it('maps statuses to poses', () => {
+    expect(crewPose('working', 'running')).toBe('type')
+    expect(crewPose('reviewing', 'running')).toBe('walk')
+    expect(crewPose('waiting', 'running')).toBe('wait')
+    expect(crewPose('done', 'done')).toBe('cheer')
+    expect(crewPose('error', 'failed')).toBe('slump')
+    expect(crewPose('idle', 'running')).toBe('walk')
+    expect(crewPose('idle', 'done')).toBe('idle')
+    expect(crewPose('working', 'proposed')).toBe('think')
+  })
+
+  it('lays the building out at integer scale', () => {
+    const phone = crewLayout(360, 3)
+    expect(phone).toMatchObject({ cols: 2, floors: 2, scale: 3, width: 120 })
+    const desk = crewLayout(644, 5)
+    expect(desk).toMatchObject({ cols: 4, floors: 2, scale: 3 })
+    expect(crewLayout(1200, 4)).toMatchObject({ scale: 4, cols: 6, floors: 1 })
+    expect(crewLayout(200, 1).scale).toBe(2)
+    expect(desk.bays).toHaveLength(8)
+  })
+
+  it('renders the scene with bubbles, tags and stations', () => {
+    const { container } = render(
+      <CrewScene
+        crewStatus="running"
+        members={[
+          { avatar: 1, bubble: 'npm test', id: 'a', manager: true, name: 'Ana', status: 'waiting' },
+          { avatar: 2, bubble: 'Draft', id: 'b', name: 'Budi', status: 'working' }
+        ]}
+        width={644}
+      />
+    )
+    expect(container.querySelector('[data-crew-bubble="waiting"]')?.textContent).toBe('npm test')
+    expect(container.querySelector('.nv-crew-station[data-member="b"]')?.getAttribute('data-pose')).toBe('type')
+    expect(container.querySelector('.nv-crew-screen-lit')).toBeTruthy()
+    expect(container.querySelector('.nv-crew-star-badge')).toBeTruthy()
+    expect(container.querySelector('svg')?.getAttribute('width')).toBe(String(crewLayout(644, 2).width * 3))
+  })
+
+  it('renders solo stations for the intro', () => {
     const { container, rerender } = render(<CrewStation avatar={1} status="done" />)
     expect(container.querySelector('[data-crew-bubble="done"]')).toBeTruthy()
-    rerender(<CrewStation avatar={1} status="waiting" />)
-    expect(container.querySelector('[data-crew-bubble="waiting"]')).toBeTruthy()
     rerender(<CrewStation avatar={1} status="working" />)
-    expect(container.querySelector('.nv-crew-laptop-lit')).toBeTruthy()
+    expect(container.querySelector('.nv-crew-screen-lit')).toBeTruthy()
   })
 })
 

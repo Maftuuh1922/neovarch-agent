@@ -2119,6 +2119,7 @@
     "nvCrew.runAgain",
     "nvCrew.save",
     "nvCrew.saved",
+    "nvCrew.sceneLabel",
     "nvCrew.sideEffects",
     "nvCrew.sideEffectsConsent",
     "nvCrew.status.done",
