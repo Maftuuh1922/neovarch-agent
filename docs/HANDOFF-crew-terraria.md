@@ -6,8 +6,8 @@ Base info: Pengguna merasa ruang pixel Crew dari PR #63 terlalu polos ("gak kaya
 Tujuan: ulang ruang Crew jadi adegan game pixel side-view di desktop (Electron/React) dan HP (Flutter).
 
 ## Status
-- Sudah: konteks dibaca, branch dibuat, rencana desain di bawah. **Belum ada kode.**
-
+- DONE (487bff5): tool/crew_pixel/gen_crew_pixel.py (+ generated crew-pixel-data.ts / lib/remote/ui/crew_pixel_data.dart), desktop crew-pixel.tsx rewritten (crewPose, spritePixels(avatar,pose,tick), crewLayout, CrewScene, solo CrewStation), crew.tsx CrewRoom uses CrewScene + roster, CSS replaced, sceneLabel string in 10 locales + types.ts, crew.test.tsx "pixel sprite" rewritten.
+- Vitest crew.test.tsx 13/13 green via: cd desktop/apps/desktop && vitest run -c vt-local.config.ts --pool=forks --maxWorkers=1 --no-isolate src/components/neovarch/crew.test.tsx (main vite.config needs @rolldown/plugin-babel missing from shared node_modules; vt-local.config.ts is git-excluded, copy in patch dir). tsc not run locally.
 ## Aturan kerja
 - Commit identity: `Maftuuh1922 <145763168+Maftuuh1922@users.noreply.github.com>`, tanpa trailer/co-author.
 - PR berbahasa Indonesia. Squash-merge hanya bila semua CI hijau. Tanpa release/tag/deploy.

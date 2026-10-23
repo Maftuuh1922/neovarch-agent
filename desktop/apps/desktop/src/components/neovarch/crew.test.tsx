@@ -175,7 +175,7 @@ describe('Crew page', () => {
     )
     expect(document.querySelector('[data-member="m2"]')?.getAttribute('data-status')).toBe('waiting')
     expect(document.querySelector('.nv-crew-station[data-status="reviewing"]')).toBeTruthy()
-    expect(screen.getByText('npm test')).toBeTruthy()
+    expect(screen.getAllByText('npm test').length).toBe(2) // approval card + speech bubble
     expect(screen.getByText('Stop')).toBeTruthy()
     fireEvent.click(screen.getByText('Allow'))
     await waitFor(() =>
