@@ -54,7 +54,11 @@ class CrewLayout {
 
 /// Integer-scaled layout for [w] logical px holding [n] members (same math as the desktop).
 CrewLayout crewLayout(double w, int n) {
-  final scale = w >= 900 ? 4 : w >= 330 ? 3 : 2;
+  final scale = w >= 900
+      ? 4
+      : w >= 330
+      ? 3
+      : 2;
   final width = math.max(crewBayW + _util + _wall * 2, (w / scale).floor());
   final cols = math.max(1, math.min(6, ((width - _wall * 2 - _util) / crewBayW).floor()));
   return CrewLayout(scale, width, cols, math.max(1, (n / cols).ceil()));
@@ -62,13 +66,13 @@ CrewLayout crewLayout(double w, int n) {
 
 class _Pal {
   _Pal(bool dark)
-      : sky = dark ? const Color(0xFF141A33) : const Color(0xFF8FD3F4),
-        orb = dark ? const Color(0xFFF1ECD2) : const Color(0xFFFFD84A),
-        far = dark ? const Color(0xFF26314F) : const Color(0xFF7FB7A0),
-        near = dark ? const Color(0xFF1F3A33) : const Color(0xFF4F9A5D),
-        plank = dark ? const Color(0xFF5A3D27) : const Color(0xFFA0714A),
-        plankLine = dark ? const Color(0xFF432C1B) : const Color(0xFF85593A),
-        stars = dark;
+    : sky = dark ? const Color(0xFF141A33) : const Color(0xFF8FD3F4),
+      orb = dark ? const Color(0xFFF1ECD2) : const Color(0xFFFFD84A),
+      far = dark ? const Color(0xFF26314F) : const Color(0xFF7FB7A0),
+      near = dark ? const Color(0xFF1F3A33) : const Color(0xFF4F9A5D),
+      plank = dark ? const Color(0xFF5A3D27) : const Color(0xFFA0714A),
+      plankLine = dark ? const Color(0xFF432C1B) : const Color(0xFF85593A),
+      stars = dark;
   final Color sky, orb, far, near, plank, plankLine;
   final bool stars;
 }
@@ -90,7 +94,11 @@ void paintCrewFigure(Canvas c, int avatar, String pose, int tick, double x, doub
     for (var rx = 0; rx < row.length; rx++) {
       final k = row[rx];
       if (k == '.') continue;
-      final col = k == 'w' ? crewEyeWhite : k == 'e' ? crewPupil : pal[crewKeys.indexOf(k)];
+      final col = k == 'w'
+          ? crewEyeWhite
+          : k == 'e'
+          ? crewPupil
+          : pal[crewKeys.indexOf(k)];
       _px(c, p, x + (flip ? crewW - 1 - rx : rx), y + ry + hop, 1, 1, col);
     }
   }
@@ -114,23 +122,23 @@ class _Placed {
 }
 
 List<_Placed> _place(CrewLayout l, List<CrewSceneMember> ms, String? crewStatus, int tick) => [
-      for (var i = 0; i < ms.length; i++)
-        () {
-          final pose = crewPose(ms[i].status, crewStatus);
-          final bx = l.bayX(i), by = l.bayY(i);
-          var x = bx + 9.0;
-          var flip = false;
-          if (pose == 'walk') {
-            const span = 22;
-            final p = (tick + i * 7) % (span * 2);
-            x = bx + 2.0 + (p < span ? p : span * 2 - p);
-            flip = p >= span;
-          } else if (pose == 'wait' || pose == 'cheer' || pose == 'slump') {
-            x = bx + 6.0;
-          }
-          return _Placed(ms[i], pose, x, (by + crewFloorH - 4 - crewH).toDouble(), flip, bx, by);
-        }(),
-    ];
+  for (var i = 0; i < ms.length; i++)
+    () {
+      final pose = crewPose(ms[i].status, crewStatus);
+      final bx = l.bayX(i), by = l.bayY(i);
+      var x = bx + 9.0;
+      var flip = false;
+      if (pose == 'walk') {
+        const span = 22;
+        final p = (tick + i * 7) % (span * 2);
+        x = bx + 2.0 + (p < span ? p : span * 2 - p);
+        flip = p >= span;
+      } else if (pose == 'wait' || pose == 'cheer' || pose == 'slump') {
+        x = bx + 6.0;
+      }
+      return _Placed(ms[i], pose, x, (by + crewFloorH - 4 - crewH).toDouble(), flip, bx, by);
+    }(),
+];
 
 class CrewScenePainter extends CustomPainter {
   CrewScenePainter({required this.layout, required this.members, required this.crewStatus, required this.tick, required this.dark, required this.accent});
@@ -301,59 +309,72 @@ class _CrewSceneState extends State<CrewScene> with _CrewTicker {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    return LayoutBuilder(builder: (context, c) {
-      final l = crewLayout(c.maxWidth.isFinite ? c.maxWidth : 360, widget.members.length);
-      final s = l.scale.toDouble();
-      final placed = _place(l, widget.members, widget.crewStatus, tick);
-      return Semantics(
-        label: widget.label,
-        image: true,
-        child: SizedBox(
-          width: l.width * s,
-          height: l.height * s,
-          child: Stack(clipBehavior: Clip.hardEdge, children: [
-            Positioned.fill(
-              child: CustomPaint(
-                painter: CrewScenePainter(layout: l, members: widget.members, crewStatus: widget.crewStatus, tick: tick, dark: dark, accent: widget.accent),
-              ),
-            ),
-            for (final pl in placed)
-              Positioned(
-                key: ValueKey('crew-fig-${pl.m.id}'),
-                left: pl.x * s,
-                top: pl.y * s,
-                width: crewW * s,
-                height: crewH * s,
-                child: SizedBox(key: ValueKey('crew-station-${pl.m.status}')),
-              ),
-            for (final pl in placed)
-              Positioned(
-                key: ValueKey('crew-tag-${pl.m.id}'),
-                left: (pl.x + crewW / 2) * s - 60,
-                width: 120,
-                bottom: (l.height - pl.y + 2) * s,
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  if (pl.m.bubble != null && pl.m.bubble!.isNotEmpty) _Bubble(pl.m.bubble!, pl.m.status, think: pl.pose == 'think'),
-                  const SizedBox(height: 2),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                    decoration: BoxDecoration(color: const Color(0xB80A0A0E), borderRadius: BorderRadius.circular(3)),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      if (pl.m.manager) Container(width: 6, height: 6, margin: const EdgeInsets.only(right: 3), color: const Color(0xFFF2B134)),
-                      Flexible(
-                        child: Text(pl.m.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Color(0xFFF4F2ED), fontSize: 10, fontWeight: FontWeight.w600)),
-                      ),
-                    ]),
+    return LayoutBuilder(
+      builder: (context, c) {
+        final l = crewLayout(c.maxWidth.isFinite ? c.maxWidth : 360, widget.members.length);
+        final s = l.scale.toDouble();
+        final placed = _place(l, widget.members, widget.crewStatus, tick);
+        return Semantics(
+          label: widget.label,
+          image: true,
+          child: SizedBox(
+            width: l.width * s,
+            height: l.height * s,
+            child: Stack(
+              clipBehavior: Clip.hardEdge,
+              children: [
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: CrewScenePainter(layout: l, members: widget.members, crewStatus: widget.crewStatus, tick: tick, dark: dark, accent: widget.accent),
                   ),
-                ]),
-              ),
-          ]),
-        ),
-      );
-    });
+                ),
+                for (final pl in placed)
+                  Positioned(
+                    key: ValueKey('crew-fig-${pl.m.id}'),
+                    left: pl.x * s,
+                    top: pl.y * s,
+                    width: crewW * s,
+                    height: crewH * s,
+                    child: SizedBox(key: ValueKey('crew-station-${pl.m.status}')),
+                  ),
+                for (final pl in placed)
+                  Positioned(
+                    key: ValueKey('crew-tag-${pl.m.id}'),
+                    left: (pl.x + crewW / 2) * s - 60,
+                    width: 120,
+                    bottom: (l.height - pl.y + 2) * s,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (pl.m.bubble != null && pl.m.bubble!.isNotEmpty) _Bubble(pl.m.bubble!, pl.m.status, think: pl.pose == 'think'),
+                        const SizedBox(height: 2),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(color: const Color(0xB80A0A0E), borderRadius: BorderRadius.circular(3)),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (pl.m.manager) Container(width: 6, height: 6, margin: const EdgeInsets.only(right: 3), color: const Color(0xFFF2B134)),
+                              Flexible(
+                                child: Text(
+                                  pl.m.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(color: Color(0xFFF4F2ED), fontSize: 10, fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 }
 
@@ -366,20 +387,25 @@ class _Bubble extends StatelessWidget {
     final bg = status == 'waiting'
         ? const Color(0xFFF2B134)
         : status == 'error'
-            ? const Color(0xFFEE1C1C)
-            : status == 'done'
-                ? const Color(0xFF2F9E74)
-                : const Color(0xFFF4F2ED);
+        ? const Color(0xFFEE1C1C)
+        : status == 'done'
+        ? const Color(0xFF2F9E74)
+        : const Color(0xFFF4F2ED);
     final fg = status == 'error' || status == 'done' ? Colors.white : const Color(0xFF1A1010);
     return Container(
       key: ValueKey('crew-bubble-$status'),
       constraints: const BoxConstraints(maxWidth: 116),
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-      decoration: BoxDecoration(color: bg, border: Border.all(color: const Color(0xFF1A1010), width: 2)),
-      child: Text(text,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: fg, fontSize: 10, fontStyle: think ? FontStyle.italic : FontStyle.normal)),
+      decoration: BoxDecoration(
+        color: bg,
+        border: Border.all(color: const Color(0xFF1A1010), width: 2),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: fg, fontSize: 10, fontStyle: think ? FontStyle.italic : FontStyle.normal),
+      ),
     );
   }
 }
@@ -403,13 +429,13 @@ class _CrewStationState extends State<CrewStation> with _CrewTicker {
 
   @override
   Widget build(BuildContext context) => SizedBox(
-        width: widget.width,
-        height: widget.width * 28 / 32,
-        child: CustomPaint(
-          key: ValueKey('crew-station-${widget.status}'),
-          painter: _SoloPainter(widget.avatar, crewPose(widget.status), tick, widget.accent, widget.status),
-        ),
-      );
+    width: widget.width,
+    height: widget.width * 28 / 32,
+    child: CustomPaint(
+      key: ValueKey('crew-station-${widget.status}'),
+      painter: _SoloPainter(widget.avatar, crewPose(widget.status), tick, widget.accent, widget.status),
+    ),
+  );
 }
 
 class _SoloPainter extends CustomPainter {
@@ -430,7 +456,19 @@ class _SoloPainter extends CustomPainter {
     if (pose == 'type') _px(canvas, p, 22, 8, 6, 4, accent.toARGB32());
     paintCrewFigure(canvas, avatar, pose, tick, pose == 'type' ? 6 : 3, 3);
     if (status == 'done' || status == 'waiting' || status == 'error') {
-      _px(canvas, p, 13, 0, 5, 4, status == 'done' ? 0xFF2F9E74 : status == 'waiting' ? 0xFFF2B134 : 0xFFEE1C1C);
+      _px(
+        canvas,
+        p,
+        13,
+        0,
+        5,
+        4,
+        status == 'done'
+            ? 0xFF2F9E74
+            : status == 'waiting'
+            ? 0xFFF2B134
+            : 0xFFEE1C1C,
+      );
     }
     canvas.restore();
   }

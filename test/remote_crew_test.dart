@@ -22,10 +22,20 @@ import 'package:neovarch_agent/state/app_controller.dart' show settingsProvider;
 import 'package:neovarch_agent/state/settings_controller.dart';
 import 'package:neovarch_agent/theme/neovarch_mobile_theme.dart';
 
-Map<String, dynamic> member(String id, String name, String role, List<String> tools, {String status = 'idle', Map<String, dynamic>? approval}) =>
-    {'id': id, 'name': name, 'role': role, 'goal': '$role goal', 'tools': tools, 'model': '', 'avatar': int.parse(id.substring(1)), 'status': status, 'approval': ?approval};
+Map<String, dynamic> member(String id, String name, String role, List<String> tools, {String status = 'idle', Map<String, dynamic>? approval}) => {
+  'id': id,
+  'name': name,
+  'role': role,
+  'goal': '$role goal',
+  'tools': tools,
+  'model': '',
+  'avatar': int.parse(id.substring(1)),
+  'status': status,
+  'approval': ?approval,
+};
 
-Map<String, dynamic> crewJson({String status = 'proposed', List<Map<String, dynamic>>? members, List<Map<String, dynamic>>? tasks, String finalOutput = ''}) => {
+Map<String, dynamic> crewJson({String status = 'proposed', List<Map<String, dynamic>>? members, List<Map<String, dynamic>>? tasks, String finalOutput = ''}) =>
+    {
       'id': 'c1',
       'title': 'Bug login',
       'goal': 'Perbaiki bug login',
@@ -39,8 +49,14 @@ Map<String, dynamic> crewJson({String status = 'proposed', List<Map<String, dyna
       'final_output': finalOutput,
       'error': '',
       'created_at': 10,
-      'members': members ?? [member('m1', 'Arga', 'Manajer teknis', ['files']), member('m2', 'Fajar', 'Programmer', ['files', 'write', 'shell'])],
-      'tasks': tasks ??
+      'members':
+          members ??
+          [
+            member('m1', 'Arga', 'Manajer teknis', ['files']),
+            member('m2', 'Fajar', 'Programmer', ['files', 'write', 'shell']),
+          ],
+      'tasks':
+          tasks ??
           [
             {'id': 't1', 'title': 'Implementasi', 'description': 'ubah kode', 'member_id': 'm2', 'status': 'todo', 'output': ''},
           ],
@@ -112,22 +128,20 @@ void main() {
     addTearDown(tester.view.reset);
     final look = AppearanceController(prefs);
     var seg = segment;
-    await tester.pumpWidget(ProviderScope(
-      overrides: [
-        settingsProvider.overrideWith((ref) => settings),
-        remoteProvider.overrideWith((ref) => r),
-        appearanceProvider.overrideWith((ref) => look),
-      ],
-      child: MaterialApp(
-        theme: themeFor(look),
-        builder: (context, child) => PaletteScope(revision: look.revision, child: child!),
-        home: Scaffold(
-          body: StatefulBuilder(
-            builder: (context, set) => RemoteKantorTab(segment: seg, onSegment: (i) => set(() => seg = i), onOpenChat: () {}, onOpenApprovals: () {}),
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [settingsProvider.overrideWith((ref) => settings), remoteProvider.overrideWith((ref) => r), appearanceProvider.overrideWith((ref) => look)],
+        child: MaterialApp(
+          theme: themeFor(look),
+          builder: (context, child) => PaletteScope(revision: look.revision, child: child!),
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, set) => RemoteKantorTab(segment: seg, onSegment: (i) => set(() => seg = i), onOpenChat: () {}, onOpenApprovals: () {}),
+            ),
           ),
         ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
   }
 
@@ -198,16 +212,23 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('crew-propose')));
     await tester.pumpAndSettle();
     await push(
-        tester,
-        r,
-        crewJson(status: 'running', members: [
+      tester,
+      r,
+      crewJson(
+        status: 'running',
+        members: [
           member('m1', 'Arga', 'Manajer teknis', ['files'], status: 'reviewing'),
           member('m2', 'Fajar', 'Programmer', ['shell'], status: 'waiting', approval: {'session_id': 's9', 'request_id': 'apr-1', 'command': 'npm test'}),
-        ]));
+        ],
+      ),
+    );
     expect(find.byKey(const ValueKey('crew-station-waiting')), findsOneWidget);
     expect(find.byKey(const ValueKey('crew-station-reviewing')), findsOneWidget);
-    expect(find.text('npm test'), findsOneWidget);
-    await tester.tap(find.descendant(of: find.byKey(const ValueKey('crew-approval-m2')), matching: find.text('Izinkan sekali')));
+    expect(find.text('npm test'), findsNWidgets(2)); // approval card + speech bubble
+    final allowOnce = find.descendant(of: find.byKey(const ValueKey('crew-approval-m2')), matching: find.text('Izinkan sekali'));
+    await tester.ensureVisible(allowOnce);
+    await tester.pumpAndSettle();
+    await tester.tap(allowOnce);
     await tester.pumpAndSettle();
     expect(fake.approvals.single, ('s9', 'apr-1', 'once'));
     await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-stop')), 300, scrollable: visibleList());
@@ -243,7 +264,10 @@ void main() {
   });
 
   testWidgets('history opens a finished crew with its result', (tester) async {
-    final fake = FakeCrew()..list = [{'id': 'c1', 'title': 'Bug login', 'status': 'done', 'template': 'coding', 'done': 1, 'tasks': 1}];
+    final fake = FakeCrew()
+      ..list = [
+        {'id': 'c1', 'title': 'Bug login', 'status': 'done', 'template': 'coding', 'done': 1, 'tasks': 1},
+      ];
     await pump(tester, controller(fake));
     await tester.tap(find.byKey(const ValueKey('crew-history-c1')));
     await tester.pumpAndSettle();
@@ -260,8 +284,19 @@ void main() {
     expect(crewFrameRows('walk', 0), isNot(crewFrameRows('walk', 2)));
     expect(crewFrameRows('idle', 23)[4], isNot(contains('e')));
     expect(crewFrameRows('idle', 0)[4], contains('e'));
-    expect([crewPose('working', 'running'), crewPose('reviewing'), crewPose('waiting'), crewPose('done'), crewPose('error'), crewPose('idle', 'running'), crewPose('idle'), crewPose('working', 'proposed')],
-        ['type', 'walk', 'wait', 'cheer', 'slump', 'walk', 'idle', 'think']);
+    expect(
+      [
+        crewPose('working', 'running'),
+        crewPose('reviewing'),
+        crewPose('waiting'),
+        crewPose('done'),
+        crewPose('error'),
+        crewPose('idle', 'running'),
+        crewPose('idle'),
+        crewPose('working', 'proposed'),
+      ],
+      ['type', 'walk', 'wait', 'cheer', 'slump', 'walk', 'idle', 'think'],
+    );
     final phone = crewLayout(360, 3);
     expect((phone.scale, phone.width, phone.cols, phone.floors), (3, 120, 2, 2));
     final desk = crewLayout(644, 5);
@@ -277,8 +312,16 @@ void main() {
     expect(c.sideEffects, ['shell', 'write']);
     expect(c.tasks.single.memberId, 'm2');
     for (final s in [
-      'Crew', 'Lanjutan', 'Susun crew', 'Setujui & mulai', 'Kenalan dengan Crew', 'Hanya model gratis',
-      ...crewTemplateLabel.values, ...crewToolLabel.values, ...crewMemberStatusLabel.values, ...crewStatusLabel.values,
+      'Crew',
+      'Lanjutan',
+      'Susun crew',
+      'Setujui & mulai',
+      'Kenalan dengan Crew',
+      'Hanya model gratis',
+      ...crewTemplateLabel.values,
+      ...crewToolLabel.values,
+      ...crewMemberStatusLabel.values,
+      ...crewStatusLabel.values,
     ]) {
       expect(enStrings.containsKey(s), isTrue, reason: s);
     }
