@@ -157,6 +157,28 @@ _models: dict[tuple, Any] = {}
 _lock = threading.Lock()
 
 
+def _decode_av(path: str):
+    """Audio file → 16 kHz mono float32 (numpy), with PyAV (a faster-whisper dependency).
+
+    Done here instead of faster-whisper's own ``decode_audio``, which passes
+    ``metadata_errors=`` to ``av.open`` and breaks on PyAV ≥ 16 (seen with
+    faster-whisper 1.2.1 + av 19)."""
+    import av  # type: ignore[import-not-found]
+    import numpy as np  # type: ignore[import-not-found]
+    resampler = av.audio.resampler.AudioResampler(format="s16", layout="mono", rate=16000)
+    chunks = []
+    with av.open(path, mode="r") as container:
+        stream = container.streams.audio[0]
+        for frame in container.decode(stream):
+            for out in resampler.resample(frame):
+                chunks.append(out.to_ndarray().reshape(-1))
+        for out in resampler.resample(None):
+            chunks.append(out.to_ndarray().reshape(-1))
+    if not chunks:
+        raise SttError("bad_audio", "Rekaman kosong / tidak terbaca. / The recording is empty or unreadable.")
+    return np.concatenate(chunks).astype(np.float32) / 32768.0
+
+
 def _faster_whisper(path: str, s: dict) -> tuple[str, str | None]:
     from faster_whisper import WhisperModel  # type: ignore[import-not-found]
     key = (s["model"], s["device"], s["compute_type"])
@@ -167,7 +189,7 @@ def _faster_whisper(path: str, s: dict) -> tuple[str, str | None]:
             _models.clear()
             _models[key] = model
         lang = None if s["language"] in ("", "auto") else s["language"]
-        segments, info = model.transcribe(path, language=lang, beam_size=1, vad_filter=True)
+        segments, info = model.transcribe(_decode_av(path), language=lang, beam_size=1, vad_filter=True)
         text = " ".join(seg.text.strip() for seg in segments).strip()
     return text, getattr(info, "language", None)
 
