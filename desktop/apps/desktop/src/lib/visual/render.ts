@@ -1167,12 +1167,15 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
   const auto = truthy(spec.autonumber)
   const idx = (id: unknown) => byId.get(str(id)) ?? 0
 
-  const chip = (lines: string[], x: number, y: number, size: number, anchor: 'start' | 'middle') => {
+  // Background behind a label so lifelines don't run through it; inside group frames
+  // it repeats the frames' tint so it blends with the panel.
+  const chip = (lines: string[], x: number, y: number, size: number, anchor: 'start' | 'middle', depth: number) => {
     const w = Math.max(...lines.map(l => textWidth(l, size))) + 8
     const h = lines.length * 15 + 2
     const x0 = anchor === 'start' ? x - 4 : x - w / 2
+    const box = `x="${r(x0)}" y="${r(y - 1)}" width="${r(w)}" height="${r(h)}" rx="3"`
 
-    return `<rect x="${r(x0)}" y="${r(y - 1)}" width="${r(w)}" height="${r(h)}" rx="3" class="nv-lbg"/>`
+    return `<rect ${box} class="nv-lbg"/>` + `<rect ${box} style="fill:var(--nv-panel)"/>`.repeat(depth)
   }
 
   const frame = (g: SeqGroup, y1: number) => {
@@ -1191,13 +1194,14 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
     const elseParts = g.elses.map(e => {
       const lines = e.label ? wrapText(`[${e.label}]`, 11.5, x1 - x0 - 20, 1) : []
 
-      return lines.length ? chip(lines, x0 + 10, e.y + 8, 11.5, 'start') + textBlock(lines, x0 + 10, e.y + 15, { anchor: 'start', className: 'nv-m', size: 11.5 }) : ''
+      return lines.length ? chip(lines, x0 + 10, e.y + 8, 11.5, 'start', g.depth + 1) + textBlock(lines, x0 + 10, e.y + 15, { anchor: 'start', className: 'nv-m', size: 11.5 }) : ''
     })
     frameLabels.push(
       `<path d="M${r(x0 + 1)},${r(g.y0 + 8)} V${r(g.y0 + 20)} H${r(x0 + tagW)} L${r(x0 + tagW + 6)},${r(g.y0 + 14)} V${r(g.y0 + 1)} H${r(x0 + 8)} Z" class="nv-lbg"/>` +
+        `<path d="M${r(x0 + 1)},${r(g.y0 + 8)} V${r(g.y0 + 20)} H${r(x0 + tagW)} L${r(x0 + tagW + 6)},${r(g.y0 + 14)} V${r(g.y0 + 1)} H${r(x0 + 8)} Z" style="fill:var(--nv-panel)"/>`.repeat(g.depth + 1) +
         `<path d="M${r(x0)},${r(g.y0 + 20)} H${r(x0 + tagW)} L${r(x0 + tagW + 6)},${r(g.y0 + 14)} V${r(g.y0)}" class="nv-edge" style="stroke:var(--nv-stroke);stroke-width:1"/>` +
         textBlock(tagLines, x0 + 7, g.y0 + 10, { anchor: 'start', className: 'nv-t nv-b', size: 11 }) +
-        (label.length ? chip(label, x0 + tagW + 14, g.y0 + 3, 11.5, 'start') + textBlock(label, x0 + tagW + 14, g.y0 + 10, { anchor: 'start', className: 'nv-m', size: 11.5 }) : '') +
+        (label.length ? chip(label, x0 + tagW + 14, g.y0 + 3, 11.5, 'start', g.depth + 1) + textBlock(label, x0 + tagW + 14, g.y0 + 10, { anchor: 'start', className: 'nv-m', size: 11.5 }) : '') +
         elseParts.join('')
     )
   }
@@ -1257,6 +1261,7 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
       const h = lines.length * 15 + 12
       out.push(
         `<rect x="${r(x0)}" y="${r(y)}" width="${r(x1 - x0)}" height="${r(h)}" rx="6" class="nv-lbg"/>` +
+          `<rect x="${r(x0)}" y="${r(y)}" width="${r(x1 - x0)}" height="${r(h)}" rx="6" style="fill:var(--nv-panel)"/>`.repeat(groups.length) +
           `<rect x="${r(x0)}" y="${r(y)}" width="${r(x1 - x0)}" height="${r(h)}" rx="6" style="fill:var(--nv-amber);fill-opacity:.12;stroke:var(--nv-amber);stroke-opacity:.55;stroke-width:1"/>` +
           textBlock(lines, (x0 + x1) / 2, y + h / 2, { className: 'nv-t', lineHeight: 15, size: 11.5 })
       )
@@ -1293,7 +1298,7 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
 
       if (lines.length) {
         const top = y + 12 - ((lines.length - 1) * 15) / 2 - 8
-        out.push(chip(lines, textX, top, 12, 'start') + textBlock(lines, textX, y + 12, { anchor: 'start', className: cls, lineHeight: 15, size: 12 }))
+        out.push(chip(lines, textX, top, 12, 'start', groups.length) + textBlock(lines, textX, y + 12, { anchor: 'start', className: cls, lineHeight: 15, size: 12 }))
         maxX = Math.max(maxX, textX + Math.max(...lines.map(l => textWidth(l, 12, hl))) + 4)
       }
 
@@ -1308,7 +1313,7 @@ function renderSequence(spec: Json, ctx: Ctx): Box {
     const dir = x2 > x1 ? 1 : -1
 
     if (lines.length) {
-      out.push(chip(lines, (x1 + x2) / 2, y + 1, 12, 'middle') + textBlock(lines, (x1 + x2) / 2, y, { baseline: 'top', className: cls, lineHeight: 15, size: 12 }))
+      out.push(chip(lines, (x1 + x2) / 2, y + 1, 12, 'middle', groups.length) + textBlock(lines, (x1 + x2) / 2, y, { baseline: 'top', className: cls, lineHeight: 15, size: 12 }))
     }
 
     out.push(`<path class="nv-edge" style="${style}" d="M${r(x1 + (tail ? dir * 3 : 0))},${r(ly)} L${r(x2 - dir * 3)},${r(ly)}"${head}${tail}/>`)
