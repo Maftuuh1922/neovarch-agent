@@ -494,7 +494,7 @@ export const frOverrides = {
       recordingFailed: "Échec de l'enregistrement vocal",
       sayStopToEnd: phrase => `Dites « ${phrase} » pour terminer la conversation vocale.`,
       transcriptionFailed: 'Échec de la transcription vocale',
-      transcriptionUnavailable: "La transcription vocale n'est pas encore disponible.",
+      transcriptionUnavailable: "La transcription vocale nécessite un moteur local gratuit : installez `pip install faster-whisper` puis redémarrez Neovarch.",
       tryRecordingAgain: 'Essayez de réenregistrer.',
       unavailable: 'Voix indisponible',
       liveEnded: 'Session vocale en direct terminée',

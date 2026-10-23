@@ -1002,7 +1002,7 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, CrewApi, PcBackg
   Future<Map<String, dynamic>> transcribeAudio(Uint8List audio, String mimeType, {String? language}) async {
     final (status, bytes, _) = await _send('POST', '/api/audio/transcribe',
         headers: const {'Content-Type': 'application/json'},
-        body: utf8.encode(jsonEncode({'audio_base64': base64Encode(audio), 'mime_type': mimeType, if (language != null) 'language': language})),
+        body: utf8.encode(jsonEncode({'audio_base64': base64Encode(audio), 'mime_type': mimeType, 'language': ?language})),
         timeout: const Duration(seconds: 150));
     final text = utf8.decode(bytes, allowMalformed: true);
     if (status == 404) return {'ok': false, 'code': 'stt_unavailable', 'error': 'Neovarch PC belum mendukung transkripsi — perbarui aplikasi PC'};

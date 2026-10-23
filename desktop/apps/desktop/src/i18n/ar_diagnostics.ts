@@ -82,7 +82,7 @@ export const arDiagnostics = {
       recordingFailed: 'فشل التسجيل',
       sayStopToEnd: phrase => `قل "${phrase}" لإنهاء المحادثة الصوتية.`,
       transcriptionFailed: 'فشل التفريغ النصي',
-      transcriptionUnavailable: 'التفريغ النصي غير متاح.',
+      transcriptionUnavailable: 'يحتاج التفريغ النصي إلى محرك كلام محلي مجاني: ثبّت `pip install faster-whisper` ثم أعد تشغيل Neovarch.',
       tryRecordingAgain: 'حاول التسجيل مرة أخرى.',
       unavailable: 'الصوت غير متاح'
     },

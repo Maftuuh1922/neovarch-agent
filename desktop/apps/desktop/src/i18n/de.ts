@@ -494,7 +494,7 @@ export const deOverrides = {
       recordingFailed: 'Sprachaufnahme fehlgeschlagen',
       sayStopToEnd: phrase => `Sagen Sie „${phrase}“, um den Sprachchat zu beenden.`,
       transcriptionFailed: 'Sprachtranskription fehlgeschlagen',
-      transcriptionUnavailable: 'Sprachtranskription ist noch nicht verfügbar.',
+      transcriptionUnavailable: 'Sprachtranskription braucht eine kostenlose lokale Sprach-Engine: `pip install faster-whisper` installieren und Neovarch neu starten.',
       tryRecordingAgain: 'Versuchen Sie die Aufnahme erneut.',
       unavailable: 'Sprache nicht verfügbar',
       liveEnded: 'Live-Sprach-Session beendet',

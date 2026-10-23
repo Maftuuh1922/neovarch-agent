@@ -62,7 +62,7 @@ export const zhHantDiagnostics = {
       recordingFailed: '語音錄製失敗',
       sayStopToEnd: phrase => `說「${phrase}」即可結束語音對話。`,
       transcriptionFailed: '語音轉寫失敗',
-      transcriptionUnavailable: '語音轉寫暫不可用。',
+      transcriptionUnavailable: '語音轉寫需要免費的本地語音引擎：執行 `pip install faster-whisper` 後重新啟動 Neovarch。',
       tryRecordingAgain: '請再錄製一次。',
       unavailable: '語音不可用'
     },

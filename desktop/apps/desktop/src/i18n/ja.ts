@@ -250,7 +250,7 @@ export const jaOverrides = {
       recordingFailed: '音声録音に失敗しました',
       sayStopToEnd: phrase => `「${phrase}」と言うと音声チャットを終了できます。`,
       transcriptionFailed: '音声文字起こしに失敗しました',
-      transcriptionUnavailable: '音声文字起こしはまだ利用できません。',
+      transcriptionUnavailable: '音声文字起こしには無料のローカル音声エンジンが必要です。`pip install faster-whisper` を実行して Neovarch を再起動してください。',
       tryRecordingAgain: 'もう一度録音してください。',
       unavailable: '音声は利用できません'
     },

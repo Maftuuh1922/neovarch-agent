@@ -193,7 +193,6 @@ const enStrings = <String, String>{
   'Cek apakah PC sudah punya STT lokal.': 'Check whether the PC has local STT.',
   'Cek PC': 'Check PC',
   'Mengecek…': 'Checking…',
-  'Belum terhubung ke PC.': 'Not connected to a PC yet.',
   'STT PC siap: {engine} · model {model}': 'PC STT ready: {engine} · model {model}',
   'PC belum punya mesin STT. Di PC jalankan: {cmd}': 'The PC has no STT engine yet. On the PC run: {cmd}',
   'PC belum mendukung transkripsi — perbarui aplikasi PC.': "The PC doesn't support transcription yet — update the PC app.",

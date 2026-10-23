@@ -275,7 +275,7 @@ export const zhOverrides = {
       recordingFailed: '语音录制失败',
       sayStopToEnd: phrase => `说“${phrase}”即可结束语音对话。`,
       transcriptionFailed: '语音转写失败',
-      transcriptionUnavailable: '语音转写暂不可用。',
+      transcriptionUnavailable: '语音转写需要免费的本地语音引擎：运行 `pip install faster-whisper` 后重启 Neovarch。',
       tryRecordingAgain: '请再录一次。',
       unavailable: '语音不可用',
       liveEnded: '实时语音会话已结束',

@@ -35,6 +35,19 @@ describe('PC voice typing never crashes the composer', () => {
     expect(() => checkedTranscription(refusal)).toThrow('Dikte suara di PC belum tersedia')
   })
 
+  it('keeps a failed local STT run a plain error with the core message (not "unavailable")', () => {
+    let caught: unknown
+
+    try {
+      checkedTranscription({ ok: false, available: true, transcript: '', code: 'stt_failed', error: 'Transkripsi gagal (faster-whisper): oom' })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(isSttUnavailable(caught)).toBe(false)
+    expect((caught as Error).message).toContain('faster-whisper')
+  })
+
   it("treats an older core's quiet fallback (no transcript at all) the same way", () => {
     let caught: unknown
 

@@ -3051,7 +3051,7 @@ export const NEOVARCH_ID = {
       "playbackFailed": "Pemutaran suara gagal",
       "recordingFailed": "Perekaman suara gagal",
       "transcriptionFailed": "Gagal mengubah suara jadi teks",
-      "transcriptionUnavailable": "Dikte suara di PC belum tersedia. Ketik pesan, atau pakai mik di aplikasi HP.",
+      "transcriptionUnavailable": "Dikte suara di PC butuh mesin STT lokal gratis. Pasang dengan `pip install faster-whisper` lalu mulai ulang Neovarch, atau pakai mik di aplikasi HP.",
       "tryRecordingAgain": "Coba rekam lagi.",
       "unavailable": "Suara tidak tersedia"
     }

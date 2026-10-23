@@ -497,7 +497,7 @@ export const esOverrides = {
       recordingFailed: 'Falló la grabación de voz',
       sayStopToEnd: phrase => `Di "${phrase}" para terminar el chat de voz.`,
       transcriptionFailed: 'Falló la transcripción de voz',
-      transcriptionUnavailable: 'La transcripción de voz aún no está disponible.',
+      transcriptionUnavailable: 'La transcripción de voz necesita un motor local gratuito: instala `pip install faster-whisper` y reinicia Neovarch.',
       tryRecordingAgain: 'Prueba a grabar de nuevo.',
       unavailable: 'Voz no disponible',
       liveEnded: 'Sesión de voz en vivo finalizada',

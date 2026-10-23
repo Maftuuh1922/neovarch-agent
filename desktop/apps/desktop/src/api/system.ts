@@ -194,6 +194,9 @@ export function isSttUnavailable(error: unknown): error is SttUnavailableError {
   return error instanceof SttUnavailableError || (error as { code?: unknown } | null)?.code === 'stt_unavailable'
 }
 
+/** Typed failures of the core's local STT (faster-whisper / whisper.cpp) that are not "no engine". */
+const TRANSCRIPTION_FAILURES = new Set(['stt_failed', 'bad_audio', 'too_large'])
+
 /** A transcription answer the composer can trust: `transcript` is always a
  *  string. An answer without one (an older core's quiet fallback, a refusal)
  *  throws instead; before this the composer crashed on `undefined.trim()`. */
@@ -209,6 +212,12 @@ export function checkedTranscription(result: unknown): AudioTranscriptionRespons
   }
 
   const message = [r.error, r.message].find(m => typeof m === 'string' && m.trim()) as string | undefined
+
+  // The core's local STT ran but failed (bad audio, engine error): a real
+  // failure with the core's own message, not "voice typing unavailable".
+  if (r.ok === false && typeof r.code === 'string' && TRANSCRIPTION_FAILURES.has(r.code)) {
+    throw new Error(message || 'Voice transcription failed')
+  }
 
   if (r.code === 'stt_unavailable' || r.ok === false || typeof r.transcript !== 'string') {
     throw new SttUnavailableError(message || 'Speech-to-text is not available on this backend.')

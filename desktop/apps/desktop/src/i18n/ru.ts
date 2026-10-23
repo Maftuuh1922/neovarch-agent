@@ -250,7 +250,7 @@ export const ruOverrides = {
       recordingFailed: 'Не удалось записать голос',
       sayStopToEnd: phrase => `Скажите «${phrase}», чтобы закончить голосовой чат.`,
       transcriptionFailed: 'Не удалось расшифровать речь',
-      transcriptionUnavailable: 'Расшифровка речи пока недоступна.',
+      transcriptionUnavailable: 'Для расшифровки речи нужен бесплатный локальный движок: выполните `pip install faster-whisper` и перезапустите Neovarch.',
       tryRecordingAgain: 'Попробуйте записать ещё раз.',
       unavailable: 'Голос недоступен'
     },

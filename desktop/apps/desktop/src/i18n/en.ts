@@ -487,7 +487,7 @@ export const en: Translations = {
       sayStopToEnd: phrase => `Say "${phrase}" to end the voice chat.`,
       transcriptionFailed: 'Voice transcription failed',
       transcriptionUnavailable:
-        'Voice typing on the PC is not available yet. Type your message, or use the mic in the phone app.',
+        'Voice typing on the PC needs a free local speech engine. Install it with `pip install faster-whisper` and restart Neovarch, or use the mic in the phone app.',
       tryRecordingAgain: 'Try recording again.',
       unavailable: 'Voice unavailable',
       liveEnded: 'Live voice session ended',
