@@ -42,7 +42,7 @@ List<String> crewFrameRows(String pose, int tick) {
   return set[i];
 }
 
-const crewBayW = 40, crewFloorH = 48, _wall = 4, _util = 28, _sky = 16, _roof = 14, _ground = 12;
+const crewBayW = 36, crewFloorH = 48, _wall = 4, _util = 28, _sky = 16, _roof = 14, _ground = 12;
 
 class CrewLayout {
   CrewLayout(this.scale, this.width, this.cols, this.floors);
@@ -190,20 +190,20 @@ class CrewScenePainter extends CustomPainter {
       plank(_wall, winY + 10, w - _wall * 2, crewFloorH - 22);
       for (var c = 0; c < l.cols; c++) {
         final bx = _wall + c * crewBayW;
-        plank(bx, winY, 24, 10);
-        plank(bx + 36, winY, 4, 10);
-        _px(canvas, p, bx + 24, winY, 1, 10, 0xFF3A2616);
-        _px(canvas, p, bx + 35, winY, 1, 10, 0xFF3A2616);
-        _px(canvas, p, bx + 24, winY + 9, 12, 1, 0xFF3A2616);
+        plank(bx, winY, 22, 10);
+        plank(bx + 34, winY, 2, 10);
+        _px(canvas, p, bx + 22, winY, 1, 10, 0xFF3A2616);
+        _px(canvas, p, bx + 33, winY, 1, 10, 0xFF3A2616);
+        _px(canvas, p, bx + 22, winY + 9, 12, 1, 0xFF3A2616);
         // desk + monitor
         final fy = y + crewFloorH;
-        _px(canvas, p, bx + 20, fy - 16, 16, 2, 0xFFB07A52);
-        _px(canvas, p, bx + 21, fy - 14, 2, 10, 0xFF7A5236);
-        _px(canvas, p, bx + 33, fy - 14, 2, 10, 0xFF7A5236);
-        _px(canvas, p, bx + 25, fy - 24, 9, 7, 0xFF2B2B33);
-        _px(canvas, p, bx + 28, fy - 17, 3, 1, 0xFF9AA0A6);
+        _px(canvas, p, bx + 19, fy - 16, 16, 2, 0xFFB07A52);
+        _px(canvas, p, bx + 20, fy - 14, 2, 10, 0xFF7A5236);
+        _px(canvas, p, bx + 32, fy - 14, 2, 10, 0xFF7A5236);
+        _px(canvas, p, bx + 24, fy - 24, 9, 7, 0xFF2B2B33);
+        _px(canvas, p, bx + 27, fy - 17, 3, 1, 0xFF9AA0A6);
       }
-      plank(utilX, winY, _util, 10);
+      plank(_wall + l.cols * crewBayW, winY, utilX - _wall - l.cols * crewBayW + _util, 10);
       _px(canvas, p, _wall, y + crewFloorH - 4, w - _wall * 2, 4, 0xFF9A6A3F);
       _px(canvas, p, _wall, y + crewFloorH - 1, w - _wall * 2, 1, 0xFF6E4A2A);
       final fy = y + crewFloorH;
@@ -251,7 +251,7 @@ class CrewScenePainter extends CustomPainter {
     for (final pl in _place(l, members, crewStatus, tick)) {
       if (pl.pose == 'type') {
         _px(canvas, p, pl.bayX + 9, pl.y + 11, 3, 8, 0xFF3B3B44);
-        _px(canvas, p, pl.bayX + 26, pl.bayY + crewFloorH - 23, 7, 5, accent.toARGB32());
+        _px(canvas, p, pl.bayX + 25, pl.bayY + crewFloorH - 23, 7, 5, accent.toARGB32());
       }
       paintCrewFigure(canvas, pl.m.avatar, pl.pose, tick, pl.x, pl.y, flip: pl.flip);
       if (pl.pose == 'walk' && pl.m.status == 'reviewing') {

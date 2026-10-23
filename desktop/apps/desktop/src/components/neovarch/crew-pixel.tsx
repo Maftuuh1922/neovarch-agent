@@ -67,7 +67,7 @@ export function spritePixels(avatar: number, pose: CrewPose, tick: number): Px[]
   return out
 }
 
-export const BAY_W = 40
+export const BAY_W = 36
 export const FLOOR_H = 48
 const WALL = 4
 const UTIL_W = 28
@@ -226,14 +226,14 @@ function Shell({ id, layout }: { id: string; layout: CrewLayout }) {
               .filter(b => b.floor === f)
               .map(b => (
                 <g key={b.col}>
-                  <rect fill={`url(#${id}-plank)`} height={10} width={24} x={b.x} y={winY} />
-                  <rect fill={`url(#${id}-plank)`} height={10} width={4} x={b.x + 36} y={winY} />
-                  <rect className="nv-crew-frame-wood" height={10} width={1} x={b.x + 24} y={winY} />
-                  <rect className="nv-crew-frame-wood" height={10} width={1} x={b.x + 35} y={winY} />
-                  <rect className="nv-crew-frame-wood" height={1} width={12} x={b.x + 24} y={winY + 9} />
+                  <rect fill={`url(#${id}-plank)`} height={10} width={22} x={b.x} y={winY} />
+                  <rect fill={`url(#${id}-plank)`} height={10} width={2} x={b.x + 34} y={winY} />
+                  <rect className="nv-crew-frame-wood" height={10} width={1} x={b.x + 22} y={winY} />
+                  <rect className="nv-crew-frame-wood" height={10} width={1} x={b.x + 33} y={winY} />
+                  <rect className="nv-crew-frame-wood" height={1} width={12} x={b.x + 22} y={winY + 9} />
                 </g>
               ))}
-            <rect fill={`url(#${id}-plank)`} height={10} width={UTIL_W} x={utilX} y={winY} />
+            <rect fill={`url(#${id}-plank)`} height={10} width={utilX - WALL - layout.cols * BAY_W + UTIL_W} x={WALL + layout.cols * BAY_W} y={winY} />
             {/* floor slab */}
             <rect className="nv-crew-slab" height={4} width={width - WALL * 2} x={WALL} y={y + FLOOR_H - 4} />
             <rect className="nv-crew-slab-shade" height={1} width={width - WALL * 2} x={WALL} y={y + FLOOR_H - 1} />
@@ -270,11 +270,11 @@ function Shell({ id, layout }: { id: string; layout: CrewLayout }) {
       {/* desks */}
       {bays.map(b => (
         <g key={`d${b.floor}-${b.col}`}>
-          <rect className="nv-crew-desk" height={2} width={16} x={b.x + 20} y={b.y + FLOOR_H - 16} />
-          <rect className="nv-crew-desk-shade" height={10} width={2} x={b.x + 21} y={b.y + FLOOR_H - 14} />
-          <rect className="nv-crew-desk-shade" height={10} width={2} x={b.x + 33} y={b.y + FLOOR_H - 14} />
-          <rect className="nv-crew-monitor" height={7} width={9} x={b.x + 25} y={b.y + FLOOR_H - 24} />
-          <rect className="nv-crew-metal" height={1} width={3} x={b.x + 28} y={b.y + FLOOR_H - 17} />
+          <rect className="nv-crew-desk" height={2} width={16} x={b.x + 19} y={b.y + FLOOR_H - 16} />
+          <rect className="nv-crew-desk-shade" height={10} width={2} x={b.x + 20} y={b.y + FLOOR_H - 14} />
+          <rect className="nv-crew-desk-shade" height={10} width={2} x={b.x + 32} y={b.y + FLOOR_H - 14} />
+          <rect className="nv-crew-monitor" height={7} width={9} x={b.x + 24} y={b.y + FLOOR_H - 24} />
+          <rect className="nv-crew-metal" height={1} width={3} x={b.x + 27} y={b.y + FLOOR_H - 17} />
         </g>
       ))}
       {/* outer stone shell */}
@@ -379,7 +379,7 @@ export function CrewScene({
         {placed.map(({ bay, flip, m, pose, x, y }) => (
           <g className="nv-crew-station" data-member={m.id} data-pose={pose} data-status={m.status} key={m.id}>
             {pose === 'type' && <rect className="nv-crew-chair" height={8} width={3} x={bay.x + 9} y={y + 11} />}
-            {pose === 'type' && <rect className="nv-crew-screen-lit" height={5} width={7} x={bay.x + 26} y={bay.y + FLOOR_H - 23} />}
+            {pose === 'type' && <rect className="nv-crew-screen-lit" height={5} width={7} x={bay.x + 25} y={bay.y + FLOOR_H - 23} />}
             <Figure avatar={m.avatar} flip={flip} pose={pose} tick={tick} x={x} y={y} />
             {pose === 'walk' && m.status === 'reviewing' && (
               <g data-crew-clipboard="">
