@@ -3549,6 +3549,9 @@ export interface Translations extends NoticeTranslations {
     copyCode: string
     failed: string
     saveFailed: string
+    diagram: string
+    classicStyle: string
+    newStyle: string
   }
 
   /** Settings ▸ Tentang ▸ "Perbarui": git pull update (core/neovarch/pull_update.py) with a release fallback. */

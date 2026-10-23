@@ -20,13 +20,45 @@ import '../../theme/app_theme.dart';
 import '../../remote/ui/glass/liquid_glass.dart' show GlassCode, GlassForeground;
 import 'markdown_view.dart' show CodeBlock;
 
-enum DiagramKind { mermaid, svg, html, visual }
+/// [mermaidVisual] = an old ```mermaid / ```diagram block drawn in the
+/// ```visual style (converted to a spec by the bundled renderer, see
+/// [mermaidDrawsAsVisual]); [mermaid] = the classic mermaid drawing.
+enum DiagramKind { mermaid, svg, html, visual, mermaidVisual }
+
+/// Mermaid families the bundled renderer converts to ```visual specs. Other
+/// families (classDiagram, erDiagram, gantt, …) keep the classic drawing; so
+/// does syntax the converter rejects (the card falls back on its own).
+const mermaidVisualFamilies = {'flowchart', 'flowchart-elk', 'graph', 'sequencediagram', 'timeline', 'pie', 'statediagram', 'statediagram-v2'};
+
+/// First keyword of a mermaid source (after front matter, comments and directives), lower-case.
+String mermaidFamily(String code) {
+  var t = code.replaceAll('\r\n', '\n');
+  t = t.replaceFirst(RegExp(r'^\s*---\n[\s\S]*?\n---\s*\n'), '');
+  t = t.replaceAll(RegExp(r'%%\{[\s\S]*?\}%%'), '');
+  for (final line in t.split('\n')) {
+    final l = line.trim();
+    if (l.isEmpty || l.startsWith('%%')) continue;
+    return (RegExp(r'^([A-Za-z][\w-]*)').firstMatch(l)?.group(1) ?? '').toLowerCase();
+  }
+  return '';
+}
+
+/// The mermaid block's diagram type has a ```visual equivalent.
+bool mermaidDrawsAsVisual(String code) => mermaidVisualFamilies.contains(mermaidFamily(code));
+
+/// A ```diagram body that is really a ```visual block (JSON spec, SVG or HTML), not mermaid.
+bool looksLikeVisualBody(String code) {
+  final t = code.replaceFirst(RegExp(r'^\s*((title|judul|caption|keterangan)\s*:.*\n)*(\s*---\s*\n)?', caseSensitive: false), '').trimLeft();
+  return t.startsWith('{') || t.startsWith('<');
+}
 
 /// Which diagram (if any) a fenced block or file holds. [lang] is the fence
 /// info string or a file extension.
 DiagramKind? diagramKindFor(String? lang, String code) {
   final l = (lang ?? '').trim().toLowerCase().split(RegExp(r'\s+')).first;
   if (l == 'mermaid' || l == 'mmd') return DiagramKind.mermaid;
+  // ```diagram: a ```visual body (JSON/SVG/HTML) or mermaid source.
+  if (l == 'diagram') return looksLikeVisualBody(code) ? DiagramKind.visual : DiagramKind.mermaid;
   if (l == 'svg') return DiagramKind.svg;
   // ```visual: declarative spec / SVG / HTML+CSS card (see visual_block.dart).
   if (l == 'visual') return DiagramKind.visual;
@@ -179,6 +211,7 @@ class _DiagramBlockState extends State<DiagramBlock> {
         DiagramKind.svg => 'svg',
         DiagramKind.html => 'html',
         DiagramKind.visual => 'visual',
+        DiagramKind.mermaidVisual => 'mermaid',
       };
 
   void _openFullscreen() {
@@ -387,7 +420,9 @@ class _DiagramFullscreenState extends State<DiagramFullscreen> {
                 child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                   Text('gagal dirender — menampilkan kode', style: TextStyle(fontSize: 12, color: context.hc.mutedForeground)),
                   const SizedBox(height: 8),
-                  CodeBlock(code: widget.code, language: widget.kind == DiagramKind.mermaid ? null : 'xml'),
+                  CodeBlock(
+                      code: widget.code,
+                      language: widget.kind == DiagramKind.mermaid || widget.kind == DiagramKind.mermaidVisual ? null : 'xml'),
                 ]),
               )
             : DiagramBlock.preview(context, widget.code, widget.kind, true, (r) {

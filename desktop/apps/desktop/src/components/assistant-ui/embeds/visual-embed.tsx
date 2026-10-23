@@ -21,7 +21,9 @@ import {
   exportSvg,
   frameDocument,
   measureHtml,
+  mermaidPartialTitle,
   partialTitle,
+  prepareMermaid,
   type PreparedVisual,
   prepareVisual,
   svgCardHeight,
@@ -146,9 +148,13 @@ function Frame({ height, theme, visual, width }: { height: number; theme: Visual
   )
 }
 
-function Card({ children, className }: { children: ReactNode; className?: string }) {
+function Card({ children, className, source }: { children: ReactNode; className?: string; source?: string }) {
   return (
-    <div className={cn('nv-visual-card my-2 overflow-hidden rounded-xl border border-border/70 bg-card', className)} data-testid="visual-card">
+    <div
+      className={cn('nv-visual-card my-2 overflow-hidden rounded-xl border border-border/70 bg-card', className)}
+      data-source={source}
+      data-testid="visual-card"
+    >
       {children}
     </div>
   )
@@ -165,9 +171,20 @@ function Header({ children, title }: { children?: ReactNode; title: string }) {
   )
 }
 
-export default function VisualRenderer({ code, streaming }: RichFenceProps) {
+export interface VisualRendererProps extends RichFenceProps {
+  /** mermaid = an old ```mermaid / ```diagram block converted to a spec (lib/visual/mermaid.ts). */
+  mode?: 'visual' | 'mermaid'
+  /** Offered in the menu for converted mermaid blocks: switch to the classic mermaid drawing. */
+  onClassic?: () => void
+}
+
+export default function VisualRenderer({ code, mode = 'visual', onClassic, streaming }: VisualRendererProps) {
   const { t } = useI18n()
   const s = t.nvVisual
+  const fromMermaid = mode === 'mermaid'
+  const prepare = fromMermaid ? prepareMermaid : prepareVisual
+  const titleOf = (text: string) => (fromMermaid ? mermaidPartialTitle(text) : partialTitle(text))
+  const defaultTitle = fromMermaid ? s.diagram : s.label
   const theme = useVisualTheme()
   const [bodyRef, width] = useWidth<HTMLDivElement>()
   const [showCode, setShowCode] = useState(false)
@@ -184,11 +201,11 @@ export default function VisualRenderer({ code, streaming }: RichFenceProps) {
     }
 
     try {
-      return { visual: prepareVisual(code, layoutWidth ? { width: layoutWidth } : {}) }
+      return { visual: prepare(code, layoutWidth ? { width: layoutWidth } : {}) }
     } catch (error) {
       return { error: (error as Error).message || 'error' }
     }
-  }, [code, streaming, layoutWidth])
+  }, [code, streaming, layoutWidth, prepare])
 
   const visual = result.visual
   const maxInline = typeof window === 'undefined' ? 900 : Math.round(window.innerHeight * 0.7)
@@ -213,8 +230,8 @@ export default function VisualRenderer({ code, streaming }: RichFenceProps) {
 
   if (streaming) {
     return (
-      <Card>
-        <Header title={partialTitle(code) || s.label} />
+      <Card source={mode}>
+        <Header title={titleOf(code) || defaultTitle} />
         <div aria-busy="true" className="flex h-36 items-center justify-center gap-2 text-xs text-muted-foreground" data-testid="visual-drawing">
           <span className="flex gap-1">
             <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/60" />
@@ -229,8 +246,8 @@ export default function VisualRenderer({ code, streaming }: RichFenceProps) {
 
   if (!visual) {
     return (
-      <Card>
-        <Header title={partialTitle(code) || s.label} />
+      <Card source={mode}>
+        <Header title={titleOf(code) || defaultTitle} />
         <div className="px-3.5 pt-1 text-xs text-destructive" data-testid="visual-failed" title={result.error}>
           {s.failed}
         </div>
@@ -264,8 +281,8 @@ export default function VisualRenderer({ code, streaming }: RichFenceProps) {
       : measureHtml(visual, theme, fullWidth)
 
   return (
-    <Card>
-      <Header title={visual.title || s.label}>
+    <Card source={mode}>
+      <Header title={visual.title || defaultTitle}>
         <button
           aria-label={s.fullscreen}
           className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -294,6 +311,12 @@ export default function VisualRenderer({ code, streaming }: RichFenceProps) {
               <Maximize className="size-3.5" />
               {s.fullscreen}
             </DropdownMenuItem>
+            {onClassic && (
+              <DropdownMenuItem data-testid="visual-classic" onSelect={onClassic}>
+                <FileImage className="size-3.5" />
+                {s.classicStyle}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onSelect={() =>

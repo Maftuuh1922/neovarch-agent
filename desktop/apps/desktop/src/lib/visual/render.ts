@@ -132,6 +132,8 @@ interface GNode {
 }
 
 interface GEdge {
+  /** false = a plain line without an arrowhead (flow only). */
+  arrow?: boolean
   color?: string
   dashed: boolean
   from: string
@@ -195,6 +197,7 @@ export function readEdges(raw: unknown[], ids: Set<string>): GEdge[] {
     } else {
       const o = obj(item)
       e = {
+        arrow: o.arrow === false || o.arrow === 'false' ? false : undefined,
         color: colorOf(o.color),
         dashed: truthy(o.dashed),
         from: str(o.from ?? o.source),
@@ -779,7 +782,7 @@ function renderFlow(spec: Json, ctx: Ctx): Box {
     const b = byId.get(e.to)!
     const color = e.color ?? (e.highlight ? 'var(--nv-blue)' : 'var(--nv-line)')
     const style = `stroke:${color};stroke-width:${e.highlight ? 2.2 : 1.6}${e.dashed ? ';stroke-dasharray:5 4' : ''}`
-    const arrow = ` marker-end="url(#${marker(ctx, color)})"`
+    const arrow = e.arrow === false ? '' : ` marker-end="url(#${marker(ctx, color)})"`
 
     if (back.has(e)) {
       // Loop back around the outside: right side of a vertical flow, below a horizontal one.
@@ -1086,6 +1089,252 @@ function renderTimeline(spec: Json, ctx: Ctx): Box {
   return { body: axis + dots.join('') + parts.join(''), h: y - 6, w: textX + textW }
 }
 
+// --------------------------------------------------------------- sequence ---
+
+interface SeqPart {
+  actor: boolean
+  color?: string
+  highlight: boolean
+  id: string
+  lines: string[]
+}
+
+interface SeqGroup {
+  depth: number
+  elses: { label: string; y: number }[]
+  kind: string
+  label: string
+  y0: number
+}
+
+function renderSequence(spec: Json, ctx: Ctx): Box {
+  const parts: SeqPart[] = []
+  const byId = new Map<string, number>()
+  const msgs = arr(spec.messages ?? spec.steps ?? spec.items).map(obj)
+
+  const add = (raw: unknown) => {
+    const o = typeof raw === 'string' ? { id: raw } : obj(raw)
+    const id = str(o.id ?? o.name ?? o.label)
+
+    if (!id || byId.has(id)) {
+      return
+    }
+
+    byId.set(id, parts.length)
+    parts.push({ actor: truthy(o.actor), color: colorOf(o.color), highlight: truthy(o.highlight), id, lines: [str(o.label, id)] })
+  }
+
+  arr(spec.participants ?? spec.actors).forEach(add)
+
+  for (const m of msgs) {
+    if (m.from !== undefined) {
+      add(str(m.from))
+      add(str(m.to ?? m.from))
+    }
+
+    arr(m.over).forEach(add)
+  }
+
+  if (!parts.length) {
+    throw new Error('sequence: participants is empty')
+  }
+
+  if (parts.length > 10) {
+    throw new Error('sequence: at most 10 participants')
+  }
+
+  const n = parts.length
+  const avail = ctx.avail ?? 680
+  // Column per participant: as wide as the space allows, never so narrow a label can't sit between two lifelines.
+  const col = Math.max(92, Math.min(180, Math.floor(avail / n)))
+  const w0 = col * n
+  const cx = (i: number) => col / 2 + i * col
+  const headW = col - 14
+
+  for (const p of parts) {
+    p.lines = wrapText(p.lines[0], 12.5, headW - 14, 2, true)
+  }
+
+  const headH = Math.max(...parts.map(p => p.lines.length)) * 16 + 16
+  const out: string[] = []
+  const frames: string[] = []
+  const groups: SeqGroup[] = []
+  let y = headH + 20
+  let maxX = w0
+  let num = 0
+  const auto = truthy(spec.autonumber)
+  const idx = (id: unknown) => byId.get(str(id)) ?? 0
+
+  const frame = (g: SeqGroup, y1: number) => {
+    const inset = 3 + g.depth * 6
+    const x0 = inset
+    const x1 = w0 - inset
+    const tagW = textWidth(g.kind, 11, true) + 14
+
+    return (
+      `<rect x="${r(x0)}" y="${r(g.y0)}" width="${r(x1 - x0)}" height="${r(y1 - g.y0)}" rx="8" class="nv-panel"/>` +
+      `<path d="M${r(x0)},${r(g.y0 + 20)} H${r(x0 + tagW)} L${r(x0 + tagW + 6)},${r(g.y0 + 14)} V${r(g.y0)}" class="nv-edge" style="stroke:var(--nv-stroke);stroke-width:1"/>` +
+      textBlock([g.kind], x0 + 7, g.y0 + 10, { anchor: 'start', className: 'nv-t nv-b', size: 11 }) +
+      (g.label
+        ? textBlock(wrapText(`[${g.label}]`, 11.5, x1 - x0 - tagW - 24, 1), x0 + tagW + 14, g.y0 + 10, { anchor: 'start', className: 'nv-m', size: 11.5 })
+        : '') +
+      g.elses
+        .map(
+          e =>
+            `<line x1="${r(x0)}" x2="${r(x1)}" y1="${r(e.y + 4)}" y2="${r(e.y + 4)}" class="nv-axis" style="stroke-dasharray:5 4"/>` +
+            (e.label ? textBlock(wrapText(`[${e.label}]`, 11.5, x1 - x0 - 20, 1), x0 + 10, e.y + 15, { anchor: 'start', className: 'nv-m', size: 11.5 }) : '')
+        )
+        .join('')
+    )
+  }
+
+  for (const m of msgs) {
+    if (m.group !== undefined) {
+      groups.push({ depth: groups.length, elses: [], kind: str(m.group, 'loop'), label: str(m.label), y0: y })
+      y += 30
+      continue
+    }
+
+    if (m.else !== undefined) {
+      const g = groups[groups.length - 1]
+
+      if (g) {
+        g.elses.push({ label: str(m.else).trim(), y })
+        y += 26
+      }
+
+      continue
+    }
+
+    if (m.end !== undefined) {
+      const g = groups.pop()
+
+      if (g) {
+        frames.push(frame(g, y + 2))
+        y += 14
+      }
+
+      continue
+    }
+
+    if (m.note !== undefined) {
+      const over = arr(m.over).map(idx)
+      const a = over.length ? Math.min(...over) : 0
+      const b = over.length ? Math.max(...over) : a
+      const side = str(m.side)
+      let x0: number
+      let x1: number
+
+      if (side === 'left' || side === 'right') {
+        const nw = Math.min(col - 10, 150)
+        x0 = side === 'left' ? cx(a) - nw - 6 : cx(a) + 6
+        x1 = x0 + nw
+
+        if (x0 < 2) {
+          x1 += 2 - x0
+          x0 = 2
+        }
+      } else {
+        x0 = cx(a) - Math.min(col / 2 - 6, 70)
+        x1 = cx(b) + Math.min(col / 2 - 6, 70)
+      }
+
+      const lines = wrapText(str(m.note), 11.5, x1 - x0 - 16, 4)
+      const h = lines.length * 15 + 12
+      out.push(
+        `<rect x="${r(x0)}" y="${r(y)}" width="${r(x1 - x0)}" height="${r(h)}" rx="6" style="fill:var(--nv-amber);fill-opacity:.12;stroke:var(--nv-amber);stroke-opacity:.55;stroke-width:1"/>` +
+          textBlock(lines, (x0 + x1) / 2, y + h / 2, { className: 'nv-t', lineHeight: 15, size: 11.5 })
+      )
+      maxX = Math.max(maxX, x1 + 2)
+      y += h + 14
+      continue
+    }
+
+    if (m.from === undefined) {
+      continue
+    }
+
+    const fi = idx(m.from)
+    const ti = idx(m.to ?? m.from)
+    const hl = truthy(m.highlight)
+    const color = colorOf(m.color) ?? (hl ? 'var(--nv-blue)' : 'var(--nv-line)')
+    const style = `stroke:${color};stroke-width:${hl ? 2.1 : 1.5}${truthy(m.dashed) ? ';stroke-dasharray:5 4' : ''}`
+    const head = truthy(m.open) ? '' : ` marker-end="url(#${marker(ctx, color)})"`
+    const tail = truthy(m.two) ? ` marker-start="url(#${marker(ctx, color)})"` : ''
+    num += 1
+    const label = (auto ? `${num}. ` : '') + str(m.label)
+    const cls = hl ? 'nv-t nv-b' : 'nv-t'
+
+    if (fi === ti) {
+      // Message to self: a small loop right of the lifeline, label beside it.
+      const x = cx(fi)
+      const loopW = 30
+      const lw = Math.max(70, Math.min(170, col - 16))
+      const lines = label ? wrapText(label, 12, lw, 3, hl) : []
+      const textX = x + loopW + 14
+      out.push(
+        `<path class="nv-edge" style="${style}" d="M${r(x)},${r(y)} H${r(x + loopW)} Q${r(x + loopW + 6)},${r(y)} ${r(x + loopW + 6)},${r(y + 6)} V${r(y + 18)} Q${r(x + loopW + 6)},${r(y + 24)} ${r(x + loopW)},${r(y + 24)} H${r(x + 3)}"${head}/>`
+      )
+
+      if (lines.length) {
+        out.push(textBlock(lines, textX, y + 12, { anchor: 'start', className: cls, lineHeight: 15, size: 12 }))
+        maxX = Math.max(maxX, textX + Math.max(...lines.map(l => textWidth(l, 12, hl))) + 4)
+      }
+
+      y += Math.max(24, lines.length * 15) + 22
+      continue
+    }
+
+    const x1 = cx(fi)
+    const x2 = cx(ti)
+    const lines = label ? wrapText(label, 12, Math.max(70, Math.abs(x2 - x1) - 14), 3, hl) : []
+    const ly = y + lines.length * 15 + 6
+    const dir = x2 > x1 ? 1 : -1
+
+    if (lines.length) {
+      out.push(textBlock(lines, (x1 + x2) / 2, y, { baseline: 'top', className: cls, lineHeight: 15, size: 12 }))
+    }
+
+    out.push(`<path class="nv-edge" style="${style}" d="M${r(x1 + (tail ? dir * 3 : 0))},${r(ly)} L${r(x2 - dir * 3)},${r(ly)}"${head}${tail}/>`)
+
+    if (truthy(m.cross)) {
+      const xx = x2 - dir * 9
+      out.push(
+        `<path class="nv-edge" style="stroke:${color};stroke-width:1.8" d="M${r(xx - 4)},${r(ly - 4)} L${r(xx + 4)},${r(ly + 4)} M${r(xx - 4)},${r(ly + 4)} L${r(xx + 4)},${r(ly - 4)}"/>`
+      )
+    }
+
+    y = ly + 20
+  }
+
+  // Unclosed groups (truncated source): close them at the bottom.
+  while (groups.length) {
+    frames.push(frame(groups.pop()!, y))
+    y += 8
+  }
+
+  const bottom = y - 4
+  const heads: string[] = []
+  const lifelines: string[] = []
+
+  parts.forEach((p, i) => {
+    const x = cx(i)
+    const color = p.color ?? (p.highlight ? 'var(--nv-blue)' : undefined)
+    const st = color ? ` style="${fillStyle(color, p.highlight)}"` : ''
+    const tw = Math.max(...p.lines.map(l => textWidth(l, 12.5, true)))
+    const bw = Math.min(headW, Math.max(64, tw + 22))
+    const attrs = `x="${r(x - bw / 2)}" y="2" width="${r(bw)}" height="${r(headH - 4)}" rx="${p.actor ? r((headH - 4) / 2) : 9}"`
+    lifelines.push(`<line x1="${r(x)}" x2="${r(x)}" y1="${headH - 2}" y2="${r(bottom)}" class="nv-axis" style="stroke-dasharray:4 4"/>`)
+    heads.push(
+      `<g class="nv-n${p.highlight ? ' nv-hl' : ''}"><rect ${attrs} class="nv-node"/>${color ? `<rect ${attrs} class="nv-fillnode"${st}/>` : ''}` +
+        textBlock(p.lines, x, headH / 2, { className: color && p.highlight ? 'nv-on nv-b' : 'nv-t nv-b', lineHeight: 16, size: 12.5 }) +
+        '</g>'
+    )
+  })
+
+  return { body: frames.join('') + lifelines.join('') + heads.join('') + out.join(''), h: bottom + 2, w: Math.max(w0, maxX) }
+}
+
 // ---------------------------------------------------------------- compare ---
 
 const GOOD = new Set(['good', 'ok', 'yes', 'true', 'benar', 'ya', 'pass', '✓'])
@@ -1193,6 +1442,8 @@ const ALIASES: Record<string, string> = {
   comparison: 'compare',
   flowchart: 'flow',
   network: 'graph',
+  seq: 'sequence',
+  sequencediagram: 'sequence',
   'side-by-side': 'compare',
   steps: 'flow',
   tree: 'graph',
@@ -1200,7 +1451,7 @@ const ALIASES: Record<string, string> = {
   vs: 'compare'
 }
 
-export const SPEC_TYPES = ['graph', 'flow', 'bar', 'timeline', 'compare'] as const
+export const SPEC_TYPES = ['graph', 'flow', 'bar', 'timeline', 'sequence', 'compare'] as const
 
 function renderBox(spec: Json, ctx: Ctx): Box {
   const raw = str(spec.type).toLowerCase()
@@ -1219,6 +1470,8 @@ function renderBox(spec: Json, ctx: Ctx): Box {
       return renderBar(spec, ctx)
     case 'timeline':
       return renderTimeline(spec, ctx)
+    case 'sequence':
+      return renderSequence(spec, ctx)
     case 'compare':
       return renderCompare(spec, ctx)
     default:

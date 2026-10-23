@@ -587,7 +587,7 @@
    "source": "Neovarch (orisinal)",
    "license": "MIT",
    "copyright": "Copyright (c) NeovarchLabs",
-   "summary": "Gambar penjelasan langsung di obrolan (blok ```visual): graf, alur, batang, timeline, perbandingan ✓/✗ / Inline vector visuals in chat.",
+   "summary": "Gambar penjelasan langsung di obrolan (blok ```visual): graf, alur, batang, timeline, sequence, perbandingan ✓/✗ / Inline vector visuals in chat.",
    "keywords": [
     "visual",
     "visualkan",

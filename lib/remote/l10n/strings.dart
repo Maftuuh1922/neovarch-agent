@@ -199,6 +199,9 @@ const enStrings = <String, String>{
   'Pengenal suara tidak menjawab. Coba lagi.': 'Speech recognition did not respond. Try again.',
   // ---- ```visual cards in chat (v1.4.9) -------------------------------------------------
   'Visual': 'Visual',
+  'Diagram': 'Diagram',
+  'Gaya Mermaid asli': 'Original Mermaid style',
+  'Gaya baru': 'New style',
   'Menggambar…': 'Drawing…',
   'Layar penuh': 'Full screen',
   'Opsi visual': 'Visual options',

@@ -2,12 +2,14 @@
 // desktop (iframe sandbox="") and the Android WebView (bundled copy of this
 // module, see scripts/build-visual-bundle.mjs) display the same way.
 
+import { looksLikeVisualBody, mermaidToVisual } from './mermaid'
 import { parseVisualSource, VisualError } from './parse'
 import { renderSpec, SVG_STYLE } from './render'
 import { sanitizeHtml, sanitizeSvg } from './sanitize'
 import { esc, wrapText } from './text'
 import { themeCss, themeVars, type VisualTheme } from './theme'
 
+export { looksLikeVisualBody, mermaidFamily, mermaidPartialTitle, mermaidToVisual, type MermaidConversion } from './mermaid'
 export { partialTitle, VisualError } from './parse'
 export { renderSpec, SPEC_TYPES } from './render'
 export { DEFAULT_THEME_DARK, DEFAULT_THEME_LIGHT, themeCss, type VisualTheme } from './theme'
@@ -19,8 +21,8 @@ export interface PreparedVisual {
   /** svg = one <svg> element; html = an HTML+CSS fragment. */
   kind: 'svg' | 'html'
   markup: string
-  /** Where the block came from: a declarative spec, or raw svg/html. */
-  source: 'spec' | 'svg' | 'html'
+  /** Where the block came from: a declarative spec, raw svg/html, or an old ```mermaid block converted to a spec. */
+  source: 'spec' | 'svg' | 'html' | 'mermaid'
   title?: string
   width?: number
 }
@@ -125,6 +127,49 @@ export function prepareVisual(code: string, opts: { width?: number } = {}): Prep
   }
 
   return { caption: parsed.caption, kind: 'html', markup: clean, source: 'html', title: parsed.title }
+}
+
+/**
+ * An old ```mermaid / ```diagram block drawn in the visual-inline style: the
+ * mermaid source is converted to a spec (lib/visual/mermaid.ts) and rendered
+ * like any ```visual block. Throws VisualError('unsupported mermaid') when the
+ * diagram type or syntax has no spec equivalent; callers then keep the classic
+ * mermaid renderer.
+ */
+export function prepareMermaid(code: string, opts: { width?: number } = {}): PreparedVisual {
+  if (code.length > MAX_VISUAL_CHARS) {
+    throw new VisualError('too large')
+  }
+
+  const conv = mermaidToVisual(code)
+
+  if (!conv) {
+    throw new VisualError('unsupported mermaid')
+  }
+
+  let out
+
+  try {
+    out = renderSpec(conv.spec, code, { width: opts.width })
+  } catch (error) {
+    throw new VisualError((error as Error).message)
+  }
+
+  const markup = sanitizeSvg(out.svg).trim()
+
+  if (!markup.startsWith('<svg')) {
+    throw new VisualError('render produced nothing')
+  }
+
+  const title = typeof conv.spec.title === 'string' && conv.spec.title ? conv.spec.title : undefined
+  const caption = typeof conv.spec.caption === 'string' && conv.spec.caption ? conv.spec.caption : undefined
+
+  return { caption, height: out.height, kind: 'svg', markup, source: 'mermaid', title, width: out.width }
+}
+
+/** ```diagram fences: a ```visual body (JSON/SVG/HTML) or mermaid source. */
+export function prepareDiagram(code: string, opts: { width?: number } = {}): PreparedVisual {
+  return looksLikeVisualBody(code) ? prepareVisual(code, opts) : prepareMermaid(code, opts)
 }
 
 /** Base CSS every card gets (inside the frame / shadow root). */

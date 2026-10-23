@@ -19,7 +19,10 @@ export const nvVisualEn: NvVisualTranslations = {
   copyImage: 'Copy image',
   copyCode: 'Copy code',
   failed: 'Could not draw this visual — showing the code',
-  saveFailed: 'Could not save the image'
+  saveFailed: 'Could not save the image',
+  diagram: 'Diagram',
+  classicStyle: 'Original Mermaid style',
+  newStyle: 'New style'
 }
 
 export const nvVisualId: NvVisualTranslations = {
@@ -34,7 +37,10 @@ export const nvVisualId: NvVisualTranslations = {
   copyImage: 'Salin gambar',
   copyCode: 'Salin kode',
   failed: 'Visual gagal digambar — menampilkan kode',
-  saveFailed: 'Gambar gagal disimpan'
+  saveFailed: 'Gambar gagal disimpan',
+  diagram: 'Diagram',
+  classicStyle: 'Gaya Mermaid asli',
+  newStyle: 'Gaya baru'
 }
 
 export const nvVisualDe: NvVisualTranslations = {
@@ -49,7 +55,10 @@ export const nvVisualDe: NvVisualTranslations = {
   copyImage: 'Bild kopieren',
   copyCode: 'Code kopieren',
   failed: 'Grafik konnte nicht gezeichnet werden — Code wird angezeigt',
-  saveFailed: 'Bild konnte nicht gespeichert werden'
+  saveFailed: 'Bild konnte nicht gespeichert werden',
+  diagram: 'Diagramm',
+  classicStyle: 'Originaler Mermaid-Stil',
+  newStyle: 'Neuer Stil'
 }
 
 export const nvVisualEs: NvVisualTranslations = {
@@ -64,7 +73,10 @@ export const nvVisualEs: NvVisualTranslations = {
   copyImage: 'Copiar imagen',
   copyCode: 'Copiar código',
   failed: 'No se pudo dibujar el visual — se muestra el código',
-  saveFailed: 'No se pudo guardar la imagen'
+  saveFailed: 'No se pudo guardar la imagen',
+  diagram: 'Diagrama',
+  classicStyle: 'Estilo Mermaid original',
+  newStyle: 'Estilo nuevo'
 }
 
 export const nvVisualFr: NvVisualTranslations = {
@@ -79,7 +91,10 @@ export const nvVisualFr: NvVisualTranslations = {
   copyImage: "Copier l'image",
   copyCode: 'Copier le code',
   failed: 'Impossible de dessiner ce visuel — affichage du code',
-  saveFailed: "Impossible d'enregistrer l'image"
+  saveFailed: "Impossible d'enregistrer l'image",
+  diagram: 'Diagramme',
+  classicStyle: "Style Mermaid d'origine",
+  newStyle: 'Nouveau style'
 }
 
 export const nvVisualJa: NvVisualTranslations = {
@@ -94,7 +109,10 @@ export const nvVisualJa: NvVisualTranslations = {
   copyImage: '画像をコピー',
   copyCode: 'コードをコピー',
   failed: '図を描画できませんでした — コードを表示しています',
-  saveFailed: '画像を保存できませんでした'
+  saveFailed: '画像を保存できませんでした',
+  diagram: '図',
+  classicStyle: '元の Mermaid スタイル',
+  newStyle: '新しいスタイル'
 }
 
 export const nvVisualRu: NvVisualTranslations = {
@@ -109,7 +127,10 @@ export const nvVisualRu: NvVisualTranslations = {
   copyImage: 'Копировать изображение',
   copyCode: 'Копировать код',
   failed: 'Не удалось нарисовать схему — показан код',
-  saveFailed: 'Не удалось сохранить изображение'
+  saveFailed: 'Не удалось сохранить изображение',
+  diagram: 'Диаграмма',
+  classicStyle: 'Исходный стиль Mermaid',
+  newStyle: 'Новый стиль'
 }
 
 export const nvVisualAr: NvVisualTranslations = {
@@ -124,7 +145,10 @@ export const nvVisualAr: NvVisualTranslations = {
   copyImage: 'نسخ الصورة',
   copyCode: 'نسخ الشيفرة',
   failed: 'تعذّر رسم هذا الشكل — يتم عرض الشيفرة',
-  saveFailed: 'تعذّر حفظ الصورة'
+  saveFailed: 'تعذّر حفظ الصورة',
+  diagram: 'مخطط',
+  classicStyle: 'نمط Mermaid الأصلي',
+  newStyle: 'النمط الجديد'
 }
 
 export const nvVisualZh: NvVisualTranslations = {
@@ -139,7 +163,10 @@ export const nvVisualZh: NvVisualTranslations = {
   copyImage: '复制图片',
   copyCode: '复制代码',
   failed: '无法绘制此图示，已显示代码',
-  saveFailed: '无法保存图片'
+  saveFailed: '无法保存图片',
+  diagram: '图表',
+  classicStyle: '原始 Mermaid 样式',
+  newStyle: '新样式'
 }
 
 export const nvVisualZhHant: NvVisualTranslations = {
@@ -154,5 +181,8 @@ export const nvVisualZhHant: NvVisualTranslations = {
   copyImage: '複製圖片',
   copyCode: '複製程式碼',
   failed: '無法繪製此圖示，已顯示程式碼',
-  saveFailed: '無法儲存圖片'
+  saveFailed: '無法儲存圖片',
+  diagram: '圖表',
+  classicStyle: '原始 Mermaid 樣式',
+  newStyle: '新樣式'
 }

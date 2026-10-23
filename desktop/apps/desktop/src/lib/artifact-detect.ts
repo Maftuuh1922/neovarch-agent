@@ -41,6 +41,7 @@ const HTML_LANGUAGES = new Set(['html', 'htm', 'xhtml'])
 const NON_ARTIFACT_LANGUAGES = new Set([
   '',
   'console',
+  'diagram',
   'diff',
   'listing',
   'log',
@@ -48,6 +49,7 @@ const NON_ARTIFACT_LANGUAGES = new Set([
   'markdown',
   'md',
   'mermaid',
+  'mmd',
   'output',
   'patch',
   'plain',
