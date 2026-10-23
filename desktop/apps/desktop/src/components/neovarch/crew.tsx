@@ -16,10 +16,10 @@ import {
   approveCrew,
   cancelCrew,
   closeCrew,
+  type Crew,
   CREW_SIDE_EFFECT_TOOLS,
   CREW_TEMPLATES,
   CREW_TOOL_GROUPS,
-  type Crew,
   type CrewMember,
   type CrewTask,
   type CrewTemplateId,
@@ -252,6 +252,7 @@ export function CrewView({ crew, onEdit, s }: { crew: Crew; onEdit: () => void; 
 export function CrewGoalForm({ s }: { s: NvCrewTranslations }) {
   const busy = useStore($crewBusy)
   const [goal, setGoal] = useState('')
+
   const submit = (template?: CrewTemplateId) => {
     if (goal.trim()) {
       void proposeCrew(goal.trim(), template)
@@ -392,6 +393,7 @@ export function CrewAdvanced({ crew, s }: { crew: Crew | null; s: NvCrewTranslat
       tasks: draft.tasks,
       title: draft.title
     })
+
     setSaved(Boolean(res))
   }
 

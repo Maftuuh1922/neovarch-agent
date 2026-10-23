@@ -15,8 +15,10 @@ const { emitGatewayEvent } = await import('@/contrib/events')
 const { $crew, $crews, CREW_INTRO_KEY } = await import('./crew-store')
 const { NeovarchCrewPage, CREW_TABS } = await import('./crew')
 const { CREW_PALETTES, CREW_SPRITE, spritePixels, CrewStation } = await import('./crew-pixel')
+
 const { nvCrewAr, nvCrewDe, nvCrewEn, nvCrewEs, nvCrewFr, nvCrewId, nvCrewJa, nvCrewRu, nvCrewZh, nvCrewZhHant } =
   await import('@/i18n/nv-crew')
+
 const { NEOVARCH_ID } = await import('@/i18n/neovarch-id')
 
 const member = (id: string, name: string, role: string, tools: string[] = [], extra = {}) => ({
@@ -192,9 +194,11 @@ describe('Crew page', () => {
     fireEvent.change(screen.getByLabelText('Flow'), { target: { value: 'sequential' } })
     fireEvent.click(screen.getByText('Save changes'))
     await waitFor(() => expect(gw.request).toHaveBeenCalledWith('crew.update', expect.anything()))
+
     const call = gw.request.mock.calls.find(c => c[0] === 'crew.update')![1] as {
       patch: { manager: null; members: Array<{ role: string; tools: string[] }>; process: string }
     }
+
     expect(call.patch.process).toBe('sequential')
     expect(call.patch.manager).toBeNull()
     expect(call.patch.members[1].role).toBe('Penguji')
