@@ -350,7 +350,7 @@ void main() {
       expect(stack().index, 3);
 
       // plain taps still switch
-      await tester.tap(find.descendant(of: find.byKey(const ValueKey('nv-nav-bar')), matching: find.text('KANTOR')));
+      await tester.tap(find.descendant(of: find.byKey(const ValueKey('nv-nav-bar')), matching: find.text('CREW')));
       await settle(tester);
       expect(stack().index, 1);
       await tester.tap(find.descendant(of: find.byKey(const ValueKey('nv-nav-bar')), matching: find.text('CHAT')));

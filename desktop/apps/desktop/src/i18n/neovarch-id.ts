@@ -8,11 +8,13 @@
  * upstream English until they are translated.
  */
 import type { TranslationOverrides } from './define-locale'
+import { nvCrewId } from './nv-crew'
 import { nvPamerkanId } from './nv-pamerkan'
 import { nvPullId } from './nv-pull'
 import { nvVisualId } from './nv-visual'
 
 export const NEOVARCH_ID = {
+  "nvCrew": nvCrewId,
   "nvPamerkan": nvPamerkanId,
   "nvPull": nvPullId,
   "nvVisual": nvVisualId,

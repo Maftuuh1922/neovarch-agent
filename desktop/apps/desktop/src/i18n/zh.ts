@@ -2,6 +2,7 @@ import { defineFieldCopy } from '@/app/settings/field-copy'
 
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introZh } from './intro-zh'
+import { nvCrewZh } from './nv-crew'
 import { nvPamerkanZh } from './nv-pamerkan'
 import { nvPullZh } from './nv-pull'
 import { nvVisualZh } from './nv-visual'
@@ -14,6 +15,7 @@ import { zhProjects } from './zh_projects'
 import { zhSharedMetrics } from './zh_shared_metrics'
 
 export const zhOverrides = {
+  nvCrew: nvCrewZh,
   nvPamerkan: nvPamerkanZh,
   nvPull: nvPullZh,
   nvVisual: nvVisualZh,

@@ -10,11 +10,13 @@ import { jaOnboarding } from './ja_onboarding'
 import { jaPluginSettings } from './ja_plugins'
 import { jaProjects } from './ja_projects'
 import { jaSharedMetrics } from './ja_shared_metrics'
+import { nvCrewJa } from './nv-crew'
 import { nvPamerkanJa } from './nv-pamerkan'
 import { nvPullJa } from './nv-pull'
 import { nvVisualJa } from './nv-visual'
 
 export const jaOverrides = {
+  nvCrew: nvCrewJa,
   nvPamerkan: nvPamerkanJa,
   nvPull: nvPullJa,
   nvVisual: nvVisualJa,

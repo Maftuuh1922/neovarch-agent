@@ -1,5 +1,6 @@
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introZhHant } from './intro-zh-hant'
+import { nvCrewZhHant } from './nv-crew'
 import { nvPamerkanZhHant } from './nv-pamerkan'
 import { nvPullZhHant } from './nv-pull'
 import { nvVisualZhHant } from './nv-visual'
@@ -16,6 +17,7 @@ import { zhHantDiagnostics } from './zh-hant_diagnostics'
 import { zhHantSettings } from './zh-hant_settings'
 
 export const zhHantOverrides = {
+  nvCrew: nvCrewZhHant,
   nvPamerkan: nvPamerkanZhHant,
   nvPull: nvPullZhHant,
   nvVisual: nvVisualZhHant,

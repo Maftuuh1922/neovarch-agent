@@ -920,6 +920,17 @@ async def tool_send_file(args: dict, ctx: ToolContext) -> str:
     return "\n".join(lines) + tail
 
 
+
+async def _tool_crew(args: dict, ctx: "ToolContext") -> str:
+    from neovarch.crew import tool_crew
+    return await tool_crew(args, ctx)
+
+
+def _crew_schema() -> dict:
+    from neovarch.crew import TOOL_SCHEMA
+    return TOOL_SCHEMA
+
+
 TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
     "send_file": (tool_send_file, {
         "description": "Send files from this PC into the chat so the user gets them where they are chatting "
@@ -932,6 +943,7 @@ TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
             "paths": {"type": "array", "items": {"type": "string"},
                       "description": "absolute paths (or relative to the working directory) of files to send"},
             "path": {"type": "string", "description": "a single file to send (same as paths=[path])"}}}}),
+    "crew": (_tool_crew, _crew_schema()),
     "kantor": (tool_kantor, {
         "description": "Run the user's Kantor (office) ONLY when the user asks for it. Structure: Organisasi → Agency "
                        "→ Orang (pegawai), nested without limit. action: overview (show the org) | create_org "
@@ -1116,8 +1128,11 @@ def _allowed_builtin(ctx: "ToolContext | None") -> set[str]:
     if company is None:
         if ctx is None or getattr(ctx, "kantor", None) is None:
             names.discard("kantor")
+        if ctx is None or getattr(getattr(ctx, "gateway", None), "crew", None) is None:
+            names.discard("crew")
         return names
     names.discard("kantor")  # employees never run the Kantor; the main agent does
+    names.discard("crew")  # nor put together a crew
     names -= set(_orch.TOOLS) - _orch.EMPLOYEE_ALLOWED  # nor change the install
     allowed = company.allowed_tools() if hasattr(company, "allowed_tools") else None
     if allowed:

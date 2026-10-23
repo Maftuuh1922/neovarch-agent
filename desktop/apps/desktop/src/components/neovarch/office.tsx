@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import { sessionRoute } from '@/app/routes'
+import { useI18n } from '@/i18n'
 import { Brain, Users } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { $activeSessionId, $busy } from '@/store/session'
@@ -10,6 +11,7 @@ import { $activeSessionId, $busy } from '@/store/session'
 import { OfficeAgentAvatar } from './agent-identity'
 import { COMPANY_TABS, CompanyPanel, type CompanyTab, visibleCompanyTabs } from './company'
 import { $company, hasCompany } from './company-store'
+import { CREW_ROUTE } from './crew-store'
 import { KartuCardButton } from './kartu-card-dialog'
 import { Office3D } from './office-3d'
 import { MiniOffice3D } from './office-mini-3d'
@@ -18,7 +20,6 @@ import {
   $office,
   $officeError,
   $officeView,
-  OFFICE_ROUTE,
   OFFICE_STATUS_LABEL,
   type OfficeAgent,
   officeWorkingCount,
@@ -318,12 +319,13 @@ export function NeovarchOfficePage() {
   )
 }
 
-/** Compact "Kantor" card for the context rail beside the conversation. */
+/** Compact "Crew" card for the context rail beside the conversation; opens the Crew page. */
 export function NeovarchOfficeMini() {
   const office = useStore($office)
   const busy = useStore($busy)
   const activeSessionId = useStore($activeSessionId)
   const navigate = useNavigate()
+  const s = useI18n().t.nvCrew
   const agents = Array.isArray(office?.agents) ? office.agents.slice(0, 5) : []
   const working = officeWorkingCount(office, busy ? [activeSessionId] : [])
 
@@ -331,17 +333,19 @@ export function NeovarchOfficeMini() {
     <button
       className={cn('nv-context-card nv-office-mini')}
       data-slot="nv-office-mini"
-      onClick={() => navigate(OFFICE_ROUTE)}
-      title="Buka Kantor"
+      onClick={() => navigate(CREW_ROUTE)}
+      title={s.mini.open}
       type="button"
     >
       <span className="nv-context-label">
-        <Users className="size-3.5" /> Kantor
-        <span className="nv-office-mini-count">{office || busy ? `${working} bekerja` : ''}</span>
+        <Users className="size-3.5" /> {s.title}
+        <span className="nv-office-mini-count">
+          {office || busy ? s.mini.working.replace('{n}', String(working)) : ''}
+        </span>
       </span>
       <MiniOffice3D office={office} />
       {agents.length === 0 ? (
-        <span className="nv-context-empty">Belum ada agen yang bekerja.</span>
+        <span className="nv-context-empty">{s.mini.empty}</span>
       ) : (
         <span className="nv-office-mini-list">
           {agents.map(agent => (

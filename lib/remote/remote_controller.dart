@@ -13,6 +13,7 @@ import '../data/gateway_client.dart';
 import '../models/models.dart';
 import 'attachments.dart';
 import 'company_models.dart';
+import 'crew_models.dart';
 import 'link/frame_link.dart';
 import 'link/link_info.dart';
 import 'l10n/strings.dart';
@@ -70,6 +71,15 @@ class RemoteController extends ChangeNotifier {
   /// The Feed segment merges them into what it read, so a row shows up the
   /// moment an employee does something, without re-reading the whole company.
   List<CompanyActivity> companyFeed = const [];
+
+  /// Widget-test harness only: Crew data without a gateway.
+  CrewApi? debugCrewApi;
+  CrewApi? get crewApi => debugCrewApi ?? gateway;
+
+  /// Latest `crew.update` push (the full crew, or `{id, deleted: true}`); the
+  /// Crew screen follows it live. [crewRevision] bumps with every push.
+  Map<String, dynamic>? crewPush;
+  int crewRevision = 0;
 
   /// Widget-test harness only: Perusahaan data without a gateway.
   CompanyApi? debugCompanyApi;
@@ -532,6 +542,10 @@ class RemoteController extends ChangeNotifier {
         unawaited(refreshBoard());
       case 'vault.changed':
         vaultRevision++;
+        notifyListeners();
+      case 'crew.update':
+        crewPush = Map<String, dynamic>.from(f.payload);
+        crewRevision++;
         notifyListeners();
       case 'company.changed':
         companyRevision++;

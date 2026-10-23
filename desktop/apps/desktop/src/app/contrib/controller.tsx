@@ -11,12 +11,14 @@ import { IdleMount } from '@/components/idle-mount'
 import { NeovarchAppearanceSync, NeovarchFirstRunTheme } from '@/components/neovarch/appearance'
 import { NeovarchCommandBar } from '@/components/neovarch/command-bar'
 import { NeovarchContextRail } from '@/components/neovarch/context-rail'
+import { NeovarchCrewPage } from '@/components/neovarch/crew'
+import { CREW_ROUTE } from '@/components/neovarch/crew-store'
 import { NeovarchDocPreview } from '@/components/neovarch/doc-preview'
 import { NeovarchOfficePage } from '@/components/neovarch/office'
 import { OFFICE_ROUTE } from '@/components/neovarch/office-store'
+import { NeovarchRail } from '@/components/neovarch/rail'
 import { NeovarchSocialPage } from '@/components/neovarch/social'
 import { SOCIAL_ROUTE } from '@/components/neovarch/social-store'
-import { NeovarchRail } from '@/components/neovarch/rail'
 import { NeovarchUpdateBanner } from '@/components/neovarch/update-banner'
 import { NeovarchVaultPage, VAULT_ROUTE } from '@/components/neovarch/vault'
 import { NeovarchWallpaper } from '@/components/neovarch/wallpaper'
@@ -755,7 +757,17 @@ registry.register(
   registry.subscribeArea('panes', syncStripTabToggles)
 }
 
-// Neovarch's Office: a first-party full page at /office (the rail opens it).
+// Crew: the main agent's team of agents at /crew (the rail opens it).
+registry.register({
+  id: 'nv-crew',
+  area: ROUTES_AREA,
+  source: 'core',
+  title: 'Crew',
+  data: { path: CREW_ROUTE },
+  render: () => <NeovarchCrewPage />
+})
+
+// The previous Office (Kantor) page stays at /office, opened from Crew ▸ Lanjutan.
 registry.register({
   id: 'nv-office',
   area: ROUTES_AREA,

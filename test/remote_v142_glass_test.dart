@@ -139,10 +139,10 @@ void main() {
   Finder inNav(String t) => find.descendant(of: navBar, matching: find.text(t));
 
   group('4-tab nav', () {
-    testWidgets('Chat · Kantor · PC · Profil; no Tugas / Setujui tabs', (tester) async {
+    testWidgets('Chat · Crew · PC · Profil; no Tugas / Setujui tabs', (tester) async {
       await pump(tester, const RemoteShell());
       await settle(tester, 4);
-      for (final t in ['CHAT', 'KANTOR', 'PROFIL', 'PC']) {
+      for (final t in ['CHAT', 'CREW', 'PROFIL', 'PC']) {
         expect(inNav(t), findsOneWidget);
       }
       expect(inNav('TUGAS'), findsNothing);
@@ -244,7 +244,7 @@ void main() {
     });
   });
 
-  group('Kantor | Tugas', () {
+  group('Crew | Tugas | Lanjutan', () {
     testWidgets('one tab with a glass segmented control; route "tasks" opens the Tugas segment', (tester) async {
       app.previewTab = 1;
       await pump(tester, const RemoteShell());
@@ -257,7 +257,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('segment-Tugas')));
       await settle(tester, 4);
       expect(seg().index, kantorSegTasks);
-      await tester.tap(find.byKey(const ValueKey('segment-Kantor')));
+      await tester.tap(find.byKey(const ValueKey('segment-Crew')));
       await settle(tester, 4);
       expect(seg().index, kantorSegOffice);
       // deep link to Tugas from another tab

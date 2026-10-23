@@ -99,7 +99,7 @@ function renderMini() {
     <MemoryRouter initialEntries={['/']}>
       <Routes>
         <Route element={<NeovarchOfficeMini />} path="/" />
-        <Route element={<p>KANTOR PENUH</p>} path="/office" />
+        <Route element={<p>HALAMAN CREW</p>} path="/crew" />
       </Routes>
     </MemoryRouter>
   )
@@ -129,7 +129,7 @@ describe('mini Kantor 3D in the right sidebar', () => {
     expect(scene.setPaused).toHaveBeenLastCalledWith(false)
   })
 
-  it('disposes the scene when the sidebar unmounts and opens the full Kantor on click', async () => {
+  it('disposes the scene when the sidebar unmounts and opens Crew on click', async () => {
     const first = renderMini()
 
     await waitFor(() => expect(scene.options.length).toBe(1))
@@ -137,7 +137,10 @@ describe('mini Kantor 3D in the right sidebar', () => {
     expect(scene.dispose).toHaveBeenCalled()
 
     renderMini()
-    fireEvent.click(screen.getByTitle('Buka Kantor'))
-    expect(screen.getByText('KANTOR PENUH')).toBeTruthy()
+    // Rendered without the locale provider, so the English catalog shows.
+    expect(screen.getByText('Crew')).toBeTruthy()
+    expect(screen.queryByText('Kantor')).toBeNull()
+    fireEvent.click(screen.getByTitle('Open Crew'))
+    expect(screen.getByText('HALAMAN CREW')).toBeTruthy()
   })
 })
