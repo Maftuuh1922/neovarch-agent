@@ -59,9 +59,7 @@ from neovarch.tools import ToolContext, list_skills, tool_schemas
 APPROVAL_TIMEOUT_S = 300
 # Slash commands the agent turn answers (see Agent._command); the desktop sends them as messages.
 CORE_CHAT_COMMANDS = ("desain", "perbaiki", "fix")
-STT_UNAVAILABLE = ("Dikte suara di PC belum tersedia di Neovarch core. Ketik pesan, atau pakai mik di aplikasi HP. "
-                   "/ Voice typing on the PC is not available in the Neovarch core yet. Type your message, "
-                   "or use the mic in the phone app.")
+from neovarch.stt import STT_UNAVAILABLE  # noqa: E402  (re-exported for callers/tests)
 COMPANY_RPC_CODES = {"invalid": -32602, "not_found": -32004, "conflict": -32009}
 COMPANY_HTTP = {"invalid": 400, "not_found": 404, "conflict": 409}
 
@@ -2754,17 +2752,32 @@ def build_app(gw: Gateway) -> web.Application:
     async def voice_live_status(_):
         return web.json_response({"ok": False, "available": False, "reason": "Not available in the Neovarch core."})
 
-    async def audio_transcribe(_request):
-        # No speech engine in the core yet. Answer with a clear, typed refusal
-        # (the desktop turns `code` into its localized "not available" notice)
-        # instead of the quiet fallback, whose missing `transcript` made the
-        # desktop composer crash on `undefined.trim()` (1.4.5).
-        return web.json_response({"ok": False, "available": False, "transcript": "", "code": "stt_unavailable",
-                                  "error": STT_UNAVAILABLE})
+    async def audio_stt_status(_):
+        from neovarch import stt
+        return web.json_response(await asyncio.to_thread(stt.status))
+
+    async def audio_transcribe(request):
+        # Local, free STT (faster-whisper / whisper.cpp, both optional). Every
+        # failure is a typed answer with `transcript: ""` (the desktop crashed on
+        # a missing transcript in 1.4.5): `stt_unavailable` (no engine, with the
+        # install hint), `bad_audio`, `too_large`, `stt_failed`.
+        from neovarch import stt
+        body = await _json(request)
+        try:
+            data, mime = stt.decode_audio(body if isinstance(body, dict) else {})
+            return web.json_response(await asyncio.to_thread(stt.transcribe_bytes, data, mime))
+        except stt.SttError as e:
+            out = {"ok": False, "available": e.code not in ("stt_unavailable",), "transcript": "",
+                   "code": e.code, "error": str(e)}
+            if e.code == "stt_unavailable":
+                out["install_hint"] = stt.INSTALL_HINT
+            return web.json_response(out)
 
     async def audio_stt_lease(request):
+        from neovarch import stt
         body = await _json(request)
-        return web.json_response({"ok": True, "active": bool(body.get("active")), "available": False})
+        avail = (await asyncio.to_thread(stt.status))["available"]
+        return web.json_response({"ok": True, "active": bool(body.get("active")), "available": avail})
 
     async def terminal_backends(_):
         return web.json_response({"active": "local", "backends": [{
@@ -2780,6 +2793,7 @@ def build_app(gw: Gateway) -> web.Application:
     r.add_get("/api/local-models/jobs", local_models_jobs)
     r.add_get("/api/audio/voice-live/status", voice_live_status)
     r.add_post("/api/audio/transcribe", audio_transcribe)
+    r.add_get("/api/audio/stt/status", audio_stt_status)
     r.add_post("/api/audio/stt-lease", audio_stt_lease)
     r.add_get("/api/tools/terminal/backends", terminal_backends)
     r.add_post("/api/sessions/owner-backfill", owner_backfill)

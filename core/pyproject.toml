@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8", "pytest-asyncio>=0.23"]
+stt = ["faster-whisper>=1.0"]
 
 [project.scripts]
 neovarch = "neovarch.cli:main"
