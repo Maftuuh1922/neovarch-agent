@@ -59,6 +59,12 @@ class MarkdownView extends StatelessWidget {
         if (kind == DiagramKind.visual) {
           return VisualBlock(code: b.text, scale: scale, streaming: !b.closed);
         }
+        // Old ```mermaid / ```diagram blocks draw in the same visual style when
+        // their diagram type converts; the card falls back to the classic
+        // mermaid drawing on syntax it cannot convert.
+        if (kind == DiagramKind.mermaid && mermaidDrawsAsVisual(b.text)) {
+          return VisualBlock(code: b.text, scale: scale, streaming: !b.closed, mermaid: true);
+        }
         if (kind != null) {
           return DiagramBlock(code: b.text, kind: kind, scale: scale, streaming: !b.closed);
         }

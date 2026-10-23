@@ -1,0 +1,17 @@
+{
+  "type": "sequence",
+  "title": "Login dengan token",
+  "caption": "Token baru dibuat hanya setelah password cocok; aplikasi menyimpannya lalu membuka Beranda.",
+  "participants": [{"id": "U", "label": "Pengguna", "actor": true}, {"id": "A", "label": "Aplikasi"}, {"id": "S", "label": "Server", "highlight": true}],
+  "messages": [
+    {"from": "U", "to": "A", "label": "Ketuk Login"},
+    {"from": "A", "to": "S", "label": "POST /login"},
+    {"group": "alt", "label": "password cocok"},
+    {"from": "S", "to": "A", "label": "200 + token", "dashed": true, "highlight": true},
+    {"else": "salah"},
+    {"from": "S", "to": "A", "label": "401", "dashed": true, "color": "red"},
+    {"end": true},
+    {"note": "Token disimpan di keychain", "over": ["A"]},
+    {"from": "A", "to": "U", "label": "Buka Beranda", "dashed": true}
+  ]
+}

@@ -9,9 +9,15 @@ import type { RichFenceProps } from './types'
 // renderer is split and loaded only when a block of that language appears. The
 // Mermaid renderer defers its heavier runtime import until after its source
 // fallback has had a chance to paint.
+// Old ```mermaid / ```diagram blocks go through diagram-embed: drawn in the
+// ```visual style when the diagram converts, classic mermaid otherwise.
+const DIAGRAM_FENCE = lazy(() => import('./diagram-embed'))
+
 const LAZY_FENCE: Record<string, LazyExoticComponent<ComponentType<RichFenceProps>>> = {
+  diagram: DIAGRAM_FENCE,
   listing: lazy(() => import('./listing-embed')),
-  mermaid: lazy(() => import('./mermaid-embed')),
+  mermaid: DIAGRAM_FENCE,
+  mmd: DIAGRAM_FENCE,
   svg: lazy(() => import('./svg-embed')),
   visual: lazy(() => import('./visual-embed'))
 }

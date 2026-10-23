@@ -91,3 +91,26 @@ async def test_tool_runs(tmp_path):
 def test_matcher_suggests_visual_inline():
     names = [h["name"] for h in skillpack.match("tolong gambarkan perbandingan graf bintang vs graf ini")]
     assert "visual-inline" in names, names
+
+
+def test_sequence_spec():
+    ok = check_visual('{"type": "sequence", "title": "t", "caption": "c", "participants": ["A", "B"],'
+                      '"messages": [{"from": "A", "to": "B", "label": "halo"}, {"group": "alt", "label": "x"},'
+                      '{"from": "B", "to": "A", "label": "ok", "dashed": true}, {"else": "y"},'
+                      '{"note": "catatan", "over": ["A", "B"]}, {"end": true}]}')
+    assert ok["ok"], ok["errors"]
+    assert ok["type"] == "sequence"
+    assert not check_visual('{"type": "sequence", "messages": []}')["ok"]
+    bad = check_visual('{"type": "sequence", "messages": [{"end": true}, {"what": 1}]}')
+    assert any("end tanpa group" in e for e in bad["errors"])
+    assert any("tidak dikenal" in e for e in bad["errors"])
+    many = check_visual('{"type": "sequence", "messages": [' + ",".join(
+        f'{{"from": "P{i}", "to": "P{i + 1}", "label": "m"}}' for i in range(11)) + "]}")
+    assert any("maks 10" in e for e in many["errors"])
+    unclosed = check_visual('{"type": "sequence", "messages": [{"group": "loop"}, {"from": "A", "to": "B"}]}')
+    assert unclosed["ok"] and any("belum ditutup" in w for w in unclosed["warnings"])
+
+
+def test_visual_inline_skill_steers_away_from_mermaid_in_chat():
+    body = (EXAMPLES.parent / "SKILL.md").read_text(encoding="utf-8")
+    assert "`sequence`" in body and "```mermaid" in body

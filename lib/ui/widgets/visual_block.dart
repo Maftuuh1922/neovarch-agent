@@ -31,16 +31,32 @@ String? visualPartialTitle(String code) {
   return line?.group(1)?.trim();
 }
 
+/// Best-effort title of a mermaid block (front matter `title:`, a `title …` line, or `pie title …`).
+String? mermaidPartialTitle(String code) {
+  final t = code.replaceAll('\r\n', '\n');
+  final fm = RegExp(r'^\s*---\n[\s\S]*?^\s*title\s*:\s*(.+)$', multiLine: true).firstMatch(t);
+  final m = fm ?? RegExp(r'^\s*(?:pie\b.*?\s)?title\s*:?\s+(.+)$', multiLine: true).firstMatch(t);
+  final v = m?.group(1)?.trim();
+  if (v == null || v.isEmpty) return null;
+  final quoted = v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")));
+  return quoted ? v.substring(1, v.length - 1) : v;
+}
+
 String _fileSlug(String? title) {
   final s = (title ?? 'visual').toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-').replaceAll(RegExp(r'^-+|-+$'), '');
   return s.isEmpty ? 'visual' : (s.length > 40 ? s.substring(0, 40) : s);
 }
 
 class VisualBlock extends StatefulWidget {
-  const VisualBlock({super.key, required this.code, this.scale = 1.0, this.streaming = false});
+  const VisualBlock({super.key, required this.code, this.scale = 1.0, this.streaming = false, this.mermaid = false});
   final String code;
   final double scale;
   final bool streaming;
+
+  /// An old ```mermaid / ```diagram block drawn in this style (converted by the
+  /// bundled renderer). When the conversion or preview fails it shows the
+  /// classic mermaid block instead, and the menu can switch to it on request.
+  final bool mermaid;
 
   @override
   State<VisualBlock> createState() => _VisualBlockState();
@@ -54,6 +70,10 @@ class _VisualBlockState extends State<VisualBlock> {
   String? _title;
   String? _caption;
   double _height = 180;
+  bool _classic = false;
+
+  DiagramKind get _kind => widget.mermaid ? DiagramKind.mermaidVisual : DiagramKind.visual;
+  String? get _codeLanguage => widget.mermaid ? null : 'json';
 
   @override
   void initState() {
@@ -74,6 +94,7 @@ class _VisualBlockState extends State<VisualBlock> {
       _error = null;
       _rendered = false;
       _showCode = false;
+      if (old.code != widget.code) _classic = false;
       _check();
     }
   }
@@ -95,11 +116,14 @@ class _VisualBlockState extends State<VisualBlock> {
     }
   }
 
-  String get _heading => _title ?? visualPartialTitle(widget.code) ?? tr('Visual');
+  String get _heading =>
+      _title ??
+      (widget.mermaid ? mermaidPartialTitle(widget.code) : visualPartialTitle(widget.code)) ??
+      (widget.mermaid ? tr('Diagram') : tr('Visual'));
 
   void _fullscreen() => Navigator.of(context).push(MaterialPageRoute<void>(
         fullscreenDialog: true,
-        builder: (_) => DiagramFullscreen(code: widget.code, kind: DiagramKind.visual, title: _heading),
+        builder: (_) => DiagramFullscreen(code: widget.code, kind: _kind, title: _heading),
       ));
 
   void _say(String msg) =>
@@ -130,9 +154,31 @@ class _VisualBlockState extends State<VisualBlock> {
 
   @override
   Widget build(BuildContext context) {
+    // A mermaid block that could not be converted / previewed keeps the classic drawing.
+    if (widget.mermaid && !widget.streaming && _error != null) {
+      return DiagramBlock(code: widget.code, kind: DiagramKind.mermaid, scale: widget.scale);
+    }
+    if (widget.mermaid && _classic) return _classicView(context);
     final g = GlassForeground.maybeOf(context);
     if (g != null && !g.isCode) return GlassCode(child: Builder(builder: _build));
     return _build(context);
+  }
+
+  /// The user asked for the original mermaid look: classic block with a way back.
+  Widget _classicView(BuildContext context) {
+    final muted = context.hc.mutedForeground;
+    return Column(key: const ValueKey('visual-classic'), crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+      Row(children: [
+        Expanded(child: Text(tr('Gaya Mermaid asli'), style: TextStyle(fontSize: 12, color: muted))),
+        TextButton.icon(
+          key: const ValueKey('visual-new-style'),
+          onPressed: () => setState(() => _classic = false),
+          icon: const Icon(Icons.auto_awesome_rounded, size: 14),
+          label: Text(tr('Gaya baru'), style: const TextStyle(fontSize: 12)),
+        ),
+      ]),
+      DiagramBlock(code: widget.code, kind: DiagramKind.mermaid, scale: widget.scale),
+    ]);
   }
 
   Widget _build(BuildContext context) {
@@ -177,6 +223,8 @@ class _VisualBlockState extends State<VisualBlock> {
                       setState(() => _showCode = !_showCode);
                     case 'full':
                       _fullscreen();
+                    case 'classic':
+                      setState(() => _classic = true);
                     case 'png':
                       _savePng();
                     case 'svg':
@@ -189,6 +237,7 @@ class _VisualBlockState extends State<VisualBlock> {
                 itemBuilder: (_) => [
                   if (!failed) PopupMenuItem(value: 'code', child: Text(_showCode ? tr('Lihat gambar') : tr('Lihat kode'))),
                   if (!failed) PopupMenuItem(value: 'full', child: Text(tr('Layar penuh'))),
+                  if (!failed && widget.mermaid) PopupMenuItem(value: 'classic', child: Text(tr('Gaya Mermaid asli'))),
                   if (!failed && _rendered) PopupMenuItem(value: 'png', child: Text(tr('Simpan PNG'))),
                   if (!failed && _rendered) PopupMenuItem(value: 'svg', child: Text(tr('Bagikan SVG'))),
                   PopupMenuItem(value: 'copy', child: Text(tr('Salin kode'))),
@@ -213,7 +262,7 @@ class _VisualBlockState extends State<VisualBlock> {
             child: Text(tr('Visual gagal digambar — menampilkan kode'),
                 key: const ValueKey('visual-failed'), style: TextStyle(fontSize: 11.5, color: context.hc.destructive)),
           ),
-          CodeBlock(code: widget.code, language: 'json', scale: widget.scale, embedded: true),
+          CodeBlock(code: widget.code, language: _codeLanguage, scale: widget.scale, embedded: true),
         ],
         if (!failed && !streaming) ...[
           Offstage(
@@ -226,14 +275,14 @@ class _VisualBlockState extends State<VisualBlock> {
                 height: _height,
                 child: Stack(fit: StackFit.expand, children: [
                   IgnorePointer(
-                    child: DiagramBlock.preview(context, widget.code, DiagramKind.visual, false, _onResult, exporter: _exporter),
+                    child: DiagramBlock.preview(context, widget.code, _kind, false, _onResult, exporter: _exporter),
                   ),
                   if (!_rendered) Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: muted))),
                 ]),
               ),
             ),
           ),
-          if (_showCode) CodeBlock(code: widget.code, language: 'json', scale: widget.scale, embedded: true),
+          if (_showCode) CodeBlock(code: widget.code, language: _codeLanguage, scale: widget.scale, embedded: true),
           if (_caption != null && !_showCode)
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),

@@ -1,6 +1,6 @@
 ---
 name: visual-inline
-description: Gambar penjelasan langsung di obrolan sebagai kartu vektor (blok ```visual) - graf, alur, batang, timeline, perbandingan berdampingan ✓/✗ / Draw crisp inline visuals in chat with a ```visual block.
+description: Gambar penjelasan langsung di obrolan sebagai kartu vektor (blok ```visual) - graf, alur, batang, timeline, sequence, perbandingan berdampingan ✓/✗ / Draw crisp inline visuals in chat with a ```visual block.
 ---
 # Visual inline (blok ```visual)
 
@@ -15,10 +15,13 @@ tempelan, bukan file): judul di atas, gambar, caption di bawah. Pengguna bisa la
 - **Jangan** menggambar untuk jawaban satu kalimat, daftar biasa, atau data yang lebih jelas sebagai tabel teks.
 - Satu visual = satu gagasan. Tulis 1-3 kalimat penjelasan di luar blok; jangan ulangi isi caption.
 - Diagram besar yang perlu disimpan sebagai file/halaman: pakai skill `diagram` + `diagram_save`.
+- **Jangan menulis blok ```mermaid di obrolan.** Pakai ```visual. (Blok ```mermaid lama tetap tergambar: flowchart,
+  sequenceDiagram, timeline, pie dan stateDiagram sederhana otomatis diubah ke gaya visual ini; jenis lain
+  memakai gambar Mermaid klasik. Mermaid hanya untuk file lewat `diagram_save`.)
 
 ## Format
 Satu blok ```visual berisi SALAH SATU dari:
-1. **Spec deklaratif JSON** (utama, paling rapi, tata letak otomatis): `graph`, `flow`, `bar`, `timeline`, `compare`.
+1. **Spec deklaratif JSON** (utama, paling rapi, tata letak otomatis): `graph`, `flow`, `bar`, `timeline`, `sequence`, `compare`.
 2. **SVG mentah** untuk bentuk bebas: wajib `viewBox`, lebar ≤ 720 (idealnya ≤ 420: di HP kolomnya ~360px dan SVG
    mentah hanya diperkecil, tidak ditata ulang), tanpa skrip/foreignObject/tautan luar. Spec menyesuaikan lebar sendiri.
 3. **HTML+CSS** kecil (tabel/kartu): tanpa skrip, form, iframe, atau sumber eksternal.
@@ -35,6 +38,10 @@ SVG/HTML boleh diawali baris `title: …` dan `caption: …` lalu `---`. Spec me
 - `bar`: `data` (`{label, value, highlight?, color?, note?, display?}`), `unit?`, `prefix?`, `sort?` (`desc`/`asc`),
   `orientation?` (`horizontal` default | `vertical`), `thousands?` (`.` untuk format Indonesia).
 - `timeline`: `events` (`{date, label, note?, highlight?}`), `direction?` (otomatis: ≤ 5 mendatar, lebih tegak).
+- `sequence`: `participants` (string, atau `{id, label?, actor?, highlight?, color?}`), `messages` berisi
+  `{from, to, label, dashed?, highlight?, color?, open?}` (dashed = balasan; from = to = pesan ke diri sendiri),
+  `{note, over: [id, …], side?: left|right}`, blok `{group: "alt"|"loop"|"opt"|"par", label}` … `{else: "…"}` …
+  `{end: true}`, `autonumber?`. Kolom menyempit otomatis di HP; maksimal ±5 peserta.
 - `compare`: `panels` (2-4) berisi `{title?, visual: <spec graph/flow/bar/timeline>, caption, verdict: good|bad}`.
   Digambar berdampingan; caption diawali ✓ hijau (good) atau ✗ merah (bad) otomatis - jangan ketik ✓/✗ sendiri.
 
@@ -66,6 +73,7 @@ dan saran yang masuk akal, cek ulang, baru tulis blok ```visual di jawaban. Jang
 4. `04-timeline-release.visual` - timeline mendatar, tonggak berikutnya disorot.
 5. `05-tree-search.visual` - pohon terarah, jalur pencarian biru (`highlightEdges`).
 6. `06-stack-vs-queue.visual` - SVG mentah dengan kelas tema (judul/caption lewat header).
+7. `08-sequence-login.visual` - sequence: aktor, blok alt/else, balasan putus-putus, catatan.
 Bonus: `07-html-bigo.visual` - kartu tabel HTML+CSS.
 
 Contoh 1 (patokan kualitas):

@@ -57,8 +57,9 @@ images then show inline in their chat and other files as a download card, on the
 A reply that only names a PC path does not deliver anything. Mention the path only as extra information.
 Diagrams (flowchart, architecture, ERD, timeline ...): the `diagram` or `diagram-interaktif` skill →
 `diagram_save` (SVG/HTML/Mermaid saved as a page any browser opens) → deliver it with `send_file`.
-To explain something visually right in the chat (graph, flow, bar chart, timeline, A-vs-B with ✓/✗), use the
-`visual-inline` skill: write a ```visual block in the answer (checked with `visual_check` first), no file needed.
+To explain something visually right in the chat (graph, flow, bar chart, timeline, sequence, A-vs-B with ✓/✗), use
+the `visual-inline` skill: write a ```visual block in the answer (checked with `visual_check` first), no file needed;
+prefer it over a ```mermaid block in chat.
 How to answer questions about the app:
 - Answer from this description directly. Call `office_status` to see the live Kantor (agents, status, tasks,
   active model); never search the filesystem, the app bundle (app.asar) or Python site-packages to learn

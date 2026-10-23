@@ -5,7 +5,7 @@ the phone (desktop/apps/desktop/src/lib/visual, bundled for Android as
 assets/diagram/visual.js). This module mirrors that renderer's rules so the agent can
 catch a broken block *before* the user sees "gagal digambar":
 
-* declarative specs (JSON): ``graph`` | ``flow`` | ``bar`` | ``timeline`` | ``compare``
+* declarative specs (JSON): ``graph`` | ``flow`` | ``bar`` | ``timeline`` | ``sequence`` | ``compare``
   - known type, required lists present, edges point at existing nodes, sane sizes,
     palette colours, compare panels with a caption and a ✓/✗ verdict;
 * raw SVG: parses as XML, has a viewBox (or width/height), nothing the sanitiser
@@ -25,10 +25,11 @@ import xml.etree.ElementTree as ET
 from typing import Any
 
 MAX_CHARS = 200_000
-TYPES = ("graph", "flow", "bar", "timeline", "compare")
+TYPES = ("graph", "flow", "bar", "timeline", "sequence", "compare")
 ALIASES = {
     "bars": "bar", "chart": "bar", "comparison": "compare", "flowchart": "flow", "network": "graph",
     "side-by-side": "compare", "steps": "flow", "tree": "graph", "versus": "compare", "vs": "compare",
+    "seq": "sequence", "sequencediagram": "sequence",
 }
 PALETTE = {"blue", "green", "red", "amber", "purple", "teal", "pink", "accent", "gray", "grey", "muted",
            "good", "ok", "bad", "error"}
@@ -201,6 +202,42 @@ def _check_spec(spec: Any, path: str, errors: list[str], warnings: list[str], de
         if len(events) > 14:
             warnings.append(f"{path}: {len(events)} peristiwa; maks ±10 supaya terbaca")
         _colors(events, f"{path}.events", errors)
+    elif typ == "sequence":
+        msgs = spec.get("messages", spec.get("steps", spec.get("items")))
+        if not isinstance(msgs, list) or not msgs:
+            errors.append(f"{path}.messages kosong (daftar {{from, to, label}}, {{note, over}}, {{group}}/{{else}}/{{end}})")
+            return
+        parts = spec.get("participants", spec.get("actors")) or []
+        ids = {str(p.get("id", p.get("name", p.get("label", "")))) if isinstance(p, dict) else str(p) for p in parts}
+        for m in msgs:
+            if isinstance(m, dict) and "from" in m:
+                ids.add(str(m.get("from")))
+                ids.add(str(m.get("to", m.get("from"))))
+        if len(ids) > 10:
+            errors.append(f"{path}: {len(ids)} peserta; maks 10")
+        elif len(ids) > 6:
+            warnings.append(f"{path}: {len(ids)} peserta membuat kolom sempit di HP; maks ±5")
+        if len(msgs) > 40:
+            warnings.append(f"{path}: {len(msgs)} pesan terlalu panjang; pecah jadi beberapa visual")
+        opened = 0
+        for k, m in enumerate(msgs):
+            if not isinstance(m, dict):
+                errors.append(f"{path}.messages[{k}] harus objek")
+                continue
+            if "group" in m:
+                opened += 1
+            elif m.get("end"):
+                if opened == 0:
+                    errors.append(f"{path}.messages[{k}] end tanpa group")
+                opened = max(0, opened - 1)
+            elif "from" in m:
+                if len(str(m.get("label", ""))) > 60:
+                    warnings.append(f"{path}.messages[{k}] label > 60 karakter; ringkas")
+            elif "note" not in m and "else" not in m:
+                errors.append(f"{path}.messages[{k}] tidak dikenal (pakai from/to, note, group, else, end)")
+        if opened:
+            warnings.append(f"{path}: {opened} group belum ditutup dengan " + '{"end": true}')
+        _colors(msgs, f"{path}.messages", errors)
     elif typ == "compare":
         panels = spec.get("panels", spec.get("items"))
         if not isinstance(panels, list) or not panels:
