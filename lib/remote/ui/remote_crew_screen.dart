@@ -347,7 +347,7 @@ class _RemoteCrewScreenState extends ConsumerState<RemoteCrewScreen> {
                   Wrap(spacing: 4, runSpacing: 4, children: [
                     if (m.tools.isEmpty) NvPill(tr('Tanpa alat')),
                     for (final t in m.tools)
-                      NvPill(tr(crewToolLabel[t] ?? t), color: crewSideEffectTools.contains(t) ? const Color(0xFFB67F12) : null),
+                      NvPill(tr(crewToolLabel[t] ?? t), color: crewSideEffectTools.contains(t) ? (NV.palette.dark ? const Color(0xFFE0A63A) : const Color(0xFF7A4E00)) : null),
                     NvPill(m.model.isEmpty ? tr('Bawaan gratis') : m.model),
                   ]),
                 ]),
@@ -507,6 +507,7 @@ class _RemoteCrewAdvancedState extends ConsumerState<RemoteCrewAdvanced> {
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 key: const ValueKey('crew-flow'),
+                isExpanded: true,
                 initialValue: process,
                 decoration: InputDecoration(labelText: tr('Alur'), isDense: true),
                 items: [
@@ -519,6 +520,7 @@ class _RemoteCrewAdvancedState extends ConsumerState<RemoteCrewAdvanced> {
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
                   key: const ValueKey('crew-manager'),
+                  isExpanded: true,
                   initialValue: members.any((m) => m.id == manager) ? manager : members.first.id,
                   decoration: InputDecoration(labelText: tr('Manajer'), isDense: true),
                   items: [for (final m in members) DropdownMenuItem(value: m.id, child: Text(m.name.isEmpty ? m.role : m.name))],
@@ -560,6 +562,7 @@ class _RemoteCrewAdvancedState extends ConsumerState<RemoteCrewAdvanced> {
                 _field('crew-${t.id}-desc', 'Deskripsi', t.description, (v) => tasks[i] = tasks[i].copyWith(description: v)),
                 DropdownButtonFormField<String>(
                   key: ValueKey('crew-${t.id}-who'),
+                  isExpanded: true,
                   initialValue: members.any((m) => m.id == t.memberId) ? t.memberId : members.first.id,
                   decoration: InputDecoration(labelText: tr('Dikerjakan'), isDense: true),
                   items: [for (final m in members) DropdownMenuItem(value: m.id, child: Text(m.name.isEmpty ? m.role : m.name))],

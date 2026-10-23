@@ -610,7 +610,7 @@ void main() {
       expect(find.byKey(const ValueKey('crew-legacy-office')), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('crew-legacy-company')));
       await tester.pumpAndSettle();
-      expect(find.text('PERUSAHAAN'), findsOneWidget);
+      expect(find.byType(RemoteCompanyScreen), findsOneWidget);
     });
 
     testWidgets('hides Perusahaan on an older core; Crew and Tugas stay', (tester) async {

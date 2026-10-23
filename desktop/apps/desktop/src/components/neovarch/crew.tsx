@@ -51,7 +51,11 @@ export function CrewRoom({ crew, s }: { crew: Crew; s: NvCrewTranslations }) {
               {crew.manager === m.id && <span className="nv-crew-badge">{s.manager}</span>}
             </span>
             <span className="nv-crew-seat-role">{m.role}</span>
-            <span className="nv-crew-seat-status" data-status={m.status}>
+            <span
+              className="nv-crew-seat-status"
+              data-status={m.status}
+              title={m.activity ? `${s.status[m.status] ?? m.status} · ${m.activity}` : undefined}
+            >
               {s.status[m.status] ?? m.status}
               {m.activity ? ` · ${m.activity}` : ''}
             </span>

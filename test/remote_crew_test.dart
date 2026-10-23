@@ -94,6 +94,9 @@ void main() {
     crewPixelAnimate = false;
   });
 
+  // The Crew tab's IndexedStack keeps all three segments' lists; scroll the one on screen.
+  Finder visibleList() => find.byWidgetPredicate((w) => w is Scrollable && w.axisDirection == AxisDirection.down).hitTestable().first;
+
   RemoteController controller(FakeCrew fake) {
     final desktops = SavedDesktops(prefs)..load();
     return RemoteController(desktops)
@@ -166,7 +169,7 @@ void main() {
     expect(find.text('Disusun agen utama'), findsOneWidget);
     expect(find.byKey(const ValueKey('crew-room')), findsOneWidget);
     expect(find.byKey(const ValueKey('crew-seat-m2')), findsOneWidget);
-    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-approve')), 300);
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-approve')), 300, scrollable: visibleList());
     final approve = tester.widget<FilledButton>(find.byKey(const ValueKey('crew-approve')));
     expect(approve.onPressed, isNull);
     await tester.tap(find.byKey(const ValueKey('crew-consent')));
@@ -207,7 +210,7 @@ void main() {
     await tester.tap(find.descendant(of: find.byKey(const ValueKey('crew-approval-m2')), matching: find.text('Izinkan sekali')));
     await tester.pumpAndSettle();
     expect(fake.approvals.single, ('s9', 'apr-1', 'once'));
-    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-stop')), 300);
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-stop')), 300, scrollable: visibleList());
     expect(find.byKey(const ValueKey('crew-stop')), findsOneWidget);
   });
 
@@ -221,12 +224,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('segment-Lanjutan')));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-m1-role')), 200);
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-m1-role')), 200, scrollable: visibleList());
     await tester.enterText(find.byKey(const ValueKey('crew-m1-role')), 'Penguji');
-    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-m1-tool-web')), 200);
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-m1-tool-web')), 200, scrollable: visibleList());
     await tester.tap(find.byKey(const ValueKey('crew-m1-tool-web')));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-save')), 300);
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-save')), 300, scrollable: visibleList());
     await tester.tap(find.byKey(const ValueKey('crew-save')));
     await tester.pumpAndSettle();
     final patch = fake.calls.where((c) => c.$1 == 'update').single.$2['patch'] as Map;
@@ -235,7 +238,7 @@ void main() {
     expect((members[0] as Map)['tools'], contains('web'));
     expect(patch['process'], 'hierarchical');
     expect(patch['manager'], 'm1');
-    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-legacy-office')), 300);
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-legacy-office')), 300, scrollable: visibleList());
     expect(find.byKey(const ValueKey('crew-legacy-office')), findsOneWidget);
   });
 
@@ -244,7 +247,7 @@ void main() {
     await pump(tester, controller(fake));
     await tester.tap(find.byKey(const ValueKey('crew-history-c1')));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-result')), 300);
+    await tester.scrollUntilVisible(find.byKey(const ValueKey('crew-result')), 300, scrollable: visibleList());
     expect(find.text('Semua tes lulus'), findsOneWidget);
   });
 
@@ -259,7 +262,9 @@ void main() {
 
   test('models parse the core payload; English strings exist', () {
     final c = Crew.fromJson(crewJson(status: 'running'));
-    expect((c.running, c.members.length, c.member('m2')!.tools, c.sideEffects), (true, 2, ['files', 'write', 'shell'], ['shell', 'write']));
+    expect((c.running, c.members.length), (true, 2));
+    expect(c.member('m2')!.tools, ['files', 'write', 'shell']);
+    expect(c.sideEffects, ['shell', 'write']);
     expect(c.tasks.single.memberId, 'm2');
     for (final s in [
       'Crew', 'Lanjutan', 'Susun crew', 'Setujui & mulai', 'Kenalan dengan Crew', 'Hanya model gratis',

@@ -4094,6 +4094,15 @@
   white-space: nowrap;
   color: var(--nv-text-2);
 }
+/* The live activity ("minta izin: npm test …") wraps to two lines instead of cutting off. */
+.nv-crew-seat-status {
+  display: -webkit-box;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
 .nv-crew-seat-status[data-status='working'] {
   color: var(--nv-red-text);
 }

@@ -3532,6 +3532,7 @@ export interface Translations extends NoticeTranslations {
     deny: string
     delete: string
     open: string
+    mini: { open: string; working: string; empty: string }
   }
 
   /** ```visual cards in chat: inline vector diagrams the agent draws (embeds/visual-embed.tsx). */

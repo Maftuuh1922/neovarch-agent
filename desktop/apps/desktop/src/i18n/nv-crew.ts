@@ -66,7 +66,8 @@ export const nvCrewEn: NvCrewTranslations = {
   allow: 'Allow',
   deny: 'Deny',
   delete: 'Delete',
-  open: 'Open'
+  open: 'Open',
+  mini: { open: 'Open Crew', working: '{n} working', empty: 'No agents working yet.' }
 }
 
 export const nvCrewId: NvCrewTranslations = {
@@ -128,7 +129,8 @@ export const nvCrewId: NvCrewTranslations = {
   allow: 'Izinkan',
   deny: 'Tolak',
   delete: 'Hapus',
-  open: 'Buka'
+  open: 'Buka',
+  mini: { open: 'Buka Crew', working: '{n} bekerja', empty: 'Belum ada agen yang bekerja.' }
 }
 
 export const nvCrewDe: NvCrewTranslations = {
@@ -190,7 +192,8 @@ export const nvCrewDe: NvCrewTranslations = {
   allow: 'Erlauben',
   deny: 'Ablehnen',
   delete: 'Löschen',
-  open: 'Öffnen'
+  open: 'Öffnen',
+  mini: { open: 'Crew öffnen', working: '{n} arbeiten', empty: 'Noch keine Agenten bei der Arbeit.' }
 }
 
 export const nvCrewEs: NvCrewTranslations = {
@@ -252,7 +255,8 @@ export const nvCrewEs: NvCrewTranslations = {
   allow: 'Permitir',
   deny: 'Rechazar',
   delete: 'Eliminar',
-  open: 'Abrir'
+  open: 'Abrir',
+  mini: { open: 'Abrir Crew', working: '{n} trabajando', empty: 'Aún no hay agentes trabajando.' }
 }
 
 export const nvCrewFr: NvCrewTranslations = {
@@ -314,7 +318,8 @@ export const nvCrewFr: NvCrewTranslations = {
   allow: 'Autoriser',
   deny: 'Refuser',
   delete: 'Supprimer',
-  open: 'Ouvrir'
+  open: 'Ouvrir',
+  mini: { open: 'Ouvrir Crew', working: '{n} au travail', empty: 'Aucun agent au travail pour l’instant.' }
 }
 
 export const nvCrewJa: NvCrewTranslations = {
@@ -376,7 +381,8 @@ export const nvCrewJa: NvCrewTranslations = {
   allow: '許可',
   deny: '拒否',
   delete: '削除',
-  open: '開く'
+  open: '開く',
+  mini: { open: 'Crew を開く', working: '{n} 人が作業中', empty: '作業中のエージェントはまだいません。' }
 }
 
 export const nvCrewRu: NvCrewTranslations = {
@@ -438,7 +444,8 @@ export const nvCrewRu: NvCrewTranslations = {
   allow: 'Разрешить',
   deny: 'Отклонить',
   delete: 'Удалить',
-  open: 'Открыть'
+  open: 'Открыть',
+  mini: { open: 'Открыть Crew', working: 'работают: {n}', empty: 'Пока никто из агентов не работает.' }
 }
 
 export const nvCrewAr: NvCrewTranslations = {
@@ -500,7 +507,8 @@ export const nvCrewAr: NvCrewTranslations = {
   allow: 'اسمح',
   deny: 'ارفض',
   delete: 'احذف',
-  open: 'افتح'
+  open: 'افتح',
+  mini: { open: 'افتح Crew', working: '{n} يعمل', empty: 'لا يوجد وكلاء يعملون بعد.' }
 }
 
 export const nvCrewZh: NvCrewTranslations = {
@@ -562,7 +570,8 @@ export const nvCrewZh: NvCrewTranslations = {
   allow: '允许',
   deny: '拒绝',
   delete: '删除',
-  open: '打开'
+  open: '打开',
+  mini: { open: '打开 Crew', working: '{n} 个工作中', empty: '还没有智能体在工作。' }
 }
 
 export const nvCrewZhHant: NvCrewTranslations = {
@@ -624,5 +633,6 @@ export const nvCrewZhHant: NvCrewTranslations = {
   allow: '允許',
   deny: '拒絕',
   delete: '刪除',
-  open: '開啟'
+  open: '開啟',
+  mini: { open: '開啟 Crew', working: '{n} 個工作中', empty: '還沒有代理在工作。' }
 }
