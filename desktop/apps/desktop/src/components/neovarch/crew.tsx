@@ -6,7 +6,7 @@ import { useI18n } from '@/i18n'
 import type { NvCrewTranslations } from '@/i18n/nv-crew'
 import { cn } from '@/lib/utils'
 
-import { CrewStation } from './crew-pixel'
+import { CrewScene, CrewStation } from './crew-pixel'
 import {
   $crew,
   $crewBusy,
@@ -38,30 +38,65 @@ import { OFFICE_ROUTE } from './office-store'
 export type CrewTab = 'advanced' | 'crew' | 'history'
 export const CREW_TABS: CrewTab[] = ['crew', 'history', 'advanced']
 
-/** Pixel room: every member at a desk with their live status. */
+/** Pixel building: every member in a desk bay acting out their live status, plus a roster. */
 export function CrewRoom({ crew, s }: { crew: Crew; s: NvCrewTranslations }) {
+  const running = crew.tasks.find(t => t.status === 'running')
+
+  const bubble = (m: CrewMember) => {
+    if (crew.status === 'proposed') {
+      return m.role
+    }
+
+    if (m.status === 'working') {
+      return m.activity || (running?.member_id === m.id ? running.title : undefined)
+    }
+
+    if (m.status === 'waiting') {
+      return m.approval?.command ?? s.status.waiting
+    }
+
+    if (m.status === 'done' || m.status === 'error') {
+      return s.status[m.status] ?? m.status
+    }
+
+    return undefined
+  }
+
   return (
     <div className="nv-crew-room" data-slot="nv-crew-room">
-      {crew.members.map(m => (
-        <figure className="nv-crew-seat" data-member={m.id} data-status={m.status} key={m.id}>
-          <CrewStation avatar={m.avatar} label={`${m.name} · ${s.status[m.status] ?? m.status}`} status={m.status} />
-          <figcaption>
-            <span className="nv-crew-seat-name">
-              {m.name}
-              {crew.manager === m.id && <span className="nv-crew-badge">{s.manager}</span>}
-            </span>
-            <span className="nv-crew-seat-role">{m.role}</span>
-            <span
-              className="nv-crew-seat-status"
-              data-status={m.status}
-              title={m.activity ? `${s.status[m.status] ?? m.status} · ${m.activity}` : undefined}
-            >
-              {s.status[m.status] ?? m.status}
-              {m.activity ? ` · ${m.activity}` : ''}
-            </span>
-          </figcaption>
-        </figure>
-      ))}
+      <CrewScene
+        crewStatus={crew.status}
+        label={s.sceneLabel}
+        members={crew.members.map(m => ({
+          avatar: m.avatar,
+          bubble: bubble(m),
+          id: m.id,
+          manager: crew.manager === m.id,
+          name: m.name,
+          status: m.status
+        }))}
+      />
+      <div className="nv-crew-roster">
+        {crew.members.map(m => (
+          <figure className="nv-crew-seat" data-member={m.id} data-status={m.status} key={m.id}>
+            <figcaption>
+              <span className="nv-crew-seat-name">
+                {m.name}
+                {crew.manager === m.id && <span className="nv-crew-badge">{s.manager}</span>}
+              </span>
+              <span className="nv-crew-seat-role">{m.role}</span>
+              <span
+                className="nv-crew-seat-status"
+                data-status={m.status}
+                title={m.activity ? `${s.status[m.status] ?? m.status} · ${m.activity}` : undefined}
+              >
+                {s.status[m.status] ?? m.status}
+                {m.activity ? ` · ${m.activity}` : ''}
+              </span>
+            </figcaption>
+          </figure>
+        ))}
+      </div>
     </div>
   )
 }

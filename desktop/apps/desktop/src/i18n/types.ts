@@ -3498,6 +3498,7 @@ export interface Translations extends NoticeTranslations {
     flow: string
     flows: { sequential: string; hierarchical: string }
     manager: string
+    sceneLabel: string
     sideEffects: string
     sideEffectsConsent: string
     approve: string
