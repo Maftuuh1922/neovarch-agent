@@ -30,6 +30,7 @@ import {
   markIntroSeen,
   openCrew,
   proposeCrew,
+  refreshCrews,
   updateCrew
 } from './crew-store'
 import { OFFICE_ROUTE } from './office-store'
@@ -301,6 +302,8 @@ export function CrewGoalForm({ s }: { s: NvCrewTranslations }) {
 
 export function CrewHistory({ onOpen, s }: { onOpen: () => void; s: NvCrewTranslations }) {
   const crews = useStore($crews)
+
+  useEffect(() => void refreshCrews(), [])
 
   if (!crews.length) {
     return <p className="nv-crew-empty">{s.historyEmpty}</p>
