@@ -36,6 +36,7 @@ import '../models/models.dart';
 import 'attachments.dart';
 import 'company_models.dart';
 import 'composer.dart';
+import 'crew_models.dart';
 import 'models_api.dart';
 import 'office_models.dart';
 import 'link/frame_link.dart';
@@ -161,7 +162,7 @@ class ActiveSession {
   const ActiveSession({required this.id, required this.title, required this.status, required this.model, required this.preview});
 }
 
-class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi {
+class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, CrewApi, PcBackgroundApi {
   RemoteGateway({
     required this.baseUrl,
     required this.token,
@@ -905,6 +906,17 @@ class RemoteGateway implements VaultApi, ModelsApi, CompanyApi, PcBackgroundApi 
   @override
   Future<dynamic> companyCall(String method, [Map<String, dynamic> params = const {}]) =>
       client.call('company.$method', {..._p, ...params}, const Duration(seconds: 30));
+
+  @override
+  Future<dynamic> crewCall(String method, [Map<String, dynamic> params = const {}]) =>
+      // crew.propose waits for the main agent's design (up to ~2 min on a slow free model)
+      client.call('crew.$method', {..._p, ...params}, Duration(seconds: method == 'propose' ? 150 : 30));
+
+  @override
+  Future<void> crewApproval(String sessionId, String requestId, String choice) async {
+    await client.call('approval.respond', {..._p, 'session_id': sessionId, 'request_id': requestId, 'choice': choice},
+        const Duration(seconds: 30));
+  }
 
   Future<void> interrupt(String runtimeId) => client.call('session.interrupt', {..._p, 'session_id': runtimeId});
 

@@ -602,17 +602,22 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
     }
 
-    testWidgets('shows Perusahaan on a core that has it', (tester) async {
+    testWidgets('Lanjutan offers Perusahaan on a core that has it', (tester) async {
       final r = controller(FakeCompany())..companySupported = true;
       await pumpTab(tester, r);
+      expect(find.text('LANJUTAN'), findsOneWidget);
+      expect(find.byKey(const ValueKey('crew-legacy-company')), findsOneWidget);
+      expect(find.byKey(const ValueKey('crew-legacy-office')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('crew-legacy-company')));
+      await tester.pumpAndSettle();
       expect(find.text('PERUSAHAAN'), findsOneWidget);
     });
 
-    testWidgets('hides Perusahaan on an older core and falls back to Kantor', (tester) async {
+    testWidgets('hides Perusahaan on an older core; Crew and Tugas stay', (tester) async {
       final r = controller(FakeCompany())..companySupported = false;
       await pumpTab(tester, r);
-      expect(find.text('PERUSAHAAN'), findsNothing);
-      expect(find.text('KANTOR'), findsOneWidget);
+      expect(find.byKey(const ValueKey('crew-legacy-company')), findsNothing);
+      expect(find.text('CREW'), findsOneWidget);
       expect(find.text('TUGAS'), findsOneWidget);
       expect(find.byType(RemoteCompanyScreen), findsNothing);
     });

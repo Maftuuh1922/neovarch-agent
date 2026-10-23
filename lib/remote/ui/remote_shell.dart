@@ -1,4 +1,4 @@
-// Remote shell: Chat · Kantor · Profil · PC on a floating iOS-style
+// Remote shell: Chat · Crew (formerly Kantor) · Profil · PC on a floating iOS-style
 // liquid glass bar (content scrolls under it), with a connection strip whenever the link to the PC is not up
 // and an "Update tersedia" strip when a newer phone app is released.
 import 'dart:async';
@@ -124,9 +124,10 @@ class _RemoteShellState extends ConsumerState<RemoteShell> with WidgetsBindingOb
       case 'connect':
         setState(() => index = tabPc);
       case final String a when a.startsWith('agent:') && a.length > 6:
+        // the agent sheet lives in the old Kantor view, under Crew ▸ Lanjutan
         setState(() {
           index = tabKantor;
-          kantorSegment = kantorSegOffice;
+          kantorSegment = kantorSegAdvanced;
         });
         remoteLaunchAction.value = a;
       // "Hey Neo" after a reboot: restart the listener from the foreground
@@ -175,7 +176,7 @@ class _RemoteShellState extends ConsumerState<RemoteShell> with WidgetsBindingOb
 
   static const _dest = <(IconData, IconData, String)>[
     (CupertinoIcons.chat_bubble, CupertinoIcons.chat_bubble_fill, 'Chat'),
-    (CupertinoIcons.building_2_fill, CupertinoIcons.building_2_fill, 'Kantor'),
+    (CupertinoIcons.person_3_fill, CupertinoIcons.person_3_fill, 'Crew'),
     (CupertinoIcons.desktopcomputer, CupertinoIcons.desktopcomputer, 'PC'),
     (CupertinoIcons.person_crop_circle, CupertinoIcons.person_crop_circle_fill, 'Profil'),
   ];
