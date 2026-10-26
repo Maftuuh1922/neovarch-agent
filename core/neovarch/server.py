@@ -457,6 +457,53 @@ class Gateway:
         self.scheduler = cronmod.Scheduler(
             self.cron, self._cron_run, lambda: self.broadcast_event("cron.changed", None, {}),
             tick=float(os.environ.get("NEOVARCH_CRON_TICK") or 5))
+        self._brief_task: asyncio.Task | None = None
+
+    async def _brief_loop(self) -> None:
+        """Mode 3 (proaktif mini): kirim brief pagi sekali sehari, tanpa memanggil model."""
+        from neovarch import brief as briefmod
+        while True:
+            try:
+                s = briefmod.settings()
+                if s["enabled"]:
+                    target = briefmod.next_epoch(s["hour"], s["minute"])
+                    await asyncio.sleep(max(target - time.time(), 1))
+                    if not briefmod.settings()["enabled"]:
+                        continue
+                    self.send_morning_brief()
+                    await asyncio.sleep(60)  # lewati jam target sebelum menghitung ulang
+                else:
+                    await asyncio.sleep(600)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                await asyncio.sleep(600)
+
+    def send_morning_brief(self, offline_status: dict | None = None) -> dict:
+        """Susun brief dari data lokal dan jatuhkan sebagai pesan asisten di sesi brief."""
+        from neovarch import brief as briefmod
+        content = briefmod.build(self.store, self.cron, offline_status)
+        rec = self.store.find(briefmod.SESSION_ID)
+        if not rec:
+            rec = self.store.create(source="cron", title="Brief pagi")
+            rec["brief"] = True
+            self.store.save(rec)
+            # create() wrote the generated id; rename the file to the fixed brief id
+            old_path = self.store.path(rec["id"])
+            rec["id"] = briefmod.SESSION_ID
+            self.store.save(rec)
+            try:
+                old_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        rec.setdefault("messages", []).append({"role": "assistant", "content": content["body"],
+                                               "meta": {"brief": "morning"}, "ts": time.time()})
+        self.store.save(rec)
+        self.broadcast_event("sessions.changed", None, {})
+        self.broadcast_event("brief.morning", rec["id"], {"title": content["title"], "alerts": content["alerts"]})
+        return content
 
     async def _cron_run(self, job: dict) -> tuple[str, str | None]:
         """Run one scheduled job: a fresh session (source "cron") with the job's prompt."""
@@ -1500,8 +1547,13 @@ def build_app(gw: Gateway) -> web.Application:
         gw.session_watch.start()
         if os.environ.get("NEOVARCH_9ROUTER_SUPERVISE", "1") not in ("0", "false", "off"):
             gw.router.start_supervisor()
+        # Mode 3 (proaktif mini): loop brief pagi (sekali sehari, tanpa model)
+        gw._brief_task = asyncio.create_task(gw._brief_loop())
 
     async def _stop_cron(_app):
+        if gw._brief_task:
+            gw._brief_task.cancel()
+            gw._brief_task = None
         await gw.scheduler.stop()
         await gw.company.stop()
         await gw.crew.stop()
@@ -2783,6 +2835,18 @@ def build_app(gw: Gateway) -> web.Application:
     r.add_post("/api/audio/stt-lease", audio_stt_lease)
     r.add_get("/api/tools/terminal/backends", terminal_backends)
     r.add_post("/api/sessions/owner-backfill", owner_backfill)
+
+    # ---- mode 3: brief pagi (proaktif mini) ---------------------------------
+    async def brief_now(_):
+        return web.json_response(gw.send_morning_brief())
+
+    async def brief_get(_):
+        from neovarch import brief
+        return web.json_response(brief.settings())
+
+    r.add_post("/api/brief/send", brief_now)
+    r.add_get("/api/brief/status", brief_get)
+
     r.add_get("/api/fs/list", fs_list)
     r.add_get("/api/fs/read", fs_read)
     r.add_get("/api/fs/default", fs_default)
