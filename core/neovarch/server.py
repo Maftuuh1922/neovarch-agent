@@ -2783,6 +2783,15 @@ def build_app(gw: Gateway) -> web.Application:
     r.add_post("/api/audio/stt-lease", audio_stt_lease)
     r.add_get("/api/tools/terminal/backends", terminal_backends)
     r.add_post("/api/sessions/owner-backfill", owner_backfill)
+
+    # ---- mode 1: offline fallback (model lokal di PC) -----------------------
+    async def offline_status(_):
+        from neovarch import offline
+        cfg = cfgmod.load_config()
+        return web.json_response(await offline.status(cfg))
+
+    r.add_get("/api/offline/status", offline_status)
+
     r.add_get("/api/fs/list", fs_list)
     r.add_get("/api/fs/read", fs_read)
     r.add_get("/api/fs/default", fs_default)
