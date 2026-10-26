@@ -1573,7 +1573,8 @@ class Agent:
         """One model call. When a free 9Router model answers 429 / 5xx before streaming
         anything, the same request is retried once per next free model; ``active`` then
         keeps the model that answered for the rest of the turn. The saved default and
-        per-agent models are never changed."""
+        per-agent models are never changed. Mode 1 (luring): when every online candidate
+        failed before streaming, one local (Ollama) attempt answers without tools."""
         from neovarch import router9
         started = [False]
         try:
@@ -1586,6 +1587,9 @@ class Agent:
             status = router9.retryable_status(str(exc))
             if (started[0] or status is None or active.get("provider") != router9.PROVIDER
                     or not router9.is_free_model(active["model"])):
+                offline_comp = await self._offline_complete(wire)
+                if offline_comp is not None:
+                    return offline_comp
                 raise
         limited = active["model"]
         router9.mark_limited(limited)
@@ -1617,7 +1621,37 @@ class Agent:
                 announce()
             active["model"] = cand
             return comp
+        offline_comp = await self._offline_complete(wire)
+        if offline_comp is not None:
+            return offline_comp
         raise last
+
+    async def _offline_complete(self, wire: list[dict]) -> Completion | None:
+        """Mode 1 (luring): setelah semua model online gagal sebelum streaming apa pun,
+        coba server model lokal (Ollama / OpenAI-compatible di PC). None bila tidak ada.
+        (Modul offline hadir di branch nva-offline-fallback; di sini fallback diam.)"""
+        try:
+            from neovarch import offline
+        except ImportError:
+            return None
+        try:
+            ep = await offline.endpoint()
+        except Exception:
+            return None
+        if not ep:
+            return None
+        # tools are dropped in offline mode: the local answer is text-only
+        try:
+            comp = await stream_chat(
+                base_url=ep["base_url"], api_key="", model=ep["model"], messages=wire, tools=None,
+                on_text=lambda t: self.emit("message.delta", {"text": t}),
+                on_reasoning=None,
+            )
+        except LLMError:
+            offline.note_failure()
+            return None
+        self.emit("offline.fallback", {"model": ep["model"], "base_url": ep["base_url"]})
+        return comp
 
     def _prefetch_read_only(self, calls, schemas: list[dict]) -> dict[str, asyncio.Future]:
         """Start the read-only calls (web, file reads, note search) of one model message at the same time.
