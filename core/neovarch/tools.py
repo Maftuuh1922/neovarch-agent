@@ -931,6 +931,11 @@ def _crew_schema() -> dict:
     return TOOL_SCHEMA
 
 
+async def _tool_kiro(args: dict, ctx: "ToolContext") -> str:
+    from neovarch.kiro_tool import tool_kiro
+    return await tool_kiro(args, ctx)
+
+
 TOOLS: dict[str, tuple[Callable[[dict, ToolContext], Awaitable[str]], dict]] = {
     "send_file": (tool_send_file, {
         "description": "Send files from this PC into the chat so the user gets them where they are chatting "
@@ -1209,6 +1214,15 @@ def _register_design_tools() -> None:
 
 
 _register_design_tools()
+
+
+def _register_kiro_tools() -> None:
+    """`kiro` (Kiro CLI proposals) lives in neovarch.kiro_tool; registered here with the rest."""
+    from neovarch import kiro_tool
+    TOOLS.setdefault("kiro", (_tool_kiro, kiro_tool.TOOL_SCHEMA))
+
+
+_register_kiro_tools()
 
 
 async def tool_apply_patch(args: dict, ctx: ToolContext) -> str:
